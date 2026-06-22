@@ -33,6 +33,8 @@ import type {
   UnpushedCommitsResult,
   UnstageFilesRequest,
   UnstageFilesResult,
+  RevertFilesRequest,
+  RevertFilesResult,
   WorkingCopyEntry,
   WorkingCopyStatusRequest,
   WorkingCopyStatusResult,
@@ -884,6 +886,35 @@ export async function unstageFiles(req: UnstageFilesRequest): Promise<UnstageFil
   } catch (err) {
     if (err instanceof GitError) return { ok: false, error: err.message }
     return { ok: false, error: err instanceof Error ? err.message : 'git reset failed' }
+  }
+}
+
+export async function revertFiles(req: RevertFilesRequest): Promise<RevertFilesResult> {
+  const { folderPath, files, isUntracked } = req
+  if (!folderPath) return { ok: false, error: 'folderPath is required' }
+  if (!Array.isArray(files) || files.length === 0) {
+    return { ok: false, error: 'No files specified.' }
+  }
+  try {
+    if (isUntracked) {
+      // Untracked file/dir — delete it from the working tree.
+      await runGit(['clean', '-fd', '--', ...files], folderPath)
+      return { ok: true }
+    }
+    const hasHead =
+      (await tryGit(['rev-parse', '--verify', '--quiet', 'HEAD'], folderPath)) !== null
+    if (hasHead) {
+      // Tracked file — unstage and discard working-tree changes back to HEAD.
+      await runGit(['restore', '--source=HEAD', '--staged', '--worktree', '--', ...files], folderPath)
+    } else {
+      // No HEAD yet (fresh repo) — unstage then remove the working-tree copy.
+      await runGit(['rm', '-f', '--cached', '--ignore-unmatch', '--', ...files], folderPath)
+      await runGit(['clean', '-fd', '--', ...files], folderPath)
+    }
+    return { ok: true }
+  } catch (err) {
+    if (err instanceof GitError) return { ok: false, error: err.message }
+    return { ok: false, error: err instanceof Error ? err.message : 'git restore failed' }
   }
 }
 

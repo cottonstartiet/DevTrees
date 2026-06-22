@@ -30,6 +30,8 @@ import type {
   UnpushedCommitsResult,
   UnstageFilesRequest,
   UnstageFilesResult,
+  RevertFilesRequest,
+  RevertFilesResult,
   WorkingCopyStatusRequest,
   WorkingCopyStatusResult,
   WorktreesOverviewRequest,
@@ -57,7 +59,8 @@ import {
   pushCurrentBranch,
   rebaseOnDefault,
   stageFiles,
-  unstageFiles
+  unstageFiles,
+  revertFiles
 } from './repo-status'
 
 export function registerRepoIpc(): void {
@@ -299,6 +302,21 @@ export function registerRepoIpc(): void {
         return {
           ok: false,
           error: err instanceof Error ? err.message : 'unstage-files failed'
+        }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    RepoIpcChannels.RevertFiles,
+    async (_event, req: RevertFilesRequest): Promise<RevertFilesResult> => {
+      try {
+        return await revertFiles(req)
+      } catch (err) {
+        console.error('[repo] revert-files failed:', err)
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : 'revert-files failed'
         }
       }
     }

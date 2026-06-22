@@ -11,8 +11,10 @@ import {
 import {
   detectMergeState,
   discardAllChanges,
+  commit,
   pushBranch,
   rebaseOnDefault,
+  revertFiles,
   stageFiles,
   unstageFiles
 } from '@/lib/repo'
@@ -44,6 +46,7 @@ export interface WorkingCopyController {
   pending: Set<string>
   handleStage: (entry: WorkingCopyEntry) => Promise<void>
   handleUnstage: (entry: WorkingCopyEntry) => Promise<void>
+  handleRevert: (entry: WorkingCopyEntry) => Promise<void>
   handleOpenAllInVSCode: () => Promise<void>
   isPushing: boolean
   handlePush: () => Promise<void>
@@ -55,6 +58,8 @@ export interface WorkingCopyController {
   commitMode: CommitDialogMode | null
   setCommitMode: (mode: CommitDialogMode | null) => void
   handleCommitted: () => void
+  handleCommitInBackground: (message: string, mode: CommitDialogMode) => void
+  isCommitting: boolean
   showPush: boolean
   showRebase: boolean
   pushDisabled: boolean
@@ -87,6 +92,7 @@ export function useWorkingCopyController({
   const [isPushing, setIsPushing] = React.useState(false)
   const [isRebasing, setIsRebasing] = React.useState(false)
   const [isDiscarding, setIsDiscarding] = React.useState(false)
+  const [isCommitting, setIsCommitting] = React.useState(false)
   const [isResolvingConflicts, setIsResolvingConflicts] = React.useState(false)
 
   const entries = React.useMemo(() => data?.entries ?? [], [data])
@@ -165,6 +171,28 @@ export function useWorkingCopyController({
     [folderPath, markPending, refresh]
   )
 
+  const handleRevert = React.useCallback(
+    async (entry: WorkingCopyEntry): Promise<void> => {
+      if (!folderPath) return
+      const key = entry.path
+      const files = entry.originalPath ? [entry.originalPath, entry.path] : [entry.path]
+      markPending(key, true)
+      try {
+        const result = await revertFiles({ folderPath, files, isUntracked: entry.isUntracked })
+        if (!result.ok) {
+          toast.error(result.error || 'Revert failed.')
+          return
+        }
+        void refresh()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Revert failed.')
+      } finally {
+        markPending(key, false)
+      }
+    },
+    [folderPath, markPending, refresh]
+  )
+
   const hasPending = pending.size > 0
   const unpushedCount = unpushedData?.commits.length ?? 0
 
@@ -205,10 +233,6 @@ export function useWorkingCopyController({
 
   const handleRebase = React.useCallback(async (): Promise<void> => {
     if (!folderPath || !branch || !defaultBranch || branch === defaultBranch) return
-    const confirmed = window.confirm(
-      `Rebase ${branch} onto origin/${defaultBranch}? Make sure your working tree is clean.`
-    )
-    if (!confirmed) return
     setIsRebasing(true)
     const taskId = startTask(`Rebasing ${branch} on origin/${defaultBranch}`)
     try {
@@ -243,6 +267,40 @@ export function useWorkingCopyController({
     void refresh()
     void refreshUnpushed()
   }, [refresh, refreshUnpushed])
+
+  const handleCommitInBackground = React.useCallback(
+    (message: string, mode: CommitDialogMode): void => {
+      if (!folderPath) return
+      const trimmed = message.trim()
+      if (!trimmed) return
+      const label = mode === 'all' ? 'Committing all changes' : 'Committing staged changes'
+      const taskId = startTask(label)
+      setIsCommitting(true)
+      void (async () => {
+        try {
+          const result = await commit({ folderPath, message: trimmed, stageAll: mode === 'all' })
+          if (result.ok) {
+            succeedTask(taskId)
+            toast.success(`Committed ${result.commitSha.slice(0, 7)}`)
+            handleCommitted()
+          } else if (result.code === 'nothing-to-commit') {
+            failTask(taskId, result.error)
+            toast.message('Nothing to commit.')
+          } else {
+            failTask(taskId, result.error)
+            toast.error(`Commit failed: ${result.error}`)
+          }
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : 'commit failed'
+          failTask(taskId, errorMessage)
+          toast.error(errorMessage)
+        } finally {
+          setIsCommitting(false)
+        }
+      })()
+    },
+    [folderPath, startTask, succeedTask, failTask, handleCommitted]
+  )
 
   const handleDiscardAll = React.useCallback(async (): Promise<void> => {
     if (!folderPath) return
@@ -310,17 +368,36 @@ export function useWorkingCopyController({
   const showPush = branch !== null && folderPath !== null
   const showRebase =
     folderPath !== null && branch !== null && defaultBranch !== null && branch !== defaultBranch
-  const pushDisabled = hasPending || isPushing || isRebasing || isDiscarding || unpushedCount === 0
-  const rebaseDisabled = hasPending || isPushing || isRebasing || isDiscarding
+  const pushDisabled =
+    hasPending || isPushing || isRebasing || isDiscarding || isCommitting || unpushedCount === 0
+  const rebaseDisabled = hasPending || isPushing || isRebasing || isDiscarding || isCommitting
   const commitStagedDisabled =
-    hasPending || isPushing || isRebasing || isDiscarding || !data || stagedCount === 0
+    hasPending ||
+    isPushing ||
+    isRebasing ||
+    isDiscarding ||
+    isCommitting ||
+    !data ||
+    stagedCount === 0
   const commitAllDisabled =
-    hasPending || isPushing || isRebasing || isDiscarding || !data || entries.length === 0
+    hasPending ||
+    isPushing ||
+    isRebasing ||
+    isDiscarding ||
+    isCommitting ||
+    !data ||
+    entries.length === 0
   const discardDisabled =
-    hasPending || isPushing || isRebasing || isDiscarding || !data || entries.length === 0
+    hasPending ||
+    isPushing ||
+    isRebasing ||
+    isDiscarding ||
+    isCommitting ||
+    !data ||
+    entries.length === 0
   const showResolveConflicts = conflictedCount > 0
   const resolveConflictsDisabled =
-    hasPending || isPushing || isRebasing || isDiscarding || isResolvingConflicts
+    hasPending || isPushing || isRebasing || isDiscarding || isCommitting || isResolvingConflicts
 
   return {
     folderPath,
@@ -340,6 +417,7 @@ export function useWorkingCopyController({
     pending,
     handleStage,
     handleUnstage,
+    handleRevert,
     handleOpenAllInVSCode,
     isPushing,
     handlePush,
@@ -351,6 +429,8 @@ export function useWorkingCopyController({
     commitMode,
     setCommitMode,
     handleCommitted,
+    handleCommitInBackground,
+    isCommitting,
     showPush,
     showRebase,
     pushDisabled,

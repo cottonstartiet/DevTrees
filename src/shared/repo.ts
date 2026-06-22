@@ -105,6 +105,9 @@ export type StageFilesResult = { ok: true } | { ok: false; error: string }
 export type UnstageFilesRequest = { folderPath: string; files: string[] }
 export type UnstageFilesResult = { ok: true } | { ok: false; error: string }
 
+export type RevertFilesRequest = { folderPath: string; files: string[]; isUntracked: boolean }
+export type RevertFilesResult = { ok: true } | { ok: false; error: string }
+
 export type DiscardAllChangesRequest = { folderPath: string }
 export type DiscardAllChangesResult = { ok: true } | { ok: false; error: string }
 
@@ -206,6 +209,7 @@ export const RepoIpcChannels = {
   RecentCommits: 'repo:recent-commits',
   StageFiles: 'repo:stage-files',
   UnstageFiles: 'repo:unstage-files',
+  RevertFiles: 'repo:revert-files',
   DiscardAllChanges: 'repo:discard-all-changes',
   Commit: 'repo:commit',
   UnpushedCommits: 'repo:unpushed-commits',

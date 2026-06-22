@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -87,6 +88,7 @@ export function DetailToolbar({
           : `${defaultBranch} is up to date with origin`
 
   const [isRebasing, setIsRebasing] = React.useState(false)
+  const [confirmRebaseOpen, setConfirmRebaseOpen] = React.useState(false)
   const [isOpeningVSCode, setIsOpeningVSCode] = React.useState(false)
   const [isOpeningTerminal, setIsOpeningTerminal] = React.useState(false)
   const [isOpeningFolder, setIsOpeningFolder] = React.useState(false)
@@ -101,12 +103,17 @@ export function DetailToolbar({
         ? `Pull origin/${defaultBranch} into this worktree`
         : `Pull origin/${defaultBranch} in workspace and rebase ${branch ?? 'current branch'} onto it`
 
-  const handleRebase = async (): Promise<void> => {
+  const rebaseConfirmMessage = isOnDefault
+    ? `Fast-forward ${defaultBranch} to origin/${defaultBranch}? Make sure your working tree is clean.`
+    : `Pull origin/${defaultBranch} into the workspace and rebase ${branch} onto it? Make sure your working tree is clean.`
+
+  const handleRebase = (): void => {
     if (rebaseDisabled) return
-    const confirmMsg = isOnDefault
-      ? `Fast-forward ${defaultBranch} to origin/${defaultBranch}? Make sure your working tree is clean.`
-      : `Pull origin/${defaultBranch} into the workspace and rebase ${branch} onto it? Make sure your working tree is clean.`
-    if (!window.confirm(confirmMsg)) return
+    setConfirmRebaseOpen(true)
+  }
+
+  const runRebase = async (): Promise<void> => {
+    if (rebaseDisabled) return
     setIsRebasing(true)
     try {
       const result = await rebaseOnDefault({
@@ -181,7 +188,8 @@ export function DetailToolbar({
   const showCreatePr = !showOpenPr && (!!onCreatePullRequest || isCreatingPullRequest)
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+    <>
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
       <SidebarTrigger className="-ml-1" />
       <Separator orientation="vertical" className="mr-2 h-4" />
       <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
@@ -432,6 +440,15 @@ export function DetailToolbar({
         </Tooltip>
       </div>
     </header>
+      <ConfirmDialog
+        open={confirmRebaseOpen}
+        onOpenChange={setConfirmRebaseOpen}
+        title={isOnDefault ? `Pull origin/${defaultBranch}?` : `Rebase ${branch ?? 'branch'}?`}
+        description={rebaseConfirmMessage}
+        confirmLabel={isOnDefault ? 'Pull' : 'Rebase'}
+        onConfirm={() => void runRebase()}
+      />
+    </>
   )
 }
 

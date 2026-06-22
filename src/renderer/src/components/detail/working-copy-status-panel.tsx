@@ -8,12 +8,21 @@ import {
   Minus as MinusIcon,
   Plus as PlusIcon,
   RefreshCw as RefreshCwIcon,
+  RotateCcw as RevertIcon,
   Sparkles as SparklesIcon,
   Trash2 as Trash2Icon
 } from 'lucide-react'
 
 import { CommitDialog } from '@/components/commit-dialog'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
 import {
   Dialog,
   DialogContent,
@@ -34,6 +43,7 @@ export interface ChangesTabActionsProps {
 
 export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.Element | null {
   const [confirmDiscardOpen, setConfirmDiscardOpen] = React.useState(false)
+  const [confirmRebaseOpen, setConfirmRebaseOpen] = React.useState(false)
 
   if (!ctrl.folderPath) return null
 
@@ -49,7 +59,7 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
     handleRebase,
     setCommitMode,
     commitMode,
-    handleCommitted,
+    handleCommitInBackground,
     showPush,
     showRebase,
     pushDisabled,
@@ -116,7 +126,7 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
                 size="sm"
                 className="h-7 gap-1.5 px-2"
                 disabled={rebaseDisabled}
-                onClick={() => void handleRebase()}
+                onClick={() => setConfirmRebaseOpen(true)}
               >
                 {isRebasing ? (
                   <RefreshCwIcon className="size-3.5 animate-spin" />
@@ -262,7 +272,7 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
         onOpenChange={(open) => {
           if (!open) setCommitMode(null)
         }}
-        onCommitted={handleCommitted}
+        onSubmit={handleCommitInBackground}
       />
       <DiscardAllConfirmDialog
         open={confirmDiscardOpen}
@@ -276,6 +286,14 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
           setConfirmDiscardOpen(false)
           void handleDiscardAll()
         }}
+      />
+      <ConfirmDialog
+        open={confirmRebaseOpen}
+        onOpenChange={setConfirmRebaseOpen}
+        title={`Rebase ${branch ?? 'branch'} onto origin/${defaultBranch ?? 'default'}?`}
+        description="Make sure your working tree is clean before continuing."
+        confirmLabel="Rebase"
+        onConfirm={() => void handleRebase()}
       />
     </>
   )
@@ -368,7 +386,9 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
     pending,
     handleStage,
     handleUnstage,
+    handleRevert,
     handleOpenAllInVSCode,
+    isCommitting,
     folderPath
   } = ctrl
 
@@ -413,8 +433,11 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
                 tone="ok"
                 entries={stagedRows}
                 pending={pending}
-                onAction={handleUnstage}
                 actionKind="unstage"
+                disabled={isCommitting}
+                onStage={handleStage}
+                onUnstage={handleUnstage}
+                onRevert={handleRevert}
               />
             ) : null}
             {changedRows.length > 0 ? (
@@ -423,8 +446,11 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
                 tone="warn"
                 entries={changedRows}
                 pending={pending}
-                onAction={handleStage}
                 actionKind="stage"
+                disabled={isCommitting}
+                onStage={handleStage}
+                onUnstage={handleUnstage}
+                onRevert={handleRevert}
               />
             ) : null}
             {untrackedRows.length > 0 ? (
@@ -433,8 +459,11 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
                 tone="muted"
                 entries={untrackedRows}
                 pending={pending}
-                onAction={handleStage}
                 actionKind="stage"
+                disabled={isCommitting}
+                onStage={handleStage}
+                onUnstage={handleUnstage}
+                onRevert={handleRevert}
               />
             ) : null}
           </div>
@@ -449,8 +478,11 @@ interface FileSectionProps {
   tone: 'ok' | 'warn' | 'muted'
   entries: WorkingCopyEntry[]
   pending: Set<string>
-  onAction: (entry: WorkingCopyEntry) => void | Promise<void>
   actionKind: 'stage' | 'unstage'
+  disabled?: boolean
+  onStage: (entry: WorkingCopyEntry) => void | Promise<void>
+  onUnstage: (entry: WorkingCopyEntry) => void | Promise<void>
+  onRevert: (entry: WorkingCopyEntry) => void | Promise<void>
 }
 
 function FileSection({
@@ -458,8 +490,11 @@ function FileSection({
   tone,
   entries,
   pending,
-  onAction,
-  actionKind
+  actionKind,
+  disabled = false,
+  onStage,
+  onUnstage,
+  onRevert
 }: FileSectionProps): React.JSX.Element {
   const toneClass =
     tone === 'ok'
@@ -467,6 +502,9 @@ function FileSection({
       : tone === 'warn'
         ? 'text-amber-700 dark:text-amber-300'
         : 'text-muted-foreground'
+  const canStage = actionKind === 'stage'
+  const canUnstage = actionKind === 'unstage'
+  const onAction = actionKind === 'stage' ? onStage : onUnstage
   return (
     <section className="flex min-w-0 flex-col gap-1">
       <header className="flex items-center gap-2">
@@ -480,53 +518,79 @@ function FileSection({
       <ul className="flex min-w-0 flex-col">
         {entries.map((entry) => {
           const key = `${actionKind}::${entry.path}`
-          const isPending = pending.has(entry.path)
+          const isPending = pending.has(entry.path) || disabled
           const code = formatStatusCode(entry, actionKind)
           const tooltip = actionKind === 'stage' ? `Stage ${entry.path}` : `Unstage ${entry.path}`
           return (
-            <li
-              key={key}
-              className="hover:bg-muted/50 group flex min-w-0 items-center gap-2 overflow-hidden rounded px-2 py-1 text-xs"
-            >
-              <span
-                className="bg-muted text-muted-foreground inline-flex h-5 min-w-[1.75rem] shrink-0 items-center justify-center rounded font-mono text-[10px] tabular-nums"
-                title={`${entry.indexStatus}${entry.worktreeStatus}`}
-              >
-                {code}
-              </span>
-              <span
-                className="text-foreground min-w-0 flex-1 truncate font-mono whitespace-nowrap"
-                title={entry.originalPath ? `${entry.originalPath} → ${entry.path}` : entry.path}
-              >
-                {entry.originalPath ? (
-                  <>
-                    <span className="text-muted-foreground">{entry.originalPath} → </span>
-                    {entry.path}
-                  </>
-                ) : (
-                  entry.path
-                )}
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="size-6 shrink-0"
-                    disabled={isPending}
-                    onClick={() => void onAction(entry)}
-                    aria-label={tooltip}
+            <ContextMenu key={key}>
+              <ContextMenuTrigger asChild>
+                <li className="hover:bg-muted/50 group flex min-w-0 items-center gap-2 overflow-hidden rounded px-2 py-1 text-xs">
+                  <span
+                    className="bg-muted text-muted-foreground inline-flex h-5 min-w-[1.75rem] shrink-0 items-center justify-center rounded font-mono text-[10px] tabular-nums"
+                    title={`${entry.indexStatus}${entry.worktreeStatus}`}
                   >
-                    {actionKind === 'stage' ? (
-                      <PlusIcon className="size-3.5" />
+                    {code}
+                  </span>
+                  <span
+                    className="text-foreground min-w-0 flex-1 truncate font-mono whitespace-nowrap"
+                    title={entry.originalPath ? `${entry.originalPath} → ${entry.path}` : entry.path}
+                  >
+                    {entry.originalPath ? (
+                      <>
+                        <span className="text-muted-foreground">{entry.originalPath} → </span>
+                        {entry.path}
+                      </>
                     ) : (
-                      <MinusIcon className="size-3.5" />
+                      entry.path
                     )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{tooltip}</TooltipContent>
-              </Tooltip>
-            </li>
+                  </span>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-6 shrink-0"
+                        disabled={isPending}
+                        onClick={() => void onAction(entry)}
+                        aria-label={tooltip}
+                      >
+                        {actionKind === 'stage' ? (
+                          <PlusIcon className="size-3.5" />
+                        ) : (
+                          <MinusIcon className="size-3.5" />
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>{tooltip}</TooltipContent>
+                  </Tooltip>
+                </li>
+              </ContextMenuTrigger>
+              <ContextMenuContent className="w-40">
+                <ContextMenuItem
+                  disabled={isPending || !canStage}
+                  onSelect={() => void onStage(entry)}
+                >
+                  <PlusIcon />
+                  Stage
+                </ContextMenuItem>
+                <ContextMenuItem
+                  disabled={isPending || !canUnstage}
+                  onSelect={() => void onUnstage(entry)}
+                >
+                  <MinusIcon />
+                  Unstage
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  variant="destructive"
+                  disabled={isPending}
+                  onSelect={() => void onRevert(entry)}
+                >
+                  <RevertIcon />
+                  Revert
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           )
         })}
       </ul>

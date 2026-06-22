@@ -42,6 +42,8 @@ import type {
   UnpushedCommitsResult,
   UnstageFilesRequest,
   UnstageFilesResult,
+  RevertFilesRequest,
+  RevertFilesResult,
   WorkingCopyStatusRequest,
   WorkingCopyStatusResult,
   WorktreesOverviewRequest,
@@ -110,6 +112,8 @@ const api = {
       ipcRenderer.invoke(RepoIpcChannels.StageFiles, req),
     unstageFiles: (req: UnstageFilesRequest): Promise<UnstageFilesResult> =>
       ipcRenderer.invoke(RepoIpcChannels.UnstageFiles, req),
+    revertFiles: (req: RevertFilesRequest): Promise<RevertFilesResult> =>
+      ipcRenderer.invoke(RepoIpcChannels.RevertFiles, req),
     discardAllChanges: (req: DiscardAllChangesRequest): Promise<DiscardAllChangesResult> =>
       ipcRenderer.invoke(RepoIpcChannels.DiscardAllChanges, req),
     commit: (req: CommitRequest): Promise<CommitResult> =>

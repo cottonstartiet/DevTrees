@@ -20,6 +20,8 @@ import type {
   RepoStatus,
   StageFilesRequest,
   StageFilesResult,
+  RevertFilesRequest,
+  RevertFilesResult,
   UnpushedCommitsRequest,
   UnpushedCommitsResult,
   UnstageFilesRequest,
@@ -91,6 +93,10 @@ export function stageFiles(req: StageFilesRequest): Promise<StageFilesResult> {
 
 export function unstageFiles(req: UnstageFilesRequest): Promise<UnstageFilesResult> {
   return window.api.repo.unstageFiles(req)
+}
+
+export function revertFiles(req: RevertFilesRequest): Promise<RevertFilesResult> {
+  return window.api.repo.revertFiles(req)
 }
 
 export function discardAllChanges(req: DiscardAllChangesRequest): Promise<DiscardAllChangesResult> {
