@@ -1,0 +1,126 @@
+name: DevTrees Build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Prevent two pushes from racing to publish the same release.
+concurrency:
+  group: devtrees-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-version:
+    name: Check version bump
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # Need full tag history so we can compare against previously released versions.
+          fetch-depth: 0
+
+
+      - name: Determine version and whether to release
+        id: check
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Current package.json version: ${version}"
+
+          # Release only when the current version has higher semver precedence
+          # than every existing v* release tag. Uses a full semver comparison
+          # (prerelease-aware) so suffixes like 1.2.0-beta.1 are ordered
+          # correctly, unlike `sort -V`.
+          should_release="$(git tag --list 'v*' | node ./.github/scripts/semver-check.js "${version}")"
+          echo "should_release=${should_release}" >> "$GITHUB_OUTPUT"
+
+  build-and-release:
+    name: Build and release (Windows)
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Enable Corepack (pins yarn from packageManager field)
+        shell: bash
+        # Must run BEFORE setup-node's cache step so the `yarn` shim resolves.
+        # COREPACK_ENABLE_DOWNLOAD_PROMPT=0 prevents the interactive prompt
+        # Node 22's corepack shows the first time it downloads yarn 1.22.22.
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'yarn'
+          cache-dependency-path: yarn.lock
+
+      - name: Install dependencies
+        shell: bash
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: yarn install --frozen-lockfile
+
+      - name: Build Windows installer
+        shell: bash
+        run: yarn build:win
+
+      - name: List build output (debug)
+        shell: bash
+        run: ls -la dist
+
+      - name: Publish GitHub Release
+        # Uses the pre-installed `gh` CLI instead of a third-party action so
+        # the enterprise policy "all actions must be from a repository owned
+        # by your enterprise, created by GitHub, or verified in the GitHub
+        # Marketplace" is satisfied.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Resolve the artifact paths explicitly so we fail fast if a file is
+          # missing (mirrors softprops' fail_on_unmatched_files: true behavior).
+          shopt -s nullglob
+          installers=(dist/devtrees-*-setup.exe)
+          blockmaps=(dist/devtrees-*-setup.exe.blockmap)
+          shopt -u nullglob
+
+          if [ "${#installers[@]}" -eq 0 ]; then
+            echo "::error::No installer found at dist/devtrees-*-setup.exe" >&2
+            ls -la dist >&2 || true
+            exit 1
+          fi
+          if [ ! -f dist/latest.yml ]; then
+            echo "::error::Missing dist/latest.yml (electron-builder auto-update metadata)" >&2
+            ls -la dist >&2 || true
+            exit 1
+          fi
+
+          gh release create "$TAG" \
+            --title "DevTrees $VERSION" \
+            --target "$GITHUB_SHA" \
+            "${installers[@]}" \
+            "${blockmaps[@]}" \
+            dist/latest.yml

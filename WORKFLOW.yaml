@@ -1,0 +1,848 @@
+# =============================================================================
+# WORKFLOW.yaml — Autonomous Engineering Workflow for BackstageFD
+# =============================================================================
+# Structured agent-facing version of WORKFLOW.md (same directory).
+# Status: POC. WORKFLOW.md remains the canonical source; this file is provided
+# for evaluation of whether a structured YAML shape is clearer for agents than
+# narrative Markdown.
+#
+# Fidelity: faithful translation of substance. Every rule from WORKFLOW.md is
+# preserved. Format-level clarity (e.g. per-phase exit conditions as real lists)
+# is a free side-effect of YAML structure; no semantic changes.
+#
+# Reader posture: read top-to-bottom on first use; on subsequent runs, jump
+# directly to the phase your `Phase:` marker points to.
+# =============================================================================
+
+meta:
+  name: 'Autonomous Engineering Workflow — BackstageFD'
+  purpose: >
+    A reusable workflow prompt the user feeds to GitHub Copilot CLI (or any
+    Copilot-SDK-driven agent) when starting an autonomous engineering task in
+    this repo. Describes HOW to drive a task end-to-end (process). For WHAT to
+    write (substance), see the paired docs below.
+  paired_docs:
+    - .github/copilot-instructions.md
+    - AGENTS.md
+    - .github/instructions/*.instructions.md
+  authority: >
+    This file pairs with — and never overrides — the paired_docs above. If a
+    rule here conflicts with one of those, the paired_doc wins.
+  invocation_example: >
+    Follow `src/BackstageFD/WORKFLOW.md`. Task brief: <one-paragraph
+    description of the goal, acceptance criteria, and any test plan>.
+  session_id_placeholder: '<sid>' # used in path templates throughout this file
+
+# -----------------------------------------------------------------------------
+# Inputs the user provides at session start
+# -----------------------------------------------------------------------------
+inputs:
+  - name: task_brief
+    required: true
+    notes: >
+      Goal + acceptance criteria + any test plan. Must be specific enough that
+      "done" is unambiguous. If missing or ambiguous, call `ask_user` to collect
+      it before doing any other work. Do not infer a brief from history.
+  - name: starting_phase
+    required: false
+    default: understand
+    notes: >
+      Defaults to `Understand`. Provide e.g. "resume at `Test`" if you're
+      picking up a paused session.
+  - name: merge_strategy
+    required: false
+    default: '--squash'
+    notes: >
+      Defaults to `--squash`. Override with `--merge` or `--rebase` if the
+      target branch policy requires it.
+
+# -----------------------------------------------------------------------------
+# Default posture — principles that apply across all phases
+# -----------------------------------------------------------------------------
+default_posture:
+  - 'Determine the current phase first, then run the matching step. If plan.md exists in the session folder, read its `Phase:` line; otherwise start at `Understand`.'
+  - 'Spend extra effort up front on understanding and planning before implementation. The Understand phase exists to compress costly rework later.'
+  - 'Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.'
+  - 'Single workpad = ~/.copilot/session-state/<sid>/plan.md + the SQL `todos` table. Do not create scratch markdown files outside the session folder.'
+  - "Treat any user-provided `Validation`, `Test Plan`, or `Testing` text as non-negotiable acceptance input: copy it verbatim into the workpad's `Acceptance Criteria` and `Validation` sections as required checkboxes."
+  - 'When you discover meaningful out-of-scope improvements during execution, file a separate follow-up instead of expanding scope (see escape_hatches.out_of_scope_discoveries).'
+  - 'Move phases only when the matching exit condition is met.'
+  - 'Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions (see escape_hatches.blocked_access).'
+  - 'Honor every rule in `.github/copilot-instructions.md` and the auto-loaded `.github/instructions/*.instructions.md` files. This workflow describes process; those files describe substance.'
+
+# -----------------------------------------------------------------------------
+# Phase routing — bootstrap & resume logic
+# -----------------------------------------------------------------------------
+phase_routing:
+  description: 'Steps to take at session start (or when resuming) to determine where in the phase machine to begin.'
+  steps:
+    - 'Read ~/.copilot/session-state/<sid>/plan.md if it exists.'
+    - 'Look for a `Phase: <name>` line near the top.'
+    - resume_routing:
+        no_plan_md: 'Start at `Understand`.'
+        'Phase: Understand': 'Resume `Understand`.'
+        'Phase: Plan': 'Resume `Plan`.'
+        'Phase: Execute': 'Resume `Execute`.'
+        'Phase: Test': 'Resume `Test`.'
+        'Phase: Review': 'Resume `Review`.'
+        'Phase: Report': 'Resume `Report`.'
+    - verify_git_state: >
+        Run `git status`, `git rev-parse --abbrev-ref HEAD`, `git log -1 --oneline`.
+        If the worktree is unexpectedly dirty or the branch differs from what
+        plan.md records, surface this via `ask_user` before proceeding.
+    - check_existing_pr: >
+        Check whether a PR already exists for the current branch
+        (`az repos pr list --source-branch <branch> --status all`). If a prior
+        PR is COMPLETED/ABANDONED and the task is being resumed, treat prior
+        branch state as non-reusable: create a fresh branch from origin/main and
+        restart at `Understand` (this is effectively a `Rework`).
+
+# -----------------------------------------------------------------------------
+# Phase machine — diagram + phase definitions
+# -----------------------------------------------------------------------------
+phase_machine:
+  diagram: |
+    Understand ─► Plan ─► Execute ─► Test ─► Review ─► Report
+                              ▲        │         │
+                              └────────┴─────────┘   (loop until tests + review pass)
+
+                       Rework ─► (full reset back to Understand)
+  rework_vs_inplace: >
+    Small reviewer requests (typo, rename, extra test) are addressed in-place
+    during `Review`. `Rework` is reserved for "this approach is wrong, start
+    over."
+
+phases:
+  # ---------------------------------------------------------------------------
+  - id: understand
+    entry: 'Session start, or after Rework.'
+    exit:
+      - 'Workpad bootstrapped'
+      - '`git pull --rebase origin main` clean'
+      - 'Research summary captured in plan.md `Research Summary`'
+      - 'Design considerations captured in plan.md `Design Considerations`'
+      - 'Test plan seeded into plan.md `Validation`'
+      - 'Reproduction signal recorded'
+    steps:
+      - step: bootstrap_workpad
+        do: |
+          Copilot CLI's plan mode creates plan.md in ~/.copilot/session-state/<sid>/
+          as the session-of-record workpad. Don't overwrite it from scratch —
+          **augment** it so every required section in `workpad_schema` (below)
+          exists with its declared semantics. The workflow references these
+          sections by name throughout (resume routing on `Phase:`, completion
+          bar on `Acceptance Criteria` / `Validation` / `Plan` checkboxes,
+          /research output into `Research Summary`, code-design-plan output
+          into `Design Considerations`, audit trail in `Notes`).
+          Record on first touch:
+            - The full task brief verbatim under `Task Brief`.
+            - The current `Phase: Understand` marker.
+            - The environment stamp `<abs-workdir>@<short-sha>` (ADO is implicit).
+      - step: sync_with_main
+        commands:
+          - 'git fetch origin main'
+          - 'git pull --rebase origin main'
+        record: 'Resulting HEAD short SHA + clean/conflicts-resolved status in plan.md `Notes`.'
+      - step: research
+        invokes: '/research'
+        do: |
+          Invoke Copilot's built-in `/research` command to run a deep
+          investigation against the affected area (codebase + web sources
+          where applicable). Summarise findings under plan.md
+          `Research Summary`: key files, existing patterns, prior decisions,
+          external constraints. Cite repo paths and external links so the
+          trail is auditable.
+      - step: code_design_plan
+        invokes: 'agent: src/BackstageFD/.github/agents/code-design-plan.agent.md'
+        do: |
+          Invoke the `code-design-plan` agent (via `task` tool) to analyse the
+          affected modules and surface opportunistic refactors / tech-debt
+          cleanups that should piggyback on the change. Record the agent's
+          recommendations under plan.md `Design Considerations` as
+          `[ ] consider:` items — left UNACCEPTED by default. The user makes
+          the accept/defer call during the Plan-phase user approval gate.
+          Do NOT auto-promote.
+        skeleton_missing_fallback: |
+          If the agent file does not exist on disk (the BackstageFD skeleton is
+          gitignored and may not be present on a fresh clone), proceed inline —
+          perform the same analysis directly using the auto-loaded scoped
+          instruction files and note "code-design-plan: inline fallback
+          (skeleton not present)" in plan.md `Notes`.
+      - step: test_plan
+        invokes: 'agent: src/BackstageFD/.github/agents/test-plan.agent.md'
+        do: |
+          Invoke the `test-plan` agent to read the auto-loaded testing
+          instructions (`backend.instructions.md`, `frontend.instructions.md`,
+          `backstage-clientapp-testing.instructions.md`) and produce the
+          concrete test approach. Output seeds plan.md `Validation` with the
+          right gate commands and selectors for the change scope
+          (backend / frontend / API-contract / UI-behavior).
+        skeleton_missing_fallback: |
+          If the agent file is absent (gitignored, possibly not on a fresh
+          clone), proceed inline using the auto-loaded testing instructions
+          directly and note "test-plan: inline fallback" in plan.md `Notes`.
+      - step: reproduce_current_behavior
+        do: |
+          Reproduce the current behavior before touching code.
+            - Run the failing test, exercise the broken UI, hit the failing endpoint — whatever is concrete.
+            - Record the reproduction signal (command + output, or screenshot description) in plan.md `Notes`.
+            - For pure greenfield work where reproduction doesn't apply, record an explicit "no prior signal — net-new feature" note instead.
+      - step: advance_phase
+        do: 'Set `Phase: Plan` in plan.md and proceed.'
+
+  # ---------------------------------------------------------------------------
+  - id: plan
+    entry: '`Understand` complete.'
+    exit:
+      - 'Hierarchical plan written'
+      - 'Acceptance criteria + validation steps captured'
+      - 'Design Considerations user-decided (accepted items promoted; deferred items filed as follow-ups)'
+      - 'SQL todos seeded with dependencies'
+      - 'Plan-review agent critique addressed'
+      - "User has accepted the plan via Copilot's native `exit_plan_mode` (option 1, 3, or 4)"
+    steps:
+      - step: generate_plan
+        invokes: '/plan'
+        do: |
+          Invoke Copilot's built-in `/plan` command to produce / refine the
+          structured plan. Fold its output into the existing workpad —
+          populate `Plan`, `Acceptance Criteria`, and `Validation` sections.
+      - step: user_decide_design_considerations
+        do: |
+          Walk the user through each `[ ] consider:` item from Phase 1 inside
+          the plan summary (handled in the exit_plan_mode step below). Items
+          the user accepts are promoted into concrete `Plan` todos
+          (refactor + tests). Items the user defers become out-of-scope
+          follow-ups per escape_hatches.out_of_scope_discoveries.
+          NEVER auto-promote.
+      - step: mirror_to_sql
+        do: |
+          Mirror the plan into the SQL `todos` table.
+            - Use descriptive kebab-case IDs (`add-validation-endpoint`, not `t1`).
+            - Capture dependencies in `todo_deps` so the "ready" query reflects real ordering.
+            - Status flow: `pending` → `in_progress` → `done` (or `blocked` with a reason in the description).
+      - step: self_review_plan
+        do: 'Scan plan.md once for missing steps, fragile assumptions, and acceptance gaps. Refine in-place.'
+      - step: plan_review_agent
+        invokes: 'agent: src/BackstageFD/.github/agents/plan-review.agent.md'
+        do: |
+          Invoke the `plan-review` agent to critique the plan independently.
+          Adopt findings that prevent missed acceptance criteria; set aside
+          style/complexity-only findings. Briefly note the outcome in
+          plan.md `Notes`.
+        skeleton_missing_fallback: |
+          If the agent file is absent, perform the critique inline using the
+          same heuristics: cross-check Plan ↔ Acceptance Criteria ↔
+          Validation ↔ Design Considerations and surface gaps. Note
+          "plan-review: inline fallback" in plan.md `Notes`.
+      - step: rubber_duck_fallback
+        invokes: 'agent: rubber-duck'
+        when: 'plan-review flags deep design concerns OR the change is unusually risky'
+        do: |
+          Call the existing `rubber-duck` agent for a second critique pass.
+          Briefly note the outcome in plan.md `Notes`.
+      - step: exit_plan_mode_with_execution_choice
+        invokes: 'exit_plan_mode (Copilot native tool)'
+        rule: "MUST use Copilot's native exit_plan_mode, NOT a manual ask_user clone. Only the native tool can actually switch permissions, enable autopilot, or launch /fleet."
+        do: |
+          Call `exit_plan_mode` with:
+            - A compact summary of the plan, acceptance criteria, validation
+              strategy, AND the user-pending Design Consideration items.
+            - The `actions` list including `exit_only` plus the modes the
+              workflow supports (`interactive`, `autopilot`, `autopilot_fleet`).
+            - The `recommendedAction` derived from the recommendation logic
+              below.
+          The Copilot host renders the STANDARD 4-OPTION EXECUTION MENU for
+          you; the workflow does NOT re-render it via ask_user (a manual
+          clone would only be text and could not change execution mode).
+        standard_menu_for_reference_only:
+          - id: 1
+            label: 'Accept plan and build on default permissions'
+            recommended_default: true
+          - id: 2
+            label: 'Exit plan mode and I will prompt myself'
+          - id: 3
+            label: 'Accept plan and build on autopilot'
+          - id: 4
+            label: 'Accept plan and build on autopilot + /fleet'
+        recommendation_logic:
+          description: >
+            Decide which `recommendedAction` to pass to `exit_plan_mode`.
+          ready_set_query: >
+            Pending rows in `todos` with NO unfinished dependency — i.e.,
+            for every row in `todo_deps` where `todo_id = <id>`, the
+            matching `depends_on` todo is `status='done'`, OR the todo has
+            no `todo_deps` entry as `todo_id` at all. This is the actual
+            set the executor would work next.
+          if_count_ge_3: "Set recommendedAction = 'autopilot_fleet' (option 4)."
+          else: "Set recommendedAction = 'interactive' (option 1)."
+          always_include: 'exit_only must always be in the actions list.'
+          record: "Note both the recommendation and the user's pick in plan.md `Notes` (e.g., 'Execution mode: user picked 4; recommended 4')."
+        option_to_action_mapping: "Handled by Copilot natively, not by this workflow. The workflow's contract ends at calling exit_plan_mode with the right summary + recommendation."
+      - step: advance_phase
+        do: |
+          On user pick 1, 3, or 4: set `Phase: Execute` in plan.md and
+          proceed (the host has already applied the chosen execution mode).
+          On user pick 2 (exit): end the turn and yield control to the user.
+
+  # ---------------------------------------------------------------------------
+  - id: execute
+    entry: '`Plan` approved by the user (via exit_plan_mode option 1, 3, or 4).'
+    exit: 'All planned code/test/doc changes written; SQL todos updated as work progresses.'
+    note: >
+      Execution mode (default permissions / autopilot / autopilot + /fleet)
+      was already chosen at the end of Plan via the native exit_plan_mode
+      tool. Execute does NOT re-render the menu; the host has already
+      applied the chosen mode.
+    steps:
+      - step: reload_workpad
+        do: 'Re-load plan.md and the active SQL todos. Treat these as the live execution checklist.'
+      - step: keep_workpad_current
+        do: |
+          Edit plan.md liberally as reality changes (scope, risks, validation
+          approach, discovered tasks). Keep parent/child structure intact as
+          scope evolves.
+      - step: work_todos
+        do: |
+          Work the todos one or a few at a time.
+            - `UPDATE todos SET status='in_progress' WHERE id='<id>'` BEFORE starting.
+            - `UPDATE todos SET status='done' WHERE id='<id>'` IMMEDIATELY after finishing.
+            - Add newly discovered todos with proper dependencies.
+      - step: follow_substance_rules
+        do: |
+          Code style and substance are governed by the auto-loaded scoped instruction files:
+            - Backend `.cs/.csproj` → `.github/instructions/backend.instructions.md`
+            - Frontend `BackstageFD/ClientApp/**` → `.github/instructions/frontend.instructions.md`
+            - Frontend tests `*.test.{ts,tsx}` / `*.spec.{ts,tsx}` → `.github/instructions/backstage-clientapp-testing.instructions.md`
+            - Plus all repo-wide rules under `.github/instructions/*.instructions.md` (commit-message format, security, logging, etc.)
+      - step: commits
+        do: |
+          Commits follow `.github/instructions/commit-message.instructions.md`:
+            - Conventional format: `<type>(<scope>): <subject>` (e.g. `feat(BackstageFD): add playtest validation endpoint`)
+            - Imperative mood, no trailing period, ≤72 chars
+            - Body explains *what* and *why*
+            - Always include the trailer:
+                Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+            - Commit in logical units, not after every micro-edit. Group related changes.
+      - step: update_workpad_at_milestones
+        do: |
+          Update plan.md immediately after each meaningful milestone
+          (code change landed, validation pass, review feedback addressed).
+          Never leave completed work unchecked.
+      - step: record_resume_safety
+        do: |
+          Record `LastSuccessfulCommit: <short-sha>` and `LastFailedGate:
+          <name>` (or `none`) in plan.md `Notes` after each gate run so a
+          resumed session can pick up without re-running expensive gates
+          from scratch.
+      - step: advance_phase
+        do: 'Set `Phase: Test` in plan.md when the implementation checklist is complete and proceed.'
+
+  # ---------------------------------------------------------------------------
+  - id: test
+    entry: '`Execute` complete (or after a rework iteration).'
+    exit: >
+      All required builds/tests/lints green locally — scoped by change type.
+      Every user-provided acceptance criterion + test-plan item explicitly
+      checked off in plan.md.
+    driver_skill: 'src/BackstageFD/.github/skills/run-tests/SKILL.md'
+    steps:
+      - step: detect_scope
+        do: |
+          The `run-tests` skill selects which gate set to run based on the
+          change scope:
+            - Backend-only (changes under BackstageFD/**/*.cs, BackstageFD.Tests/**, BackstageFD.Shared/**; no ClientApp change) → backend gates only.
+            - Frontend-only (changes under BackstageFD/ClientApp/** only) → frontend gates; add `yarn test:e2e:local` if UI behavior changed.
+            - API contract changed (any controller signature, DTO, or response shape change that the SPA consumes) → BOTH backend AND frontend gates (including `yarn test:e2e:local`).
+          When in doubt, run both.
+      - step: run_validation_gates
+        do: 'Run every gate in `validation_gates` that applies to the detected scope. No additions, no shortcuts.'
+        gates_to_run:
+          - validation_gates.backend
+          - validation_gates.frontend
+      - step: handle_preexisting_failures
+        do: |
+          If a test was already failing on `origin/main` before your changes
+          (verify with `git stash; <test command>; git stash pop`, or by checking
+          `main`), document this in plan.md `Notes` and continue. Do not fix
+          unrelated failures unless they are tightly coupled to your change.
+      - step: acceptance_criteria_gate
+        do: |
+          Walk through every checkbox in plan.md `Acceptance Criteria` and
+          `Validation` and tick the ones that are now satisfied. Every item
+          MUST be checked before moving to `Review`. If any cannot be satisfied,
+          either:
+            - Loop back to `Execute` to address the gap, or
+            - Use `ask_user` to confirm a scope reduction with the user.
+      - step: revert_temporary_proof_edits
+        do: |
+          You may make local proof edits (hardcode a UI account, tweak a build
+          input) to demonstrate behavior. Revert every temporary proof edit
+          before commit/push. Document them under plan.md `Validation` so the
+          trail is auditable.
+      - step: advance_phase
+        do: 'When all gates are green and acceptance criteria are checked, set `Phase: Review` and proceed.'
+
+  # ---------------------------------------------------------------------------
+  - id: review
+    entry: '`Test` green.'
+    exit: 'Local automated review layers clean; push + PR approved by user and executed; PR feedback sweep complete; PR checks green; no actionable comments outstanding.'
+    note: >
+      Automated review layers run LOCALLY before push so issues are caught
+      before they cause noisy PR churn or wasted CI cycles. Push + PR
+      creation requires explicit user approval per agent-security
+      instructions.
+    steps:
+      - step: copilot_review_local
+        invokes: '/review'
+        do: |
+          Invoke Copilot's built-in `/review` command to run the code-review
+          agent against the LOCAL diff (`git diff origin/main...HEAD`).
+          Address every finding (loop back into Execute + Test as needed)
+          before moving on. This is the FIRST of three layered review passes.
+      - step: rubber_duck_on_implementation
+        invokes: 'agent: rubber-duck'
+        do: |
+          `task` into the `rubber-duck` agent with the diff + plan.md context.
+          Validate that:
+            - The implementation honors the plan and every acceptance criterion.
+            - No tech debt was introduced.
+            - Every accepted `Design Consideration` from Phase 1 actually landed AND is covered by a test (or was explicitly deferred and filed as a follow-up).
+          Address findings via the same loop-back-to-Execute pattern.
+      - step: optional_code_review_fleet
+        when: 'non-trivial change'
+        invokes: 'skill: code-review-fleet'
+        do: |
+          Run the project's `code-review-fleet` skill — 5 parallel review
+          agents covering architecture, security, API design, code quality,
+          and testing dimensions. Address findings via the same loop.
+      - step: discover_ado_context
+        do: |
+          Resolve the ADO context for `az repos` commands.
+            - `git remote -v` — confirm the origin is on
+              `microsoft.visualstudio.com` or `dev.azure.com` (the workflow is
+              ADO-only; abort and surface to the user if the remote is on any
+              other host).
+            - `az account show` — verify the `az` CLI is logged in. If not,
+              run `az login` (interactive) or surface a blocker via
+              escape_hatches.blocked_access.
+            - Note the resolved organisation / project / repository names in
+              plan.md `Notes` so subsequent `az repos` commands can target
+              them explicitly if the default isn't right.
+      - step: push_approval_gate
+        invokes: 'ask_user'
+        rule: 'Per agent-security.instructions.md, the agent MUST NOT push to origin or open a PR without explicit human approval.'
+        do: |
+          Call `ask_user` with a compact summary (commits + files changed +
+          PR title + body preview) and ask for explicit approval to push and
+          open the PR.
+      - step: push_and_open_pr
+        when: 'user approved push_approval_gate'
+        do: 'Push the branch and open the PR using host_commands.push_and_open_pr.'
+        record: 'PR URL in plan.md `Notes`.'
+        pr_body_content: |
+          Use plan.md `Acceptance Criteria` + a `Validation` summary as the PR
+          body. (Pulls directly from the workpad.)
+      - step: pr_feedback_sweep
+        do: |
+          Run the loop defined in review_loop.feedback_sweep until no
+          actionable comment is outstanding. Follow-up pushes to an already
+          opened PR do NOT require a second approval gate.
+      - step: check_completion_bar
+        do: 'Verify every item in review_loop.completion_bar is met before leaving Review.'
+      - step: advance_phase
+        do: 'Set `Phase: Report` and wait for explicit human approval (PR approval review, or chat message from the user) before continuing.'
+
+  # ---------------------------------------------------------------------------
+  - id: report
+    entry: 'Reviewer approval received (human signal in chat or PR approval).'
+    exit: 'Final report delivered to user; optional Land sub-step executed only on explicit user approval; `task_complete` called.'
+    driver_skill: 'src/BackstageFD/.github/skills/report/SKILL.md'
+    steps:
+      - step: produce_report
+        do: |
+          Synthesize a single auditable report. MUST include:
+            - What was implemented — each item linked back to the corresponding acceptance criterion in plan.md.
+            - Proof of work — test output excerpts (backend + frontend), coverage numbers from `yarn build` / `yarn test:coverage`, PR URL, `/review` summary, `rubber-duck` critique summary, `code-review-fleet` summary (if invoked).
+            - Follow-ups filed — links to any out-of-scope issues / work items created per the escape hatch.
+            - Known gaps or open questions — anything the user still needs to decide.
+          Deliver the report inline in the session, and optionally append a
+          dated copy to plan.md `Notes` so it survives session restart.
+      - step: optional_land
+        rule: 'Merging the PR is OPT-IN. Never auto-merge.'
+        do: |
+          After delivering the report, call `ask_user` with the merge command
+          preview and wait for explicit approval.
+            - If approved → run host_commands.merge_pr + confirm_merge_landed.
+              Default merge strategy is `--squash`; honor inputs.merge_strategy
+              override if provided.
+            - If declined → leave the PR open and note in plan.md that the user
+              will merge manually.
+      - step: close_session
+        do: 'Call `task_complete` with the report summary.'
+
+  # ---------------------------------------------------------------------------
+  - id: rework
+    entry: 'Reviewer requested changes that invalidate the original approach (not minor patches).'
+    exit: 'PR closed, plan.md cleared, fresh branch from `origin/main`, restart at `Understand`.'
+    notes: >
+      Small reviewer requests (typo, rename, extra test) are addressed in-place
+      during `Review`. `Rework` is reserved for "this approach is wrong, start
+      over." Resets to `Understand` (not `Plan`) so a wrong approach re-runs
+      research too.
+    steps:
+      - step: close_pr
+        do: 'Close the existing PR with a comment explaining the rework rationale.'
+      - step: clear_workpad
+        do: 'Clear plan.md (or move it to plan.<timestamp>.md.bak in the session folder) so the new Understand phase starts clean.'
+      - step: fresh_branch
+        do: 'Create a fresh branch from `origin/main`.'
+      - step: restart_at_understand
+        do: 'Set `Phase: Understand` and restart the phase machine.'
+
+# -----------------------------------------------------------------------------
+# Validation gates — backend + frontend + acceptance + preexisting
+# -----------------------------------------------------------------------------
+validation_gates:
+  backend:
+    applies_when: 'Changes under BackstageFD/**/*.cs, BackstageFD.Tests/**, BackstageFD.Shared/**'
+    working_directory: 'src/BackstageFD'
+    commands:
+      - "dotnet build BackstageFD\\BackstageFD.csproj"
+      - "dotnet test  BackstageFD.Tests\\BackstageFD.Tests.csproj"
+    prefer_targeted_first: >
+      Prefer `--filter "FullyQualifiedName~ClassName"` first. Escalate to the
+      full suite if targeted runs are green and the contract was touched.
+    enforcement: '`TreatWarningsAsErrors=true` — any warning fails the build.'
+
+  frontend:
+    applies_when: 'Changes under BackstageFD/ClientApp/**'
+    working_directory: 'src/BackstageFD/BackstageFD/ClientApp'
+    package_manager: yarn
+    package_manager_rule: 'Yarn-only. Never run `npm install` here.'
+    commands:
+      - command: 'yarn install --frozen-lockfile'
+        when: 'only if package.json / yarn.lock changed'
+      - command: 'yarn lint'
+        notes: 'eslint . --max-warnings 0'
+      - command: 'yarn build'
+        notes: 'lint + tsc + coverage (≥80% on all four metrics) + vite build'
+      - command: 'yarn test'
+        notes: 'Vitest one-shot (CI mode)'
+      - command: 'yarn test:e2e:local'
+        when: 'only if UI behavior changed'
+    enforcement: >
+      `yarn build` runs `yarn lint`, `tsc -b`, and `yarn test:coverage` before
+      `vite build`. Any lint warning, type error, test failure, or coverage drop
+      below 80% (lines / statements / branches / functions, global) fails the
+      build. There is no escape hatch — fix the issue, do not bypass the gate.
+
+  preexisting_failures:
+    detection: |
+      If a test was already failing on `origin/main` before your changes,
+      verify with `git stash; <test command>; git stash pop` or by checking
+      `main`.
+    handling: 'Document the pre-existing failure in plan.md `Notes` and continue. Do not fix unrelated failures unless they are tightly coupled to your change.'
+
+  acceptance_criteria_gate:
+    rule: 'Every item in plan.md `Acceptance Criteria` and `Validation` MUST be checked before moving to `Review`.'
+    on_unsatisfiable: |
+      If any cannot be satisfied, either:
+        - Loop back to `Execute` to address the gap, or
+        - Use `ask_user` to confirm a scope reduction with the user.
+
+  temporary_proof_edits:
+    allowed: true
+    rule: 'You may make local proof edits (hardcode a UI account, tweak a build input) to demonstrate behavior.'
+    must_revert: 'Revert every temporary proof edit before commit/push. Document them under plan.md `Validation` so the trail is auditable.'
+
+# -----------------------------------------------------------------------------
+# Review loop — feedback sweep + completion bar
+# -----------------------------------------------------------------------------
+review_loop:
+  feedback_sweep:
+    description: 'Run this loop until no actionable comment is outstanding.'
+    steps:
+      - step: gather_feedback
+        do: 'Pull feedback from every channel (see host_commands.feedback_channels).'
+      - step: treat_every_actionable_comment_as_blocking
+        do: |
+          Treat every actionable comment (human or bot, top-level or inline) as
+          blocking until one of these is true:
+            - code/test/docs updated to address it, or
+            - explicit, justified pushback reply posted on that thread.
+      - step: re_run_test_phase
+        do: 'After addressing comments, re-run the `Test` phase, commit, push, and re-poll.'
+      - step: update_workpad
+        do: 'Update plan.md `Plan`/`Notes` to reflect each feedback item and its resolution.'
+
+  completion_bar:
+    description: 'All of these must be true to leave Review.'
+    criteria:
+      - 'Every plan.md checkbox in `Plan`, `Acceptance Criteria`, `Validation` is checked.'
+      - '`Test` gates green for the latest commit.'
+      - '`/review`, `rubber-duck`, and (if invoked) `code-review-fleet` findings all addressed.'
+      - 'PR feedback sweep complete; no actionable comments.'
+      - 'PR checks green.'
+      - 'Branch pushed.'
+      - 'For UI-touching changes: a short Loom/screenshot or written walkthrough of the user-visible flow is attached to the PR.'
+
+# -----------------------------------------------------------------------------
+# Host commands — Azure DevOps (`az repos`) CLI reference (DRY support for phases)
+# -----------------------------------------------------------------------------
+# This workflow is ADO-only. The repo origin is on
+# `microsoft.visualstudio.com` / `dev.azure.com`. All commands below assume
+# `az` is logged in (see phases > review > discover_ado_context).
+host_commands:
+  pr_status_check: 'az repos pr list --source-branch <branch> --status all'
+
+  push_and_open_pr:
+    - 'git push -u origin <branch>'
+    - |
+      az repos pr create --source-branch <branch> --target-branch main `
+        --title "<conventional commit subject>" `
+        --description "<plan.md acceptance criteria + validation summary>" `
+        --work-items <id without 'AB#' prefix>
+
+  feedback_channels:
+    - 'az repos pr show --id <number> --include-comments'
+    - 'az pipelines runs list --branch <branch>'
+
+  merge_pr:
+    - |
+      az repos pr update --id <number> --status completed `
+        --merge-commit-message "<commit subject>" --squash --delete-source-branch true
+    - "# For 'wait for required checks then complete' semantics (the ADO equivalent of GitHub's --auto), prefer setting auto-complete on the PR instead of marking it completed immediately:"
+    - |
+      az repos pr update --id <number> --auto-complete true `
+        --squash --delete-source-branch true
+    - "# Note: --auto-complete is OK after explicit user approval — it tells ADO to merge once required policies pass. The 'never auto-merge' guardrail prohibits *initiating* a merge without user approval; --auto-complete with prior authorisation is permitted."
+
+  confirm_merge_landed:
+    - "az repos pr show --id <number>  # status should be 'completed'"
+    - "az repos pr show --id <number> --query 'status' -o tsv  # poll until 'completed' when --auto-complete is in flight"
+
+# -----------------------------------------------------------------------------
+# Copilot built-ins cheat sheet — where each native command fits in the flow
+# -----------------------------------------------------------------------------
+copilot_builtins:
+  - command: '/research'
+    phase: understand
+    role: 'Deep investigation seed; output goes to plan.md `Research Summary`.'
+  - command: '/plan'
+    phase: plan
+    role: 'Generate / refine the structured plan; output folds into plan.md `Plan`, `Acceptance Criteria`, `Validation`.'
+  - command: '/fleet + /autopilot'
+    phase: execute
+    role: 'Selected via option 4 of the standard 4-option execution-mode menu. Partition independent leaf todos as parallel sub-agent tasks.'
+  - command: '/diff'
+    phase: [execute, review]
+    role: 'Diff inspection prior to commit / review.'
+  - command: '/pr'
+    phase: review
+    role: 'Push / PR operations alongside `az repos`.'
+  - command: '/review'
+    phase: review
+    role: 'Copilot code-review agent on the diff (first of three layered review passes).'
+  - command: 'task -> rubber-duck'
+    phase: [plan, review]
+    role: 'Critique pass on the plan (fallback after `plan-review`) and on the implementation.'
+  - command: 'task -> code-review-fleet'
+    phase: review
+    role: '5-dimension parallel review for non-trivial changes (existing skill).'
+
+# -----------------------------------------------------------------------------
+# Service-local custom agents and skills referenced by this workflow
+# (gitignored per BackstageFD convention — see copilot-instructions.md)
+# -----------------------------------------------------------------------------
+custom_components:
+  agents:
+    - path: 'src/BackstageFD/.github/agents/code-design-plan.agent.md'
+      phase: understand
+      role: 'Design analysis — surfaces opportunistic refactors / tech-debt cleanups.'
+    - path: 'src/BackstageFD/.github/agents/test-plan.agent.md'
+      phase: understand
+      role: 'Test approach design — seeds plan.md `Validation` based on auto-loaded testing instructions.'
+    - path: 'src/BackstageFD/.github/agents/plan-review.agent.md'
+      phase: plan
+      role: 'Plan critique — independent review pass before the user plan-review gate.'
+  skills:
+    - path: 'src/BackstageFD/.github/skills/run-tests/SKILL.md'
+      phase: test
+      role: 'Scope-aware gate execution (backend / frontend / API-contract).'
+    - path: 'src/BackstageFD/.github/skills/report/SKILL.md'
+      phase: report
+      role: 'Final summary synthesis with proof-of-work, coverage, review results.'
+
+# -----------------------------------------------------------------------------
+# Escape hatches — blocked access + out-of-scope discoveries
+# -----------------------------------------------------------------------------
+escape_hatches:
+  blocked_access:
+    when: >
+      Use this ONLY when forward progress is blocked by missing required tools
+      or auth that cannot be resolved in-session. ADO access is NOT a default
+      blocker — try alternate auth first (`az login` / re-issue a PAT / switch
+      remote between HTTPS and SSH) before declaring blocked.
+    procedure:
+      - 'Record a concise blocker brief in plan.md under `Notes`.'
+      - blocker_brief_contents:
+          - 'What is missing (specific tool, secret, permission)'
+          - 'Why it blocks (which acceptance criterion or validation step it gates)'
+          - 'Exact human action needed to unblock'
+      - 'Call `ask_user` with the brief and end the turn.'
+      - 'Do NOT mark the task complete. Do NOT proceed to subsequent phases.'
+
+  out_of_scope_discoveries:
+    when: 'You uncover a meaningful improvement that is NOT in the task brief.'
+    rule: 'Do NOT expand scope. Instead, file a follow-up.'
+    file_followup: |
+      az boards work-item create --title "<concise title>" --type "User Story" `
+        --description "<context, rationale, acceptance criteria>" --area <area> --iteration <iteration>
+    after: 'Note the follow-up reference in plan.md `Notes` and continue the original task.'
+
+# -----------------------------------------------------------------------------
+# Workpad schema — required sections in plan.md (section-name contract)
+# -----------------------------------------------------------------------------
+# The workflow makes ~30 references to plan.md by specific section name.
+# This schema is the contract: each section listed here MUST exist with the
+# declared semantics. Section ORDERING is recommended but not enforced;
+# section NAMES are load-bearing and MUST NOT be renamed without updating
+# every reference in WORKFLOW.md / WORKFLOW.yaml.
+#
+# Copilot CLI's default plan.md is the starting point — augment it to satisfy
+# this schema rather than overwriting it from scratch.
+workpad_schema:
+  header:
+    - field: 'Phase'
+      required: true
+      format: 'Single line: `Phase: <Understand|Plan|Execute|Test|Review|Report>`'
+      purpose: 'Resume routing key (see inputs.on_resume.phase_resume_map).'
+    - field: 'Branch'
+      required: true
+      format: 'Single line: `Branch: <name>`'
+      purpose: 'Cross-check git state on resume.'
+    - field: 'PR'
+      required: true
+      format: 'Single line: `PR: <url>` (filled during Review)'
+      purpose: 'PR tracking; written once the PR is opened in Review.'
+    - field: 'Environment stamp'
+      required: false
+      format: '`<abs-workdir>@<short-sha>` (ADO is implicit, this workflow is ADO-only)'
+      purpose: 'Disambiguate parallel worktrees; non-load-bearing.'
+
+  sections:
+    - name: 'Task Brief'
+      required: true
+      content: 'Verbatim task brief from the user — preserve exact wording so the user can edit.'
+      filled_by: 'Agent at session start.'
+      consumed_by: 'Every phase; the source of truth for scope.'
+
+    - name: 'Research Summary'
+      required: true
+      content: 'Key files, existing patterns, prior decisions, external constraints. Cite repo paths + external links.'
+      filled_by: 'Understand phase, from `/research` output.'
+      consumed_by: 'Plan phase (informs Plan + Acceptance Criteria).'
+
+    - name: 'Design Considerations'
+      required: true
+      content: |
+        Each item is a `[ ] consider: <opportunistic refactor / tech-debt>
+        → accepted / deferred (one-line rationale)`. NEVER auto-promote;
+        the user decides accept/defer during the Plan-phase approval.
+      filled_by: 'Understand phase, from `code-design-plan` agent.'
+      consumed_by: 'Plan phase (accepted items become Plan todos).'
+
+    - name: 'Plan'
+      required: true
+      content: 'Hierarchical `- [ ]` todo checkboxes (parent / child indentation). Mirrored into the SQL `todos` table.'
+      filled_by: 'Plan phase, from `/plan` output.'
+      consumed_by: 'Execute phase (work checklist); completion bar (every checkbox must be checked).'
+
+    - name: 'Acceptance Criteria'
+      required: true
+      content: "`- [ ]` checkboxes describing observable outcomes (e.g., 'API returns 200 with expected payload shape')."
+      filled_by: 'Plan phase.'
+      consumed_by: 'Test phase + completion bar; also forms the PR body.'
+
+    - name: 'Validation'
+      required: true
+      content: |
+        `- [ ]` checkboxes for the concrete gate commands to run
+        (e.g., `dotnet build ...`, `dotnet test ...`, `yarn lint`,
+        `yarn build`, `yarn test`, `yarn test:e2e:local`). Scope is
+        decided by the `test-plan` agent based on what changed.
+      filled_by: 'Understand phase (seed from `test-plan` agent); refined in Plan.'
+      consumed_by: 'Test phase + completion bar.'
+
+    - name: 'Notes'
+      required: true
+      content: |
+        Append-only timestamped lines (`- <YYYY-MM-DD HH:MM> <event>`)
+        for the audit trail. Typical entries:
+          - sync_with_main result (`HEAD <sha>; clean`)
+          - `/research` one-line summary
+          - reproduction signal (`<command>` returned `<output>`)
+          - plan-review / rubber-duck outcome
+          - execution-mode pick + recommendation
+          - resume safety: `LastSuccessfulCommit: <sha>` and `LastFailedGate: <name|none>` after each gate run
+          - PR URL on push, follow-up work-item references, etc.
+      filled_by: 'Every phase, continuously.'
+      consumed_by: 'Resume logic (LastSuccessfulCommit/LastFailedGate); audit/report.'
+
+  example: |
+    # NOTE: example only — NOT a canonical template. Section names and
+    # semantics from `sections` above are the contract; formatting may vary.
+
+    # Add playtest validation endpoint
+
+    Phase: Execute
+    Branch: feat/playtest-validation
+    PR: https://microsoft.visualstudio.com/.../pullrequest/12345
+
+    ## Task Brief
+    <verbatim user brief>
+
+    ## Research Summary
+    - Existing validators live in BackstageFD/Validators/...
+    - Pattern to follow: ProductValidator.cs
+
+    ## Design Considerations
+    - [ ] consider: extract shared rule helper  → deferred (out of scope)
+
+    ## Plan
+    - [x] 1. Add PlaytestRequest contract
+    - [ ] 2. Add PlaytestValidator
+      - [ ] 2.1 Unit tests
+    - [ ] 3. Wire controller endpoint
+
+    ## Acceptance Criteria
+    - [ ] POST /playtest/validate returns 200 with PlaytestResult on valid input
+    - [ ] Returns 400 with field-level errors on invalid input
+
+    ## Validation
+    - [ ] `dotnet build BackstageFD\BackstageFD.csproj` clean
+    - [ ] `dotnet test BackstageFD.Tests\BackstageFD.Tests.csproj --filter "FullyQualifiedName~PlaytestValidator"` green
+
+    ## Notes
+    - 2026-05-26 17:00 Pull synced; HEAD a1b2c3d; clean.
+    - 2026-05-26 17:05 Execution mode: user picked 1 (recommended 1).
+    - 2026-05-26 17:30 LastSuccessfulCommit: e4f5a6b; LastFailedGate: none.
+
+# -----------------------------------------------------------------------------
+# Guardrails — absolute rules
+# -----------------------------------------------------------------------------
+guardrails:
+  - 'Single workpad per session: ~/.copilot/session-state/<sid>/plan.md + the SQL `todos` table. Do not create parallel scratch files.'
+  - 'Temporary proof edits must be reverted before commit/push. Document them in plan.md `Validation`/`Notes`.'
+  - "Don't expand scope — file follow-ups for out-of-scope improvements per escape_hatches.out_of_scope_discoveries."
+  - 'Honor every rule in `.github/copilot-instructions.md`, `AGENTS.md`, and the auto-loaded `.github/instructions/*.instructions.md` files. This workflow is process; those files are substance.'
+  - 'Sentinel validation gates apply to every tool call (see the global Sentinel rules). When a gate denies an action, read the reason + hint, fix, and retry — never bypass.'
+  - 'Security & environment boundaries: never access production resources from a development session. Follow `security.instructions.md` to the letter.'
+  - 'Plain `ControllerBase` in this service (not `BaseController`); fabric clients use the `BackstageFD.Shared` SDK only from external services. See `.github/instructions/backend.instructions.md`.'
+  - 'Yarn-only in `ClientApp`: never run `npm install`. See `.github/instructions/frontend.instructions.md`.'
+  - "Execution-mode selection is owned by Copilot's native `exit_plan_mode` tool (called at the end of Plan). The workflow MUST NOT re-render the menu via `ask_user` — a manual clone is text-only and cannot change permissions, enable autopilot, or launch /fleet."
+  - 'Land is opt-in — never auto-merge. The user must explicitly approve the merge in `Report`. (`az repos pr update --auto-complete true` is permitted ONLY after that explicit approval — it waits for required policies to pass, it does not bypass authorisation.)'
+  - 'Push and PR creation require an explicit `ask_user` approval gate in Review per `agent-security.instructions.md`. Follow-up pushes to an already-opened PR do not require a second gate.'
+  - 'Custom agents/skills under `src/BackstageFD/.github/agents/` and `.../skills/` are gitignored POC scaffolds. Each invocation step MUST have a skeleton-missing fallback (inline behavior) so the workflow works on a fresh clone.'
+  - 'If a non-trivial decision is ambiguous and waiting one round-trip is cheaper than guessing wrong, call `ask_user` rather than assume.'
