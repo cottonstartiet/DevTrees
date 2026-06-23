@@ -51,7 +51,13 @@ export function useMyOpenPrs(folderPath: string | null, enabled: boolean): UseMy
   React.useEffect(() => {
     activePathRef.current = folderPath
     if (!folderPath || !enabled) return
-    void runRefresh()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void runRefresh()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [folderPath, enabled, runRefresh])
 
   return { data, error, isLoading, refresh: runRefresh }

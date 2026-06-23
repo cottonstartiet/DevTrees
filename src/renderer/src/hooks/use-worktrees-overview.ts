@@ -56,7 +56,10 @@ export function useWorktreesOverview(
   React.useEffect(() => {
     activePathRef.current = workspacePath
     if (!workspacePath || !enabled) return
-    void runRefresh()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void runRefresh()
+    })
     let intervalId: ReturnType<typeof setInterval> | null = null
     const start = (): void => {
       if (intervalId !== null) return
@@ -81,6 +84,7 @@ export function useWorktreesOverview(
     document.addEventListener('visibilitychange', onVisibility)
     if (document.visibilityState === 'visible') start()
     return () => {
+      cancelled = true
       document.removeEventListener('visibilitychange', onVisibility)
       stop()
     }

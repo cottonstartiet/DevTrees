@@ -66,25 +66,34 @@ function BranchForm({
 }: BranchFormProps): React.JSX.Element {
   const [suffix, setSuffix] = React.useState(() => defaultSuffixFromWorktree(worktree.path))
   const [touched, setTouched] = React.useState(false)
-  const [alias, setAlias] = React.useState<string | null>(null)
-  const [aliasError, setAliasError] = React.useState<string | null>(null)
+  const [aliasSnapshot, setAliasSnapshot] = React.useState<{
+    workspacePath: string
+    alias: string | null
+    error: string | null
+  }>(() => ({ workspacePath: workspace.path, alias: null, error: null }))
+
+  const isAliasCurrent = aliasSnapshot.workspacePath === workspace.path
+  const alias = isAliasCurrent ? aliasSnapshot.alias : null
+  const aliasError = isAliasCurrent ? aliasSnapshot.error : null
 
   React.useEffect(() => {
     let cancelled = false
-    setAlias(null)
-    setAliasError(null)
     getUserAlias(workspace.path)
       .then((value) => {
         if (cancelled) return
-        if (value) {
-          setAlias(value)
-        } else {
-          setAliasError('Could not determine your alias.')
-        }
+        setAliasSnapshot({
+          workspacePath: workspace.path,
+          alias: value || null,
+          error: value ? null : 'Could not determine your alias.'
+        })
       })
       .catch((err) => {
         if (cancelled) return
-        setAliasError(err instanceof Error ? err.message : 'Could not determine your alias.')
+        setAliasSnapshot({
+          workspacePath: workspace.path,
+          alias: null,
+          error: err instanceof Error ? err.message : 'Could not determine your alias.'
+        })
       })
     return () => {
       cancelled = true

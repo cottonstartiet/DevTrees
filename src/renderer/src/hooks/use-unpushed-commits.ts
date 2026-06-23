@@ -66,7 +66,10 @@ export function useUnpushedCommits(
   React.useEffect(() => {
     activeKeyRef.current = key
     if (!key || !enabled) return
-    void runRefresh()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void runRefresh()
+    })
     let intervalId: ReturnType<typeof setInterval> | null = null
     const start = (): void => {
       if (intervalId !== null) return
@@ -91,6 +94,7 @@ export function useUnpushedCommits(
     document.addEventListener('visibilitychange', onVisibility)
     if (document.visibilityState === 'visible') start()
     return () => {
+      cancelled = true
       document.removeEventListener('visibilitychange', onVisibility)
       stop()
     }

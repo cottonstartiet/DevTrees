@@ -64,7 +64,10 @@ export function useWorkingCopyStatus(
   React.useEffect(() => {
     activePathRef.current = folderPath
     if (!folderPath || !enabled) return
-    void runRefresh()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void runRefresh()
+    })
     let intervalId: ReturnType<typeof setInterval> | null = null
     const start = (): void => {
       if (intervalId !== null) return
@@ -89,6 +92,7 @@ export function useWorkingCopyStatus(
     document.addEventListener('visibilitychange', onVisibility)
     if (document.visibilityState === 'visible') start()
     return () => {
+      cancelled = true
       document.removeEventListener('visibilitychange', onVisibility)
       stop()
     }

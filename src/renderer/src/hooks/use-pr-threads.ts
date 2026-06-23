@@ -56,7 +56,13 @@ export function usePrThreads(
   React.useEffect(() => {
     activeKeyRef.current = key
     if (!key || !enabled) return
-    void runRefresh()
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void runRefresh()
+    })
+    return () => {
+      cancelled = true
+    }
   }, [key, enabled, runRefresh])
 
   return { data, error, isLoading, refresh: runRefresh }
