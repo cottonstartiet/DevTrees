@@ -1,5 +1,6 @@
 import * as React from 'react'
 import {
+  ArrowDownToLine as PullIcon,
   ArrowUpFromLine as PushIcon,
   GitCommit as GitCommitIcon,
   GitCommitVertical as GitCommitVerticalIcon,
@@ -56,6 +57,10 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
     isPushing,
     isRebasing,
     handlePush,
+    isPullingCurrent,
+    handlePullCurrent,
+    showPullCurrent,
+    pullCurrentDisabled,
     handleRebase,
     setCommitMode,
     commitMode,
@@ -86,6 +91,35 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
 
   return (
     <>
+      {showPullCurrent ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={pullCurrentDisabled}
+                onClick={() => void handlePullCurrent()}
+              >
+                {isPullingCurrent ? (
+                  <RefreshCwIcon className="size-3.5 animate-spin" />
+                ) : (
+                  <PullIcon className="size-3.5" />
+                )}
+                <span className="text-xs">{isPullingCurrent ? 'Pulling…' : 'Pull'}</span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {isPullingCurrent
+              ? `Pulling origin into ${branch}…`
+              : conflictedCount > 0
+                ? 'Resolve conflicts before pulling.'
+                : `Run \`git pull --ff-only\` for ${branch}.`}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
       {showPush ? (
         <Tooltip>
           <TooltipTrigger asChild>

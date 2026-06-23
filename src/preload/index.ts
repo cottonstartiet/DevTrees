@@ -91,6 +91,8 @@ const api = {
       ipcRenderer.invoke(RepoIpcChannels.Fetch, workspacePath, branch),
     pull: (workspacePath: string, branch: string): Promise<PullResult> =>
       ipcRenderer.invoke(RepoIpcChannels.Pull, workspacePath, branch),
+    pullCurrentBranch: (folderPath: string): Promise<PullResult> =>
+      ipcRenderer.invoke(RepoIpcChannels.PullCurrentBranch, folderPath),
     userAlias: (workspacePath: string): Promise<string> =>
       ipcRenderer.invoke(RepoIpcChannels.UserAlias, workspacePath),
     createBranch: (req: CreateBranchRequest): Promise<CreateBranchResult> =>

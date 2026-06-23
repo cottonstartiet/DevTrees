@@ -13,6 +13,7 @@ import {
   discardAllChanges,
   commit,
   pushBranch,
+  pullCurrentBranch,
   rebaseOnDefault,
   revertFiles,
   stageFiles,
@@ -50,6 +51,10 @@ export interface WorkingCopyController {
   handleOpenAllInVSCode: () => Promise<void>
   isPushing: boolean
   handlePush: () => Promise<void>
+  isPullingCurrent: boolean
+  handlePullCurrent: () => Promise<void>
+  showPullCurrent: boolean
+  pullCurrentDisabled: boolean
   isRebasing: boolean
   handleRebase: () => Promise<void>
   isDiscarding: boolean
@@ -90,6 +95,7 @@ export function useWorkingCopyController({
   const [pending, setPending] = React.useState<Set<string>>(() => new Set())
   const [commitMode, setCommitMode] = React.useState<CommitDialogMode | null>(null)
   const [isPushing, setIsPushing] = React.useState(false)
+  const [isPullingCurrent, setIsPullingCurrent] = React.useState(false)
   const [isRebasing, setIsRebasing] = React.useState(false)
   const [isDiscarding, setIsDiscarding] = React.useState(false)
   const [isCommitting, setIsCommitting] = React.useState(false)
@@ -231,6 +237,33 @@ export function useWorkingCopyController({
     }
   }, [branch, folderPath, refresh, refreshUnpushed, startTask, succeedTask, failTask])
 
+  const handlePullCurrent = React.useCallback(async (): Promise<void> => {
+    if (!folderPath || !branch) return
+    setIsPullingCurrent(true)
+    const taskId = startTask(`Pulling ${branch}`)
+    try {
+      const result = await pullCurrentBranch(folderPath)
+      if (result.ok) {
+        succeedTask(taskId)
+        if (result.alreadyUpToDate) {
+          toast.success(`${branch} is already up to date.`)
+        } else {
+          toast.success(`Pulled latest into ${branch}.`)
+        }
+        await Promise.all([refresh(), refreshUnpushed()])
+      } else {
+        failTask(taskId, result.error)
+        toast.error(`Pull failed: ${result.error}`)
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Pull failed.'
+      failTask(taskId, message)
+      toast.error(message)
+    } finally {
+      setIsPullingCurrent(false)
+    }
+  }, [branch, folderPath, refresh, refreshUnpushed, startTask, succeedTask, failTask])
+
   const handleRebase = React.useCallback(async (): Promise<void> => {
     if (!folderPath || !branch || !defaultBranch || branch === defaultBranch) return
     setIsRebasing(true)
@@ -366,14 +399,31 @@ export function useWorkingCopyController({
   }, [folderPath, branch, defaultBranch, conflictedRows])
 
   const showPush = branch !== null && folderPath !== null
+  const showPullCurrent = branch !== null && folderPath !== null
   const showRebase =
     folderPath !== null && branch !== null && defaultBranch !== null && branch !== defaultBranch
   const pushDisabled =
-    hasPending || isPushing || isRebasing || isDiscarding || isCommitting || unpushedCount === 0
-  const rebaseDisabled = hasPending || isPushing || isRebasing || isDiscarding || isCommitting
+    hasPending ||
+    isPushing ||
+    isPullingCurrent ||
+    isRebasing ||
+    isDiscarding ||
+    isCommitting ||
+    unpushedCount === 0
+  const pullCurrentDisabled =
+    hasPending ||
+    isPushing ||
+    isPullingCurrent ||
+    isRebasing ||
+    isDiscarding ||
+    isCommitting ||
+    conflictedCount > 0
+  const rebaseDisabled =
+    hasPending || isPushing || isPullingCurrent || isRebasing || isDiscarding || isCommitting
   const commitStagedDisabled =
     hasPending ||
     isPushing ||
+    isPullingCurrent ||
     isRebasing ||
     isDiscarding ||
     isCommitting ||
@@ -382,6 +432,7 @@ export function useWorkingCopyController({
   const commitAllDisabled =
     hasPending ||
     isPushing ||
+    isPullingCurrent ||
     isRebasing ||
     isDiscarding ||
     isCommitting ||
@@ -390,6 +441,7 @@ export function useWorkingCopyController({
   const discardDisabled =
     hasPending ||
     isPushing ||
+    isPullingCurrent ||
     isRebasing ||
     isDiscarding ||
     isCommitting ||
@@ -397,7 +449,13 @@ export function useWorkingCopyController({
     entries.length === 0
   const showResolveConflicts = conflictedCount > 0
   const resolveConflictsDisabled =
-    hasPending || isPushing || isRebasing || isDiscarding || isCommitting || isResolvingConflicts
+    hasPending ||
+    isPushing ||
+    isPullingCurrent ||
+    isRebasing ||
+    isDiscarding ||
+    isCommitting ||
+    isResolvingConflicts
 
   return {
     folderPath,
@@ -421,6 +479,10 @@ export function useWorkingCopyController({
     handleOpenAllInVSCode,
     isPushing,
     handlePush,
+    isPullingCurrent,
+    handlePullCurrent,
+    showPullCurrent,
+    pullCurrentDisabled,
     isRebasing,
     handleRebase,
     isDiscarding,

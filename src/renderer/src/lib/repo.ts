@@ -55,6 +55,10 @@ export function pullRepo(workspacePath: string, branch: string): Promise<PullRes
   return window.api.repo.pull(workspacePath, branch)
 }
 
+export function pullCurrentBranch(folderPath: string): Promise<PullResult> {
+  return window.api.repo.pullCurrentBranch(folderPath)
+}
+
 export function getUserAlias(workspacePath: string): Promise<string> {
   return window.api.repo.userAlias(workspacePath)
 }

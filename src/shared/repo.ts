@@ -201,6 +201,7 @@ export const RepoIpcChannels = {
   Status: 'repo:status',
   Fetch: 'repo:fetch',
   Pull: 'repo:pull',
+  PullCurrentBranch: 'repo:pull-current-branch',
   UserAlias: 'repo:user-alias',
   CreateBranch: 'repo:create-branch',
   OpenPullRequest: 'repo:open-pull-request',

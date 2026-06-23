@@ -119,7 +119,14 @@ async function launchCopilotCli({
   if (typeof prompt !== 'string' || prompt.trim() === '') {
     return { ok: false, error: 'prompt is required.' }
   }
-  const psEscapedPrompt = prompt.replace(/'/g, "''")
+  // The launched shell is Windows PowerShell 5.1, which does not escape embedded
+  // double quotes when serializing an argument to a native executable (copilot.exe).
+  // Pre-escape for Windows CRT argv (double the backslash run preceding a quote, then
+  // escape the quote) so the multi-line prompt reaches copilot as a single argument.
+  const nativeEscapedPrompt = prompt.replace(/(\\*)"/g, (_match, slashes: string) => {
+    return `${slashes}${slashes}\\"`
+  })
+  const psEscapedPrompt = nativeEscapedPrompt.replace(/'/g, "''")
   const psCommand = `copilot --allow-all-tools -i '${psEscapedPrompt}'`
   const encoded = Buffer.from(psCommand, 'utf16le').toString('base64')
   return launchDetached('wt', [

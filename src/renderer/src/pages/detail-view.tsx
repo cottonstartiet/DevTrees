@@ -1,4 +1,9 @@
 import * as React from 'react'
+import {
+  GitPullRequest as GitPullRequestIcon,
+  GitPullRequestArrow as GitPullRequestArrowIcon,
+  Loader2 as Loader2Icon
+} from 'lucide-react'
 
 import { PlaceholderCard } from '@/components/detail/dashboard-card'
 import { DetachedNudgePanel } from '@/components/detail/detached-nudge-panel'
@@ -14,7 +19,9 @@ import {
   type WorkingCopyController
 } from '@/components/detail/use-working-copy-controller'
 import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-panel'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
 import type { Worktree } from '@shared/worktree'
@@ -38,6 +45,7 @@ export interface DetailViewProps {
   onCreateBranch?: () => void
   onCreatePullRequest?: () => void
   onOpenPullRequest?: () => void
+  isCreatingPullRequest?: boolean
   onSelectWorktreePath?: (worktreePath: string) => void
 }
 
@@ -85,6 +93,12 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
           <TabsTrigger value="pull-request">Pull Request</TabsTrigger>
         </TabsList>
         <div className="ml-auto flex items-center gap-1">
+          <PrTabActions
+            existingPullRequest={props.existingPullRequest}
+            onCreatePullRequest={props.onCreatePullRequest}
+            onOpenPullRequest={props.onOpenPullRequest}
+            isCreatingPullRequest={props.isCreatingPullRequest}
+          />
           <ChangesTabActions ctrl={ctrl} />
         </div>
       </div>
@@ -110,6 +124,94 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
 
 interface TabSectionProps extends DetailViewProps {
   kind: DetailViewSelectionKind
+}
+
+interface PrTabActionsProps {
+  existingPullRequest: ExistingPullRequest | null
+  onCreatePullRequest?: () => void
+  onOpenPullRequest?: () => void
+  isCreatingPullRequest?: boolean
+}
+
+function PrTabActions({
+  existingPullRequest,
+  onCreatePullRequest,
+  onOpenPullRequest,
+  isCreatingPullRequest = false
+}: PrTabActionsProps): React.JSX.Element | null {
+  const [isOpeningPR, setIsOpeningPR] = React.useState(false)
+
+  const showOpenPr = !!existingPullRequest && !!onOpenPullRequest
+  const showCreatePr = !showOpenPr && (!!onCreatePullRequest || isCreatingPullRequest)
+
+  if (!showOpenPr && !showCreatePr) return null
+
+  const handleOpenPR = async (): Promise<void> => {
+    if (!onOpenPullRequest || isOpeningPR) return
+    setIsOpeningPR(true)
+    try {
+      await Promise.resolve(onOpenPullRequest())
+    } finally {
+      setIsOpeningPR(false)
+    }
+  }
+
+  return (
+    <>
+      {showOpenPr ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={isOpeningPR}
+                onClick={() => void handleOpenPR()}
+              >
+                {isOpeningPR ? (
+                  <Loader2Icon className="size-3.5 animate-spin" />
+                ) : (
+                  <GitPullRequestIcon className="size-3.5" />
+                )}
+                <span className="text-xs">Open PR</span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Open PR #{existingPullRequest!.id} in Azure DevOps</TooltipContent>
+        </Tooltip>
+      ) : null}
+      {showCreatePr ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={isCreatingPullRequest || !onCreatePullRequest}
+                onClick={onCreatePullRequest}
+              >
+                {isCreatingPullRequest ? (
+                  <Loader2Icon className="size-3.5 animate-spin" />
+                ) : (
+                  <GitPullRequestArrowIcon className="size-3.5" />
+                )}
+                <span className="text-xs">
+                  {isCreatingPullRequest ? 'Creating PR…' : 'Create PR'}
+                </span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {isCreatingPullRequest
+              ? 'Creating pull request in Azure DevOps…'
+              : 'Create pull request in Azure DevOps'}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+    </>
+  )
 }
 
 interface ChangesTabProps {

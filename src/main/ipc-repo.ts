@@ -56,6 +56,7 @@ import {
   getWorktreesOverview,
   openPullRequest,
   pullDefaultBranch,
+  pullCurrentBranch,
   pushCurrentBranch,
   rebaseOnDefault,
   stageFiles,
@@ -150,6 +151,17 @@ export function registerRepoIpc(): void {
           error: 'unknown',
           message: err instanceof Error ? err.message : 'create-branch failed'
         }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    RepoIpcChannels.PullCurrentBranch,
+    async (_event, folderPath: string): Promise<PullResult> => {
+      try {
+        return await pullCurrentBranch(folderPath)
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'pull failed' }
       }
     }
   )

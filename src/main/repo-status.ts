@@ -781,6 +781,24 @@ export async function pullDefaultBranch(
   }
 }
 
+export async function pullCurrentBranch(folderPath: string): Promise<PullResult> {
+  if (!folderPath) return { ok: false, error: 'folderPath is required' }
+  try {
+    const { stdout } = await runGit(['pull', '--ff-only'], folderPath)
+    const alreadyUpToDate = /already up[\s-]?to[\s-]?date/i.test(stdout)
+    return { ok: true, fastForwarded: !alreadyUpToDate, alreadyUpToDate, message: stdout.trim() }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'git pull failed'
+    if (/no tracking information|no upstream|There is no tracking information/i.test(message)) {
+      return {
+        ok: false,
+        error: 'No upstream configured for this branch. Push it first to set an upstream.'
+      }
+    }
+    return { ok: false, error: message }
+  }
+}
+
 export async function getWorkingCopyStatus(
   req: WorkingCopyStatusRequest
 ): Promise<WorkingCopyStatusResult> {

@@ -416,24 +416,8 @@ function AppShell(): React.JSX.Element {
               isWorktree={!!activeWorktree}
               workspacePath={activeWorkspace?.path ?? null}
               repo={repo}
-              onCreateBranch={
-                activeWorktree && activeWorktree.isDetached ? handleCreateBranchClick : undefined
-              }
-              onCreatePullRequest={
-                detailHeadState === 'branch' &&
-                detailFolderPath &&
-                detailBranch &&
-                repo.defaultBranch &&
-                detailBranch !== repo.defaultBranch &&
-                !existingPullRequest
-                  ? handleCreatePullRequest
-                  : undefined
-              }
               existingPullRequest={existingPullRequest}
               onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
-              isCreatingPullRequest={
-                !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
-              }
               branchWebUrl={branchWebUrl}
               onOpenBranch={branchWebUrl ? handleOpenBranch : undefined}
             />
@@ -472,6 +456,9 @@ function AppShell(): React.JSX.Element {
                     : undefined
                 }
                 onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
+                isCreatingPullRequest={
+                  !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
+                }
                 onSelectWorktreePath={
                   activeWorkspace
                     ? (path: string) => handleSelectWorktree(activeWorkspace.id, path)

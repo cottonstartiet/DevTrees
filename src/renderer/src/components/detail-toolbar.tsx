@@ -4,10 +4,6 @@ import {
   Code2 as Code2Icon,
   Copy as CopyIcon,
   FolderOpen as FolderOpenIcon,
-  GitBranchPlus as GitBranchPlusIcon,
-  GitMerge as GitMergeIcon,
-  GitPullRequest as GitPullRequestIcon,
-  GitPullRequestArrow as GitPullRequestArrowIcon,
   Loader2 as Loader2Icon,
   RefreshCw as RefreshCwIcon,
   Terminal as TerminalIcon
@@ -15,15 +11,12 @@ import {
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { UseRepoStatusResult } from '@/hooks/use-repo-status'
-import { rebaseOnDefault } from '@/lib/repo'
 import { openInVSCode, openInWindowsTerminal, openPath } from '@/lib/system'
 import { cn } from '@/lib/utils'
-import type { RebaseOnDefaultResult } from '@shared/repo'
 
 const IS_WINDOWS =
   typeof navigator !== 'undefined' && /win/i.test(navigator.platform || navigator.userAgent || '')
@@ -43,11 +36,8 @@ export interface DetailToolbarProps {
   isWorktree?: boolean
   workspacePath?: string | null
   repo: UseRepoStatusResult
-  onCreateBranch?: () => void
-  onCreatePullRequest?: () => void
   existingPullRequest?: DetailToolbarExistingPr | null
   onOpenPullRequest?: () => void
-  isCreatingPullRequest?: boolean
   branchWebUrl?: string | null
   onOpenBranch?: () => void
 }
@@ -59,17 +49,13 @@ export function DetailToolbar({
   isDetached,
   headState,
   isWorktree = false,
-  workspacePath = null,
   repo,
-  onCreateBranch,
-  onCreatePullRequest,
   existingPullRequest,
   onOpenPullRequest,
-  isCreatingPullRequest = false,
   branchWebUrl,
   onOpenBranch
 }: DetailToolbarProps): React.JSX.Element {
-  const { defaultBranch, status, isFetching, isPulling, pull, refresh } = repo
+  const { defaultBranch, status, isFetching, isPulling, pull } = repo
   const behind = status?.behind ?? 0
   const ahead = status?.ahead ?? 0
   const hasRemote = status?.hasRemote ?? false
@@ -87,46 +73,9 @@ export function DetailToolbar({
           ? `${defaultBranch} is ${ahead} ahead of origin (nothing to pull)`
           : `${defaultBranch} is up to date with origin`
 
-  const [isRebasing, setIsRebasing] = React.useState(false)
-  const [confirmRebaseOpen, setConfirmRebaseOpen] = React.useState(false)
   const [isOpeningVSCode, setIsOpeningVSCode] = React.useState(false)
   const [isOpeningTerminal, setIsOpeningTerminal] = React.useState(false)
   const [isOpeningFolder, setIsOpeningFolder] = React.useState(false)
-  const [isOpeningPR, setIsOpeningPR] = React.useState(false)
-  const rebaseDisabled = isRebasing || isDetached || !defaultBranch
-  const isOnDefault = !!branch && !!defaultBranch && branch === defaultBranch
-  const rebaseTooltipText = isDetached
-    ? 'Rebase needs a branch — this worktree is detached.'
-    : !defaultBranch
-      ? 'Resolving default branch…'
-      : isOnDefault
-        ? `Pull origin/${defaultBranch} into this worktree`
-        : `Pull origin/${defaultBranch} in workspace and rebase ${branch ?? 'current branch'} onto it`
-
-  const rebaseConfirmMessage = isOnDefault
-    ? `Fast-forward ${defaultBranch} to origin/${defaultBranch}? Make sure your working tree is clean.`
-    : `Pull origin/${defaultBranch} into the workspace and rebase ${branch} onto it? Make sure your working tree is clean.`
-
-  const handleRebase = (): void => {
-    if (rebaseDisabled) return
-    setConfirmRebaseOpen(true)
-  }
-
-  const runRebase = async (): Promise<void> => {
-    if (rebaseDisabled) return
-    setIsRebasing(true)
-    try {
-      const result = await rebaseOnDefault({
-        folderPath,
-        workspacePath: workspacePath ?? undefined
-      })
-      handleRebaseResult(result, folderPath, defaultBranch!, refresh)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Rebase failed.')
-    } finally {
-      setIsRebasing(false)
-    }
-  }
 
   const handleVSCode = async (): Promise<void> => {
     if (isOpeningVSCode) return
@@ -161,16 +110,6 @@ export function DetailToolbar({
     }
   }
 
-  const handleOpenPR = async (): Promise<void> => {
-    if (!onOpenPullRequest || isOpeningPR) return
-    setIsOpeningPR(true)
-    try {
-      await Promise.resolve(onOpenPullRequest())
-    } finally {
-      setIsOpeningPR(false)
-    }
-  }
-
   const handleCopyPath = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(folderPath)
@@ -183,9 +122,6 @@ export function DetailToolbar({
   const handlePull = async (): Promise<void> => {
     await pull()
   }
-
-  const showOpenPr = !!existingPullRequest && !!onOpenPullRequest
-  const showCreatePr = !showOpenPr && (!!onCreatePullRequest || isCreatingPullRequest)
 
   return (
     <>
@@ -230,103 +166,7 @@ export function DetailToolbar({
         ) : null}
       </div>
       <div className="flex items-center gap-1">
-        {onCreateBranch ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="size-8" onClick={onCreateBranch}>
-                <GitBranchPlusIcon className="size-4" />
-                <span className="sr-only">Create branch from this worktree</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Create branch from this worktree</TooltipContent>
-          </Tooltip>
-        ) : null}
-
-        {showOpenPr ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                onClick={handleOpenPR}
-                disabled={isOpeningPR}
-                aria-busy={isOpeningPR}
-              >
-                {isOpeningPR ? (
-                  <Loader2Icon className="size-4 animate-spin" />
-                ) : (
-                  <GitPullRequestIcon className="size-4" />
-                )}
-                <span className="sr-only">
-                  Open pull request #{existingPullRequest!.id} in Azure DevOps
-                </span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Open PR #{existingPullRequest!.id} in Azure DevOps</TooltipContent>
-          </Tooltip>
-        ) : null}
-
-        {showCreatePr ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                onClick={onCreatePullRequest}
-                disabled={isCreatingPullRequest || !onCreatePullRequest}
-                aria-busy={isCreatingPullRequest}
-              >
-                {isCreatingPullRequest ? (
-                  <Loader2Icon className="size-4 animate-spin" />
-                ) : (
-                  <GitPullRequestArrowIcon className="size-4" />
-                )}
-                <span className="sr-only">
-                  {isCreatingPullRequest
-                    ? 'Creating pull request in Azure DevOps'
-                    : 'Create pull request in Azure DevOps'}
-                </span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isCreatingPullRequest
-                ? 'Creating pull request in Azure DevOps…'
-                : 'Create pull request in Azure DevOps'}
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
-
-        {isWorktree ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="relative size-8"
-                onClick={() => void handleRebase()}
-                disabled={rebaseDisabled}
-                aria-busy={isRebasing}
-                aria-label={
-                  isOnDefault
-                    ? `Pull origin/${defaultBranch ?? '...'}`
-                    : `Rebase ${branch ?? 'branch'} on origin/${defaultBranch ?? '...'}`
-                }
-              >
-                {isRebasing ? (
-                  <Loader2Icon className="size-4 animate-spin" />
-                ) : (
-                  <GitMergeIcon className="size-4" />
-                )}
-                <span className="sr-only">
-                  {isOnDefault ? 'Pull latest' : 'Rebase on default branch'}
-                </span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{rebaseTooltipText}</TooltipContent>
-          </Tooltip>
-        ) : (
+        {isWorktree ? null : (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -359,8 +199,6 @@ export function DetailToolbar({
             <TooltipContent>{syncTooltipText}</TooltipContent>
           </Tooltip>
         )}
-
-        <Separator orientation="vertical" className="bg-border/80 mx-2 !h-6 w-px" />
 
         <Tooltip>
           <TooltipTrigger asChild>
@@ -440,57 +278,6 @@ export function DetailToolbar({
         </Tooltip>
       </div>
     </header>
-      <ConfirmDialog
-        open={confirmRebaseOpen}
-        onOpenChange={setConfirmRebaseOpen}
-        title={isOnDefault ? `Pull origin/${defaultBranch}?` : `Rebase ${branch ?? 'branch'}?`}
-        description={rebaseConfirmMessage}
-        confirmLabel={isOnDefault ? 'Pull' : 'Rebase'}
-        onConfirm={() => void runRebase()}
-      />
     </>
   )
-}
-
-function handleRebaseResult(
-  result: RebaseOnDefaultResult,
-  folderPath: string,
-  defaultBranch: string,
-  onRebased: () => Promise<void> | void
-): void {
-  if (result.ok) {
-    toast.success(`Rebased on origin/${defaultBranch}.`)
-    void onRebased()
-    return
-  }
-  switch (result.code) {
-    case 'dirty':
-      toast.error('Commit or stash your local changes first.')
-      return
-    case 'conflicts':
-      toast.error('Rebase paused with conflicts — use the ✨ Resolve button or open VS Code.', {
-        action: {
-          label: 'Open in VS Code',
-          onClick: () => {
-            void openInVSCode(folderPath)
-          }
-        }
-      })
-      return
-    case 'fetch-failed':
-      toast.error(`Could not fetch origin: ${result.message ?? 'fetch failed'}`)
-      return
-    case 'pull-failed':
-      toast.error(`Could not fast-forward ${defaultBranch}: ${result.message ?? 'pull failed'}`)
-      return
-    case 'rebase-failed':
-      toast.error(`Rebase failed: ${result.message ?? 'rebase failed'}`)
-      return
-    case 'no-default-branch':
-      toast.error('Could not determine the default branch.')
-      return
-    case 'git-failed':
-    default:
-      toast.error(result.message ?? 'Git command failed.')
-  }
 }
