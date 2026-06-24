@@ -9,12 +9,21 @@ import {
   MoreHorizontal as MoreHorizontalIcon,
   Plus as PlusIcon,
   Settings as SettingsIcon,
+  Sparkles as SparklesIcon,
   Trash2 as Trash2Icon
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 import type { Workspace, WorkspaceRemoteKind } from '@shared/workspace'
 import type { Worktree } from '@shared/worktree'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger
+} from '@/components/ui/context-menu'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,7 +47,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem
 } from '@/components/ui/sidebar'
-import { cn } from '@/lib/utils'
+import { cn, sessionLabel } from '@/lib/utils'
 import { useSessions } from '@/contexts/sessions-context'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
@@ -119,9 +128,31 @@ export function AppSidebar({
   onSelectWorktree,
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
-  const { sessions, activeSessionId, selectSession } = useSessions()
+  const { sessions, activeSessionId, selectSession, createSession } = useSessions()
   const [workspacesOpen, setWorkspacesOpen] = React.useState(true)
   const [sessionsOpen, setSessionsOpen] = React.useState(true)
+
+  const handleStartCopilotSession = React.useCallback(
+    async (wt: Worktree): Promise<void> => {
+      try {
+        const result = await createSession({
+          folderPath: wt.path,
+          label: sessionLabel({ folderPath: wt.path, branch: wt.branch, isWorktree: true })
+        })
+        if (result.ok) {
+          toast.success('Copilot session started.')
+        } else {
+          toast.error(`Could not start Copilot session: ${result.error}`)
+        }
+      } catch (err) {
+        toast.error(
+          `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
+        )
+      }
+    },
+    [createSession]
+  )
+
   return (
     <Sidebar collapsible="icon" className="top-0 bottom-5 h-[calc(100svh-1.25rem)]">
       <SidebarContent className="overflow-hidden">
@@ -242,36 +273,58 @@ export function AppSidebar({
                                     )}
                                     aria-disabled={isDeleting || undefined}
                                   >
-                                    <SidebarMenuSubButton
-                                      asChild
-                                      isActive={isActive}
-                                      title={tooltip}
-                                      className="h-auto py-1"
-                                    >
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          if (isDeleting) return
-                                          onSelectWorktree(ws.id, wt.path)
-                                        }}
-                                        className="w-full text-left"
-                                        disabled={isDeleting}
-                                      >
-                                        {isDeleting ? (
-                                          <Loader2Icon className="animate-spin" />
-                                        ) : (
-                                          <GitBranchIcon />
-                                        )}
-                                        <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                                          <span className="truncate">{worktreeLabel(wt.path)}</span>
-                                          {subtitle ? (
-                                            <span className="truncate text-[10px] text-sidebar-foreground/70">
-                                              {subtitle}
-                                            </span>
-                                          ) : null}
-                                        </div>
-                                      </button>
-                                    </SidebarMenuSubButton>
+                                    <ContextMenu>
+                                      <ContextMenuTrigger asChild>
+                                        <SidebarMenuSubButton
+                                          asChild
+                                          isActive={isActive}
+                                          title={tooltip}
+                                          className="h-auto py-1"
+                                        >
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              if (isDeleting) return
+                                              onSelectWorktree(ws.id, wt.path)
+                                            }}
+                                            className="w-full text-left"
+                                            disabled={isDeleting}
+                                          >
+                                            {isDeleting ? (
+                                              <Loader2Icon className="animate-spin" />
+                                            ) : (
+                                              <GitBranchIcon />
+                                            )}
+                                            <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                                              <span className="truncate">
+                                                {worktreeLabel(wt.path)}
+                                              </span>
+                                              {subtitle ? (
+                                                <span className="truncate text-[10px] text-sidebar-foreground/70">
+                                                  {subtitle}
+                                                </span>
+                                              ) : null}
+                                            </div>
+                                          </button>
+                                        </SidebarMenuSubButton>
+                                      </ContextMenuTrigger>
+                                      <ContextMenuContent className="w-52">
+                                        <ContextMenuItem
+                                          onSelect={() => void handleStartCopilotSession(wt)}
+                                        >
+                                          <SparklesIcon />
+                                          <span>Start Copilot session</span>
+                                        </ContextMenuItem>
+                                        <ContextMenuSeparator />
+                                        <ContextMenuItem
+                                          variant="destructive"
+                                          onSelect={() => onDeleteWorktree(ws.id, wt)}
+                                        >
+                                          <Trash2Icon />
+                                          <span>Delete worktree</span>
+                                        </ContextMenuItem>
+                                      </ContextMenuContent>
+                                    </ContextMenu>
                                     {!isDeleting ? (
                                       <DropdownMenu>
                                         <DropdownMenuTrigger asChild>
@@ -285,6 +338,13 @@ export function AppSidebar({
                                           </SidebarMenuAction>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent side="right" align="start">
+                                          <DropdownMenuItem
+                                            onSelect={() => void handleStartCopilotSession(wt)}
+                                          >
+                                            <SparklesIcon />
+                                            <span>Start Copilot session</span>
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
                                           <DropdownMenuItem
                                             variant="destructive"
                                             onSelect={() => onDeleteWorktree(ws.id, wt)}
