@@ -1,6 +1,6 @@
 {
   "name": "devtrees",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "DevTrees — an Electron desktop app built with TypeScript, Vite, React and shadcn/ui.",
   "main": "./out/main/index.js",
   "author": "example.com",

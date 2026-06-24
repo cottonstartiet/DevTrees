@@ -312,6 +312,14 @@ function AppShell(): React.JSX.Element {
     return prCache.get(prCacheKey) ?? null
   }, [prCacheKey, prCache])
 
+  // The PR status is "resolved" once the lookup has populated the cache. When a
+  // lookup applies (prCacheKey set) but the cache is empty, the status is still
+  // being determined and the PR action buttons should stay disabled.
+  const isPullRequestStatusResolved = useMemo<boolean>(() => {
+    if (!prCacheKey) return true
+    return prCache.has(prCacheKey)
+  }, [prCacheKey, prCache])
+
   useEffect(() => {
     if (!prCacheKey || !detailFolderPath) return
     if (prCache.has(prCacheKey)) return
@@ -459,6 +467,7 @@ function AppShell(): React.JSX.Element {
                 isCreatingPullRequest={
                   !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
                 }
+                isPullRequestStatusResolved={isPullRequestStatusResolved}
                 onSelectWorktreePath={
                   activeWorkspace
                     ? (path: string) => handleSelectWorktree(activeWorkspace.id, path)

@@ -19,7 +19,7 @@ import {
   stageFiles,
   unstageFiles
 } from '@/lib/repo'
-import { launchCopilotCli, openInVSCode, openInVSCodeScm } from '@/lib/system'
+import { launchCopilotCli, openInVSCode, openInVSCodeScm, openPath } from '@/lib/system'
 import { buildConflictsPrompt } from '@/lib/copilot-conflicts-prompt'
 import type { RebaseOnDefaultResult, WorkingCopyEntry } from '@shared/repo'
 
@@ -47,7 +47,10 @@ export interface WorkingCopyController {
   pending: Set<string>
   handleStage: (entry: WorkingCopyEntry) => Promise<void>
   handleUnstage: (entry: WorkingCopyEntry) => Promise<void>
+  handleStageAll: (entries: WorkingCopyEntry[]) => Promise<void>
+  handleUnstageAll: (entries: WorkingCopyEntry[]) => Promise<void>
   handleRevert: (entry: WorkingCopyEntry) => Promise<void>
+  handleOpenFile: (entry: WorkingCopyEntry) => Promise<void>
   handleOpenAllInVSCode: () => Promise<void>
   isPushing: boolean
   handlePush: () => Promise<void>
@@ -177,6 +180,50 @@ export function useWorkingCopyController({
     [folderPath, markPending, refresh]
   )
 
+  const handleStageAll = React.useCallback(
+    async (rows: WorkingCopyEntry[]): Promise<void> => {
+      if (!folderPath || rows.length === 0) return
+      const keys = rows.map((e) => e.path)
+      const files = rows.flatMap((e) => (e.originalPath ? [e.originalPath, e.path] : [e.path]))
+      keys.forEach((key) => markPending(key, true))
+      try {
+        const result = await stageFiles({ folderPath, files })
+        if (!result.ok) {
+          toast.error(result.error || 'Stage failed.')
+          return
+        }
+        void refresh()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Stage failed.')
+      } finally {
+        keys.forEach((key) => markPending(key, false))
+      }
+    },
+    [folderPath, markPending, refresh]
+  )
+
+  const handleUnstageAll = React.useCallback(
+    async (rows: WorkingCopyEntry[]): Promise<void> => {
+      if (!folderPath || rows.length === 0) return
+      const keys = rows.map((e) => e.path)
+      const files = rows.flatMap((e) => (e.originalPath ? [e.originalPath, e.path] : [e.path]))
+      keys.forEach((key) => markPending(key, true))
+      try {
+        const result = await unstageFiles({ folderPath, files })
+        if (!result.ok) {
+          toast.error(result.error || 'Unstage failed.')
+          return
+        }
+        void refresh()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Unstage failed.')
+      } finally {
+        keys.forEach((key) => markPending(key, false))
+      }
+    },
+    [folderPath, markPending, refresh]
+  )
+
   const handleRevert = React.useCallback(
     async (entry: WorkingCopyEntry): Promise<void> => {
       if (!folderPath) return
@@ -201,6 +248,24 @@ export function useWorkingCopyController({
 
   const hasPending = pending.size > 0
   const unpushedCount = unpushedData?.commits.length ?? 0
+
+  const handleOpenFile = React.useCallback(
+    async (entry: WorkingCopyEntry): Promise<void> => {
+      if (!folderPath) return
+      const relative = entry.path.replace(/\//g, '\\')
+      const separator = folderPath.endsWith('\\') ? '' : '\\'
+      const absolutePath = `${folderPath}${separator}${relative}`
+      try {
+        const result = await openPath(absolutePath)
+        if (!result.ok) {
+          toast.error(result.error || 'Could not open file.')
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not open file.')
+      }
+    },
+    [folderPath]
+  )
 
   const handleOpenAllInVSCode = React.useCallback(async (): Promise<void> => {
     if (!folderPath) return
@@ -475,7 +540,10 @@ export function useWorkingCopyController({
     pending,
     handleStage,
     handleUnstage,
+    handleStageAll,
+    handleUnstageAll,
     handleRevert,
+    handleOpenFile,
     handleOpenAllInVSCode,
     isPushing,
     handlePush,

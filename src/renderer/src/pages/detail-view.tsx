@@ -46,6 +46,7 @@ export interface DetailViewProps {
   onCreatePullRequest?: () => void
   onOpenPullRequest?: () => void
   isCreatingPullRequest?: boolean
+  isPullRequestStatusResolved?: boolean
   onSelectWorktreePath?: (worktreePath: string) => void
 }
 
@@ -98,6 +99,7 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
             onCreatePullRequest={props.onCreatePullRequest}
             onOpenPullRequest={props.onOpenPullRequest}
             isCreatingPullRequest={props.isCreatingPullRequest}
+            isPullRequestStatusResolved={props.isPullRequestStatusResolved}
           />
           <ChangesTabActions ctrl={ctrl} />
         </div>
@@ -131,13 +133,15 @@ interface PrTabActionsProps {
   onCreatePullRequest?: () => void
   onOpenPullRequest?: () => void
   isCreatingPullRequest?: boolean
+  isPullRequestStatusResolved?: boolean
 }
 
 function PrTabActions({
   existingPullRequest,
   onCreatePullRequest,
   onOpenPullRequest,
-  isCreatingPullRequest = false
+  isCreatingPullRequest = false,
+  isPullRequestStatusResolved = true
 }: PrTabActionsProps): React.JSX.Element | null {
   const [isOpeningPR, setIsOpeningPR] = React.useState(false)
 
@@ -189,16 +193,24 @@ function PrTabActions({
                 variant="ghost"
                 size="sm"
                 className="h-7 gap-1.5 px-2"
-                disabled={isCreatingPullRequest || !onCreatePullRequest}
+                disabled={
+                  isCreatingPullRequest ||
+                  !onCreatePullRequest ||
+                  !isPullRequestStatusResolved
+                }
                 onClick={onCreatePullRequest}
               >
-                {isCreatingPullRequest ? (
+                {isCreatingPullRequest || !isPullRequestStatusResolved ? (
                   <Loader2Icon className="size-3.5 animate-spin" />
                 ) : (
                   <GitPullRequestArrowIcon className="size-3.5" />
                 )}
                 <span className="text-xs">
-                  {isCreatingPullRequest ? 'Creating PR…' : 'Create PR'}
+                  {isCreatingPullRequest
+                    ? 'Creating PR…'
+                    : !isPullRequestStatusResolved
+                      ? 'Checking PR…'
+                      : 'Create PR'}
                 </span>
               </Button>
             </span>
@@ -206,7 +218,9 @@ function PrTabActions({
           <TooltipContent>
             {isCreatingPullRequest
               ? 'Creating pull request in Azure DevOps…'
-              : 'Create pull request in Azure DevOps'}
+              : !isPullRequestStatusResolved
+                ? 'Checking for an existing pull request…'
+                : 'Create pull request in Azure DevOps'}
           </TooltipContent>
         </Tooltip>
       ) : null}

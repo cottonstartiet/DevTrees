@@ -2,6 +2,7 @@ import * as React from 'react'
 import {
   ArrowDownToLine as PullIcon,
   ArrowUpFromLine as PushIcon,
+  ExternalLink as OpenFileIcon,
   GitCommit as GitCommitIcon,
   GitCommitVertical as GitCommitVerticalIcon,
   GitCompareArrows as GitCompareArrowsIcon,
@@ -420,7 +421,10 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
     pending,
     handleStage,
     handleUnstage,
+    handleStageAll,
+    handleUnstageAll,
     handleRevert,
+    handleOpenFile,
     handleOpenAllInVSCode,
     isCommitting,
     folderPath
@@ -471,7 +475,9 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
                 disabled={isCommitting}
                 onStage={handleStage}
                 onUnstage={handleUnstage}
+                onBulkAction={handleUnstageAll}
                 onRevert={handleRevert}
+                onOpenFile={handleOpenFile}
               />
             ) : null}
             {changedRows.length > 0 ? (
@@ -484,7 +490,9 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
                 disabled={isCommitting}
                 onStage={handleStage}
                 onUnstage={handleUnstage}
+                onBulkAction={handleStageAll}
                 onRevert={handleRevert}
+                onOpenFile={handleOpenFile}
               />
             ) : null}
             {untrackedRows.length > 0 ? (
@@ -497,7 +505,9 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
                 disabled={isCommitting}
                 onStage={handleStage}
                 onUnstage={handleUnstage}
+                onBulkAction={handleStageAll}
                 onRevert={handleRevert}
+                onOpenFile={handleOpenFile}
               />
             ) : null}
           </div>
@@ -516,7 +526,9 @@ interface FileSectionProps {
   disabled?: boolean
   onStage: (entry: WorkingCopyEntry) => void | Promise<void>
   onUnstage: (entry: WorkingCopyEntry) => void | Promise<void>
+  onBulkAction?: (entries: WorkingCopyEntry[]) => void | Promise<void>
   onRevert: (entry: WorkingCopyEntry) => void | Promise<void>
+  onOpenFile: (entry: WorkingCopyEntry) => void | Promise<void>
 }
 
 function FileSection({
@@ -528,7 +540,9 @@ function FileSection({
   disabled = false,
   onStage,
   onUnstage,
-  onRevert
+  onBulkAction,
+  onRevert,
+  onOpenFile
 }: FileSectionProps): React.JSX.Element {
   const toneClass =
     tone === 'ok'
@@ -539,6 +553,13 @@ function FileSection({
   const canStage = actionKind === 'stage'
   const canUnstage = actionKind === 'unstage'
   const onAction = actionKind === 'stage' ? onStage : onUnstage
+  const bulkLabel = actionKind === 'stage' ? 'Stage all' : 'Unstage all'
+  const bulkTooltip =
+    actionKind === 'stage'
+      ? `Stage all ${entries.length} ${label.toLowerCase()} file${entries.length === 1 ? '' : 's'}.`
+      : `Unstage all ${entries.length} staged file${entries.length === 1 ? '' : 's'}.`
+  const anyPending = entries.some((e) => pending.has(e.path))
+  const bulkDisabled = disabled || anyPending || entries.length === 0
   return (
     <section className="flex min-w-0 flex-col gap-1">
       <header className="flex items-center gap-2">
@@ -548,6 +569,29 @@ function FileSection({
         <span className="text-muted-foreground bg-muted rounded-full px-1.5 py-0.5 font-mono text-[10px] tabular-nums">
           {entries.length}
         </span>
+        {onBulkAction ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="ml-auto">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 gap-1 px-1.5"
+                  disabled={bulkDisabled}
+                  onClick={() => void onBulkAction(entries)}
+                >
+                  {actionKind === 'stage' ? (
+                    <PlusIcon className="size-3.5" />
+                  ) : (
+                    <MinusIcon className="size-3.5" />
+                  )}
+                  <span className="text-[11px]">{bulkLabel}</span>
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{bulkTooltip}</TooltipContent>
+          </Tooltip>
+        ) : null}
       </header>
       <ul className="flex min-w-0 flex-col">
         {entries.map((entry) => {
@@ -558,7 +602,10 @@ function FileSection({
           return (
             <ContextMenu key={key}>
               <ContextMenuTrigger asChild>
-                <li className="hover:bg-muted/50 group flex min-w-0 items-center gap-2 overflow-hidden rounded px-2 py-1 text-xs">
+                <li
+                  className="hover:bg-muted/50 group flex min-w-0 cursor-default items-center gap-2 overflow-hidden rounded px-2 py-1 text-xs"
+                  onDoubleClick={() => void onOpenFile(entry)}
+                >
                   <span
                     className="bg-muted text-muted-foreground inline-flex h-5 min-w-[1.75rem] shrink-0 items-center justify-center rounded font-mono text-[10px] tabular-nums"
                     title={`${entry.indexStatus}${entry.worktreeStatus}`}
@@ -600,6 +647,11 @@ function FileSection({
                 </li>
               </ContextMenuTrigger>
               <ContextMenuContent className="w-40">
+                <ContextMenuItem disabled={isPending} onSelect={() => void onOpenFile(entry)}>
+                  <OpenFileIcon />
+                  Open file
+                </ContextMenuItem>
+                <ContextMenuSeparator />
                 <ContextMenuItem
                   disabled={isPending || !canStage}
                   onSelect={() => void onStage(entry)}
