@@ -19,7 +19,8 @@ import {
   stageFiles,
   unstageFiles
 } from '@/lib/repo'
-import { launchCopilotCli, openInVSCode, openInVSCodeScm, openPath } from '@/lib/system'
+import { openInVSCode, openInVSCodeScm, openPath } from '@/lib/system'
+import { useSessions } from '@/contexts/sessions-context'
 import { buildConflictsPrompt } from '@/lib/copilot-conflicts-prompt'
 import type { RebaseOnDefaultResult, WorkingCopyEntry } from '@shared/repo'
 
@@ -95,6 +96,7 @@ export function useWorkingCopyController({
     folderPath !== null && branch !== null
   )
   const { startTask, succeedTask, failTask } = useTasks()
+  const { createSession } = useSessions()
   const [pending, setPending] = React.useState<Set<string>>(() => new Set())
   const [commitMode, setCommitMode] = React.useState<CommitDialogMode | null>(null)
   const [isPushing, setIsPushing] = React.useState(false)
@@ -448,20 +450,24 @@ export function useWorkingCopyController({
         mergeHeads
       })
 
-      const launchResult = await launchCopilotCli({ folderPath, prompt })
+      const launchResult = await createSession({
+        folderPath,
+        prompt,
+        label: branch ? `Resolve conflicts (${branch})` : 'Resolve conflicts'
+      })
       if (launchResult.ok) {
-        toast.success('Copilot CLI launched in Windows Terminal.')
+        toast.success('Copilot session started.')
       } else {
-        toast.error(`Could not launch Copilot CLI: ${launchResult.error}`)
+        toast.error(`Could not start Copilot session: ${launchResult.error}`)
       }
     } catch (err) {
       toast.error(
-        `Could not launch Copilot CLI: ${err instanceof Error ? err.message : 'unknown error'}`
+        `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
       )
     } finally {
       setIsResolvingConflicts(false)
     }
-  }, [folderPath, branch, defaultBranch, conflictedRows])
+  }, [folderPath, branch, defaultBranch, conflictedRows, createSession])
 
   const showPush = branch !== null && folderPath !== null
   const showPullCurrent = branch !== null && folderPath !== null

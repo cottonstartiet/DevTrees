@@ -1,0 +1,167 @@
+/* eslint-disable react-refresh/only-export-components */
+import * as React from 'react'
+
+import type {
+  CopilotSession,
+  CreateSessionRequest,
+  CreateSessionResult,
+  SessionDataEvent,
+  SessionSnapshot
+} from '@shared/sessions'
+
+type DataListener = (event: { seq: number; data: string }) => void
+
+export interface SessionsContextValue {
+  sessions: CopilotSession[]
+  runningCount: number
+  activeSessionId: string | null
+  selectSession: (id: string) => void
+  createSession: (req: CreateSessionRequest) => Promise<CreateSessionResult>
+  killSession: (id: string) => void
+  sendInput: (id: string, data: string) => void
+  resize: (id: string, cols: number, rows: number) => void
+  snapshot: (id: string) => Promise<SessionSnapshot | null>
+  /** Subscribe a mounted terminal to live output for a session. Returns an unsubscribe fn. */
+  subscribeData: (id: string, listener: DataListener) => () => void
+}
+
+const SessionsContext = React.createContext<SessionsContextValue | null>(null)
+
+interface SessionsProviderProps {
+  children: React.ReactNode
+  onNavigateToSessions?: () => void
+}
+
+export function SessionsProvider({
+  children,
+  onNavigateToSessions
+}: SessionsProviderProps): React.JSX.Element {
+  const [sessions, setSessions] = React.useState<CopilotSession[]>([])
+  const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null)
+
+  // Per-session live-output listeners. The main process is the authoritative buffer (replayed via
+  // snapshot on mount); the provider only routes live events to the currently mounted terminal.
+  const listenersRef = React.useRef<Map<string, Set<DataListener>>>(new Map())
+
+  React.useEffect(() => {
+    let cancelled = false
+    void window.api.sessions.list().then((list) => {
+      if (!cancelled) setSessions(list)
+    })
+
+    const offData = window.api.sessions.onData((event: SessionDataEvent) => {
+      const set = listenersRef.current.get(event.id)
+      if (!set) return
+      for (const listener of set) listener({ seq: event.seq, data: event.data })
+    })
+
+    const offExit = window.api.sessions.onExit((event) => {
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === event.id
+            ? { ...s, status: 'exited', exitedAt: Date.now(), exitCode: event.exitCode }
+            : s
+        )
+      )
+    })
+
+    return () => {
+      cancelled = true
+      offData()
+      offExit()
+    }
+  }, [])
+
+  const selectSession = React.useCallback((id: string): void => {
+    setActiveSessionId(id)
+  }, [])
+
+  // Derive the effective active tab rather than syncing it via setState: if the explicit selection
+  // no longer exists (session closed) or none is set, fall back to the most recent session.
+  const effectiveActiveId = React.useMemo<string | null>(() => {
+    if (activeSessionId && sessions.some((s) => s.id === activeSessionId)) return activeSessionId
+    return sessions.length ? sessions[sessions.length - 1].id : null
+  }, [sessions, activeSessionId])
+
+  const createSession = React.useCallback(
+    async (req: CreateSessionRequest): Promise<CreateSessionResult> => {
+      const result = await window.api.sessions.create(req)
+      if (result.ok) {
+        setSessions((prev) => [...prev.filter((s) => s.id !== result.session.id), result.session])
+        setActiveSessionId(result.session.id)
+        onNavigateToSessions?.()
+      }
+      return result
+    },
+    [onNavigateToSessions]
+  )
+
+  const killSession = React.useCallback((id: string): void => {
+    void window.api.sessions.kill(id)
+    setSessions((prev) => prev.filter((s) => s.id !== id))
+  }, [])
+
+  const sendInput = React.useCallback((id: string, data: string): void => {
+    window.api.sessions.sendInput(id, data)
+  }, [])
+
+  const resize = React.useCallback((id: string, cols: number, rows: number): void => {
+    window.api.sessions.resize(id, cols, rows)
+  }, [])
+
+  const snapshot = React.useCallback(
+    (id: string): Promise<SessionSnapshot | null> => window.api.sessions.snapshot(id),
+    []
+  )
+
+  const subscribeData = React.useCallback((id: string, listener: DataListener): (() => void) => {
+    let set = listenersRef.current.get(id)
+    if (!set) {
+      set = new Set()
+      listenersRef.current.set(id, set)
+    }
+    set.add(listener)
+    return () => {
+      const current = listenersRef.current.get(id)
+      if (!current) return
+      current.delete(listener)
+      if (current.size === 0) listenersRef.current.delete(id)
+    }
+  }, [])
+
+  const value = React.useMemo<SessionsContextValue>(() => {
+    const runningCount = sessions.filter((s) => s.status === 'running').length
+    return {
+      sessions,
+      runningCount,
+      activeSessionId: effectiveActiveId,
+      selectSession,
+      createSession,
+      killSession,
+      sendInput,
+      resize,
+      snapshot,
+      subscribeData
+    }
+  }, [
+    sessions,
+    effectiveActiveId,
+    selectSession,
+    createSession,
+    killSession,
+    sendInput,
+    resize,
+    snapshot,
+    subscribeData
+  ])
+
+  return <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>
+}
+
+export function useSessions(): SessionsContextValue {
+  const ctx = React.useContext(SessionsContext)
+  if (!ctx) {
+    throw new Error('useSessions must be used within a SessionsProvider')
+  }
+  return ctx
+}

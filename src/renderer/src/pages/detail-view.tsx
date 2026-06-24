@@ -2,8 +2,10 @@ import * as React from 'react'
 import {
   GitPullRequest as GitPullRequestIcon,
   GitPullRequestArrow as GitPullRequestArrowIcon,
-  Loader2 as Loader2Icon
+  Loader2 as Loader2Icon,
+  Sparkles as SparklesIcon
 } from 'lucide-react'
+import { toast } from 'sonner'
 
 import { PlaceholderCard } from '@/components/detail/dashboard-card'
 import { DetachedNudgePanel } from '@/components/detail/detached-nudge-panel'
@@ -22,9 +24,14 @@ import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-p
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useSessions } from '@/contexts/sessions-context'
+import { sessionLabel } from '@/lib/utils'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
 import type { Worktree } from '@shared/worktree'
+
+const IS_WINDOWS =
+  typeof navigator !== 'undefined' && /win/i.test(navigator.platform || navigator.userAgent || '')
 
 export type DetailViewSelectionKind =
   | 'empty'
@@ -94,6 +101,11 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
           <TabsTrigger value="pull-request">Pull Request</TabsTrigger>
         </TabsList>
         <div className="ml-auto flex items-center gap-1">
+          <StartCopilotSessionAction
+            folderPath={folderPath}
+            branch={props.branch}
+            isWorktree={props.worktree != null}
+          />
           <PrTabActions
             existingPullRequest={props.existingPullRequest}
             onCreatePullRequest={props.onCreatePullRequest}
@@ -126,6 +138,69 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
 
 interface TabSectionProps extends DetailViewProps {
   kind: DetailViewSelectionKind
+}
+
+interface StartCopilotSessionActionProps {
+  folderPath: string
+  branch: string | null
+  isWorktree: boolean
+}
+
+function StartCopilotSessionAction({
+  folderPath,
+  branch,
+  isWorktree
+}: StartCopilotSessionActionProps): React.JSX.Element {
+  const { createSession } = useSessions()
+  const [isStarting, setIsStarting] = React.useState(false)
+
+  const handleStart = async (): Promise<void> => {
+    if (isStarting) return
+    setIsStarting(true)
+    try {
+      const result = await createSession({
+        folderPath,
+        label: sessionLabel({ folderPath, branch, isWorktree })
+      })
+      if (result.ok) {
+        toast.success('Copilot session started.')
+      } else {
+        toast.error(`Could not start Copilot session: ${result.error}`)
+      }
+    } catch (err) {
+      toast.error(
+        `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
+      )
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 px-2"
+            disabled={!IS_WINDOWS || isStarting}
+            onClick={() => void handleStart()}
+          >
+            {isStarting ? (
+              <Loader2Icon className="size-3.5 animate-spin" />
+            ) : (
+              <SparklesIcon className="size-3.5" />
+            )}
+            <span className="text-xs">Copilot</span>
+          </Button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>
+        {IS_WINDOWS ? 'Start a Copilot session in this worktree' : 'Copilot sessions (Windows only)'}
+      </TooltipContent>
+    </Tooltip>
+  )
 }
 
 interface PrTabActionsProps {

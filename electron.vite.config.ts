@@ -7,7 +7,7 @@ export default defineConfig({
   main: {
     build: {
       rollupOptions: {
-        external: ['better-sqlite3', 'electron-updater', /^electron-log/]
+        external: ['better-sqlite3', 'node-pty', 'electron-updater', /^electron-log/]
       }
     }
   },

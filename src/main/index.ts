@@ -7,6 +7,8 @@ import { registerWorkspaceIpc } from './ipc-workspaces'
 import { registerWorktreeIpc } from './ipc-worktrees'
 import { registerRepoIpc } from './ipc-repo'
 import { registerSystemIpc } from './ipc-system'
+import { registerSessionIpc } from './ipc-sessions'
+import { copilotSessions } from './sessions'
 import { registerAdoIpc } from './ipc-ado'
 import { initAutoUpdater } from './updater'
 
@@ -72,6 +74,7 @@ if (!app.requestSingleInstanceLock()) {
     registerWorktreeIpc()
     registerRepoIpc()
     registerSystemIpc()
+    registerSessionIpc()
     registerAdoIpc()
 
     createWindow()
@@ -85,6 +88,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on('before-quit', () => {
+  copilotSessions.killAll()
   closeDb()
 })
 

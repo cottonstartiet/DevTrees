@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   ChevronRight as ChevronRightIcon,
+  CircleDot as CircleDotIcon,
   Folder as FolderIcon,
   GitBranch as GitBranchIcon,
   GitBranchPlus as GitBranchPlusIcon,
@@ -38,6 +39,7 @@ import {
   SidebarMenuSubItem
 } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
+import { useSessions } from '@/contexts/sessions-context'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -73,7 +75,7 @@ function workspaceIcon(remoteKind: WorkspaceRemoteKind): React.JSX.Element {
   return <FolderIcon />
 }
 
-export type AppView = 'home' | 'settings' | 'workspace'
+export type AppView = 'home' | 'settings' | 'workspace' | 'sessions'
 
 interface AppSidebarProps {
   activeView: AppView
@@ -117,16 +119,34 @@ export function AppSidebar({
   onSelectWorktree,
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
+  const { sessions, activeSessionId, selectSession } = useSessions()
+  const [workspacesOpen, setWorkspacesOpen] = React.useState(true)
+  const [sessionsOpen, setSessionsOpen] = React.useState(true)
   return (
     <Sidebar collapsible="icon" className="top-0 bottom-5 h-[calc(100svh-1.25rem)]">
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Workspaces</SidebarGroupLabel>
-          <SidebarGroupAction title="Add workspace" onClick={onAddWorkspace}>
-            <PlusIcon />
-            <span className="sr-only">Add workspace</span>
-          </SidebarGroupAction>
-          <SidebarGroupContent>
+      <SidebarContent className="overflow-hidden">
+        <Collapsible
+          open={workspacesOpen}
+          onOpenChange={setWorkspacesOpen}
+          className={cn('flex min-h-0 flex-col', workspacesOpen && 'flex-1')}
+        >
+          <SidebarGroup className="shrink-0">
+            <SidebarGroupLabel
+              asChild
+              className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            >
+              <CollapsibleTrigger className="group/ws-label flex w-full items-center">
+                <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/ws-label:rotate-90 group-data-[collapsible=icon]:hidden" />
+                Workspaces
+              </CollapsibleTrigger>
+            </SidebarGroupLabel>
+            <SidebarGroupAction title="Add workspace" onClick={onAddWorkspace}>
+              <PlusIcon />
+              <span className="sr-only">Add workspace</span>
+            </SidebarGroupAction>
+          </SidebarGroup>
+          <CollapsibleContent className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto group-data-[collapsible=icon]:overflow-visible">
+            <SidebarGroupContent>
             {workspaces.length === 0 ? (
               <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
                 No workspaces yet. Click + to add a git repository.
@@ -287,8 +307,68 @@ export function AppSidebar({
                 })}
               </SidebarMenu>
             )}
-          </SidebarGroupContent>
-        </SidebarGroup>
+            </SidebarGroupContent>
+          </CollapsibleContent>
+        </Collapsible>
+
+        <Collapsible
+          open={sessionsOpen}
+          onOpenChange={setSessionsOpen}
+          className="flex shrink-0 flex-col group-data-[collapsible=icon]:hidden"
+        >
+          <SidebarGroup className="shrink-0">
+            <SidebarGroupLabel
+              asChild
+              className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+            >
+              <CollapsibleTrigger className="group/se-label flex w-full items-center">
+                <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/se-label:rotate-90" />
+                Sessions
+              </CollapsibleTrigger>
+            </SidebarGroupLabel>
+          </SidebarGroup>
+          <CollapsibleContent className="max-h-56 overflow-x-hidden overflow-y-auto">
+            <SidebarGroupContent>
+              {sessions.length === 0 ? (
+                <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs">No active sessions.</p>
+              ) : (
+                <SidebarMenu>
+                  {sessions.map((session) => {
+                    const isRunning = session.status === 'running'
+                    const isActive =
+                      activeView === 'sessions' && activeSessionId === session.id
+                    return (
+                      <SidebarMenuItem key={session.id}>
+                        <SidebarMenuButton
+                          tooltip={session.label}
+                          isActive={isActive}
+                          onClick={() => {
+                            selectSession(session.id)
+                            onSelectView('sessions')
+                          }}
+                          className="h-auto py-1"
+                        >
+                          <CircleDotIcon
+                            className={cn(
+                              'size-3 shrink-0',
+                              isRunning ? 'text-emerald-500' : 'text-muted-foreground/50'
+                            )}
+                          />
+                          <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                            <span className="truncate">{session.label}</span>
+                            <span className="truncate text-[10px] text-sidebar-foreground/70">
+                              {session.folderPath}
+                            </span>
+                          </div>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )
+                  })}
+                </SidebarMenu>
+              )}
+            </SidebarGroupContent>
+          </CollapsibleContent>
+        </Collapsible>
       </SidebarContent>
 
       <SidebarFooter>

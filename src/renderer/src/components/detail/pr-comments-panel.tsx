@@ -14,7 +14,8 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePrThreads } from '@/hooks/use-pr-threads'
 import { buildPrCommentsPrompt } from '@/lib/copilot-pr-prompt'
-import { launchCopilotCli, openExternal } from '@/lib/system'
+import { openExternal } from '@/lib/system'
+import { useSessions } from '@/contexts/sessions-context'
 import { cn } from '@/lib/utils'
 import type { AdoPrThread, AdoPrThreadStatus } from '@shared/ado'
 
@@ -33,6 +34,7 @@ export function PrCommentsPanel({
 }: PrCommentsPanelProps): React.JSX.Element {
   const { data, error, isLoading, refresh } = usePrThreads(folderPath, pullRequestId, true)
   const [isLaunching, setIsLaunching] = React.useState(false)
+  const { createSession } = useSessions()
 
   const threads = data?.threads ?? []
   const activeCount = threads.reduce((acc, t) => (t.status === 'active' ? acc + 1 : acc), 0)
@@ -49,7 +51,7 @@ export function PrCommentsPanel({
 
   const addressDisabled = isLoading || isLaunching || !!error || activeCount === 0
   const addressTooltip = isLaunching
-    ? 'Launching Copilot CLI…'
+    ? 'Starting Copilot session…'
     : isLoading
       ? 'Loading comments…'
       : error
@@ -68,15 +70,19 @@ export function PrCommentsPanel({
         prTitle,
         prWebUrl
       })
-      const result = await launchCopilotCli({ folderPath, prompt })
+      const result = await createSession({
+        folderPath,
+        prompt,
+        label: `PR #${pullRequestId} comments`
+      })
       if (result.ok) {
-        toast.success('Copilot CLI launched in Windows Terminal.')
+        toast.success('Copilot session started.')
       } else {
-        toast.error(`Could not launch Copilot CLI: ${result.error}`)
+        toast.error(`Could not start Copilot session: ${result.error}`)
       }
     } catch (err) {
       toast.error(
-        `Could not launch Copilot CLI: ${err instanceof Error ? err.message : 'unknown error'}`
+        `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
       )
     } finally {
       setIsLaunching(false)

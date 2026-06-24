@@ -6,6 +6,7 @@ import {
   FolderOpen as FolderOpenIcon,
   Loader2 as Loader2Icon,
   RefreshCw as RefreshCwIcon,
+  Sparkles as SparklesIcon,
   Terminal as TerminalIcon
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -14,9 +15,10 @@ import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useSessions } from '@/contexts/sessions-context'
 import type { UseRepoStatusResult } from '@/hooks/use-repo-status'
 import { openInVSCode, openInWindowsTerminal, openPath } from '@/lib/system'
-import { cn } from '@/lib/utils'
+import { cn, sessionLabel } from '@/lib/utils'
 
 const IS_WINDOWS =
   typeof navigator !== 'undefined' && /win/i.test(navigator.platform || navigator.userAgent || '')
@@ -76,6 +78,31 @@ export function DetailToolbar({
   const [isOpeningVSCode, setIsOpeningVSCode] = React.useState(false)
   const [isOpeningTerminal, setIsOpeningTerminal] = React.useState(false)
   const [isOpeningFolder, setIsOpeningFolder] = React.useState(false)
+  const [isStartingSession, setIsStartingSession] = React.useState(false)
+
+  const { createSession } = useSessions()
+
+  const handleStartCopilotSession = async (): Promise<void> => {
+    if (isStartingSession) return
+    setIsStartingSession(true)
+    try {
+      const result = await createSession({
+        folderPath,
+        label: sessionLabel({ folderPath, branch, isWorktree })
+      })
+      if (result.ok) {
+        toast.success('Copilot session started.')
+      } else {
+        toast.error(`Could not start Copilot session: ${result.error}`)
+      }
+    } catch (err) {
+      toast.error(
+        `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
+      )
+    } finally {
+      setIsStartingSession(false)
+    }
+  }
 
   const handleVSCode = async (): Promise<void> => {
     if (isOpeningVSCode) return
@@ -241,6 +268,32 @@ export function DetailToolbar({
           </TooltipTrigger>
           <TooltipContent>
             {IS_WINDOWS ? 'Open in Windows Terminal' : 'Windows Terminal (Windows only)'}
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              onClick={() => void handleStartCopilotSession()}
+              disabled={!IS_WINDOWS || isStartingSession}
+              aria-busy={isStartingSession}
+              aria-label="Start Copilot session"
+            >
+              {isStartingSession ? (
+                <Loader2Icon className="size-4 animate-spin" />
+              ) : (
+                <SparklesIcon className="size-4" />
+              )}
+              <span className="sr-only">Start Copilot session</span>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            {IS_WINDOWS
+              ? 'Start Copilot session in this worktree'
+              : 'Copilot sessions (Windows only)'}
           </TooltipContent>
         </Tooltip>
 

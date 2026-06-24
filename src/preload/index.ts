@@ -61,6 +61,15 @@ import type {
 import { AdoIpcChannels } from '../shared/ado'
 import type { AppInfo, LaunchCopilotCliRequest, LaunchResult } from '../shared/system'
 import { SystemIpcChannels } from '../shared/system'
+import type {
+  CopilotSession,
+  CreateSessionRequest,
+  CreateSessionResult,
+  SessionDataEvent,
+  SessionExitEvent,
+  SessionSnapshot
+} from '../shared/sessions'
+import { SessionIpcChannels } from '../shared/sessions'
 
 const api = {
   workspaces: {
@@ -149,6 +158,30 @@ const api = {
     launchCopilotCli: (req: LaunchCopilotCliRequest): Promise<LaunchResult> =>
       ipcRenderer.invoke(SystemIpcChannels.LaunchCopilotCli, req),
     getAppInfo: (): Promise<AppInfo> => ipcRenderer.invoke(SystemIpcChannels.GetAppInfo)
+  },
+  sessions: {
+    create: (req: CreateSessionRequest): Promise<CreateSessionResult> =>
+      ipcRenderer.invoke(SessionIpcChannels.Create, req),
+    list: (): Promise<CopilotSession[]> => ipcRenderer.invoke(SessionIpcChannels.List),
+    snapshot: (id: string): Promise<SessionSnapshot | null> =>
+      ipcRenderer.invoke(SessionIpcChannels.Snapshot, id),
+    kill: (id: string): Promise<void> => ipcRenderer.invoke(SessionIpcChannels.Kill, id),
+    sendInput: (id: string, data: string): void => {
+      ipcRenderer.send(SessionIpcChannels.Input, { id, data })
+    },
+    resize: (id: string, cols: number, rows: number): void => {
+      ipcRenderer.send(SessionIpcChannels.Resize, { id, cols, rows })
+    },
+    onData: (cb: (event: SessionDataEvent) => void): (() => void) => {
+      const listener = (_e: unknown, payload: SessionDataEvent): void => cb(payload)
+      ipcRenderer.on(SessionIpcChannels.Data, listener)
+      return () => ipcRenderer.removeListener(SessionIpcChannels.Data, listener)
+    },
+    onExit: (cb: (event: SessionExitEvent) => void): (() => void) => {
+      const listener = (_e: unknown, payload: SessionExitEvent): void => cb(payload)
+      ipcRenderer.on(SessionIpcChannels.Exit, listener)
+      return () => ipcRenderer.removeListener(SessionIpcChannels.Exit, listener)
+    }
   }
 }
 
