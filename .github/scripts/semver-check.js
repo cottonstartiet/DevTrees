@@ -11,7 +11,7 @@
 //
 // No external dependencies — runs on a bare Node install with no `npm install`.
 
-const fs = require('fs');
+import { readFileSync } from 'fs';
 
 const current = process.argv[2];
 if (!current) {
@@ -75,8 +75,7 @@ if (!cur) {
   process.exit(2);
 }
 
-const tags = fs
-  .readFileSync(0, 'utf8')
+const tags = readFileSync(0, 'utf8')
   .split('\n')
   .map((s) => s.trim())
   .filter(Boolean);
