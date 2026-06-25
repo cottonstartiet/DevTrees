@@ -1,6 +1,6 @@
 {
   "name": "devtrees",
-  "version": "0.9.0",
+  "version": "0.95.0",
   "description": "DevTrees — a Tauri desktop app built with Rust, TypeScript, Vite, React and shadcn/ui.",
   "author": "www.ritekode.com",
   "packageManager": "yarn@1.22.22",
