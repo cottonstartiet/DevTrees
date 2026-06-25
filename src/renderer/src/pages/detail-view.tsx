@@ -24,8 +24,7 @@ import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-p
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useSessions } from '@/contexts/sessions-context'
-import { sessionLabel } from '@/lib/utils'
+import { launchCopilotCli } from '@/lib/system'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
 import type { Worktree } from '@shared/worktree'
@@ -147,21 +146,15 @@ interface StartCopilotSessionActionProps {
 }
 
 function StartCopilotSessionAction({
-  folderPath,
-  branch,
-  isWorktree
+  folderPath
 }: StartCopilotSessionActionProps): React.JSX.Element {
-  const { createSession } = useSessions()
   const [isStarting, setIsStarting] = React.useState(false)
 
   const handleStart = async (): Promise<void> => {
     if (isStarting) return
     setIsStarting(true)
     try {
-      const result = await createSession({
-        folderPath,
-        label: sessionLabel({ folderPath, branch, isWorktree })
-      })
+      const result = await launchCopilotCli({ folderPath, prompt: '' })
       if (result.ok) {
         toast.success('Copilot session started.')
       } else {

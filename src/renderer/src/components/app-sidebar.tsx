@@ -1,15 +1,16 @@
 import * as React from 'react'
 import {
   ChevronRight as ChevronRightIcon,
-  CircleDot as CircleDotIcon,
   Folder as FolderIcon,
   GitBranch as GitBranchIcon,
   GitBranchPlus as GitBranchPlusIcon,
+  History as HistoryIcon,
   Loader2 as Loader2Icon,
   MoreHorizontal as MoreHorizontalIcon,
   Plus as PlusIcon,
   Settings as SettingsIcon,
   Sparkles as SparklesIcon,
+  SquareTerminal as SquareTerminalIcon,
   Trash2 as Trash2Icon
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -47,8 +48,8 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem
 } from '@/components/ui/sidebar'
-import { cn, sessionLabel } from '@/lib/utils'
-import { useSessions } from '@/contexts/sessions-context'
+import { cn } from '@/lib/utils'
+import { launchCopilotCli, openInWindowsTerminal } from '@/lib/system'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -84,7 +85,7 @@ function workspaceIcon(remoteKind: WorkspaceRemoteKind): React.JSX.Element {
   return <FolderIcon />
 }
 
-export type AppView = 'home' | 'settings' | 'workspace' | 'sessions'
+export type AppView = 'home' | 'settings' | 'workspace' | 'history'
 
 interface AppSidebarProps {
   activeView: AppView
@@ -128,30 +129,35 @@ export function AppSidebar({
   onSelectWorktree,
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
-  const { sessions, activeSessionId, selectSession, createSession } = useSessions()
   const [workspacesOpen, setWorkspacesOpen] = React.useState(true)
-  const [sessionsOpen, setSessionsOpen] = React.useState(true)
 
-  const handleStartCopilotSession = React.useCallback(
-    async (wt: Worktree): Promise<void> => {
-      try {
-        const result = await createSession({
-          folderPath: wt.path,
-          label: sessionLabel({ folderPath: wt.path, branch: wt.branch, isWorktree: true })
-        })
-        if (result.ok) {
-          toast.success('Copilot session started.')
-        } else {
-          toast.error(`Could not start Copilot session: ${result.error}`)
-        }
-      } catch (err) {
-        toast.error(
-          `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
-        )
+  const handleStartCopilotSession = React.useCallback(async (wt: Worktree): Promise<void> => {
+    try {
+      const result = await launchCopilotCli({ folderPath: wt.path, prompt: '' })
+      if (result.ok) {
+        toast.success('Copilot session started.')
+      } else {
+        toast.error(`Could not start Copilot session: ${result.error}`)
       }
-    },
-    [createSession]
-  )
+    } catch (err) {
+      toast.error(
+        `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
+      )
+    }
+  }, [])
+
+  const handleOpenTerminal = React.useCallback(async (wt: Worktree): Promise<void> => {
+    try {
+      const result = await openInWindowsTerminal(wt.path)
+      if (!result.ok) {
+        toast.error(`Could not open terminal: ${result.error}`)
+      }
+    } catch (err) {
+      toast.error(
+        `Could not open terminal: ${err instanceof Error ? err.message : 'unknown error'}`
+      )
+    }
+  }, [])
 
   return (
     <Sidebar collapsible="icon" className="top-0 bottom-5 h-[calc(100svh-1.25rem)]">
@@ -310,10 +316,16 @@ export function AppSidebar({
                                       </ContextMenuTrigger>
                                       <ContextMenuContent className="w-52">
                                         <ContextMenuItem
+                                          onSelect={() => void handleOpenTerminal(wt)}
+                                        >
+                                          <SquareTerminalIcon />
+                                          <span>Terminal</span>
+                                        </ContextMenuItem>
+                                        <ContextMenuItem
                                           onSelect={() => void handleStartCopilotSession(wt)}
                                         >
                                           <SparklesIcon />
-                                          <span>Start Copilot session</span>
+                                          <span>Copilot</span>
                                         </ContextMenuItem>
                                         <ContextMenuSeparator />
                                         <ContextMenuItem
@@ -339,10 +351,16 @@ export function AppSidebar({
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent side="right" align="start">
                                           <DropdownMenuItem
+                                            onSelect={() => void handleOpenTerminal(wt)}
+                                          >
+                                            <SquareTerminalIcon />
+                                            <span>Terminal</span>
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem
                                             onSelect={() => void handleStartCopilotSession(wt)}
                                           >
                                             <SparklesIcon />
-                                            <span>Start Copilot session</span>
+                                            <span>Copilot</span>
                                           </DropdownMenuItem>
                                           <DropdownMenuSeparator />
                                           <DropdownMenuItem
@@ -370,69 +388,20 @@ export function AppSidebar({
             </SidebarGroupContent>
           </CollapsibleContent>
         </Collapsible>
-
-        <Collapsible
-          open={sessionsOpen}
-          onOpenChange={setSessionsOpen}
-          className="flex shrink-0 flex-col group-data-[collapsible=icon]:hidden"
-        >
-          <SidebarGroup className="shrink-0">
-            <SidebarGroupLabel
-              asChild
-              className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            >
-              <CollapsibleTrigger className="group/se-label flex w-full items-center">
-                <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/se-label:rotate-90" />
-                Sessions
-              </CollapsibleTrigger>
-            </SidebarGroupLabel>
-          </SidebarGroup>
-          <CollapsibleContent className="max-h-56 overflow-x-hidden overflow-y-auto">
-            <SidebarGroupContent>
-              {sessions.length === 0 ? (
-                <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs">No active sessions.</p>
-              ) : (
-                <SidebarMenu>
-                  {sessions.map((session) => {
-                    const isRunning = session.status === 'running'
-                    const isActive =
-                      activeView === 'sessions' && activeSessionId === session.id
-                    return (
-                      <SidebarMenuItem key={session.id}>
-                        <SidebarMenuButton
-                          tooltip={session.label}
-                          isActive={isActive}
-                          onClick={() => {
-                            selectSession(session.id)
-                            onSelectView('sessions')
-                          }}
-                          className="h-auto py-1"
-                        >
-                          <CircleDotIcon
-                            className={cn(
-                              'size-3 shrink-0',
-                              isRunning ? 'text-emerald-500' : 'text-muted-foreground/50'
-                            )}
-                          />
-                          <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                            <span className="truncate">{session.label}</span>
-                            <span className="truncate text-[10px] text-sidebar-foreground/70">
-                              {session.folderPath}
-                            </span>
-                          </div>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    )
-                  })}
-                </SidebarMenu>
-              )}
-            </SidebarGroupContent>
-          </CollapsibleContent>
-        </Collapsible>
       </SidebarContent>
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="History"
+              isActive={activeView === 'history'}
+              onClick={() => onSelectView('history')}
+            >
+              <HistoryIcon />
+              <span>History</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               tooltip="Settings"

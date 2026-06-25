@@ -19,8 +19,7 @@ import {
   stageFiles,
   unstageFiles
 } from '@/lib/repo'
-import { openInVSCode, openInVSCodeScm, openPath } from '@/lib/system'
-import { useSessions } from '@/contexts/sessions-context'
+import { openInVSCode, openInVSCodeScm, openPath, launchCopilotCli } from '@/lib/system'
 import { buildConflictsPrompt } from '@/lib/copilot-conflicts-prompt'
 import type { RebaseOnDefaultResult, WorkingCopyEntry } from '@shared/repo'
 
@@ -96,7 +95,6 @@ export function useWorkingCopyController({
     folderPath !== null && branch !== null
   )
   const { startTask, succeedTask, failTask } = useTasks()
-  const { createSession } = useSessions()
   const [pending, setPending] = React.useState<Set<string>>(() => new Set())
   const [commitMode, setCommitMode] = React.useState<CommitDialogMode | null>(null)
   const [isPushing, setIsPushing] = React.useState(false)
@@ -450,10 +448,9 @@ export function useWorkingCopyController({
         mergeHeads
       })
 
-      const launchResult = await createSession({
+      const launchResult = await launchCopilotCli({
         folderPath,
-        prompt,
-        label: branch ? `Resolve conflicts (${branch})` : 'Resolve conflicts'
+        prompt
       })
       if (launchResult.ok) {
         toast.success('Copilot session started.')
@@ -467,7 +464,7 @@ export function useWorkingCopyController({
     } finally {
       setIsResolvingConflicts(false)
     }
-  }, [folderPath, branch, defaultBranch, conflictedRows, createSession])
+  }, [folderPath, branch, defaultBranch, conflictedRows])
 
   const showPush = branch !== null && folderPath !== null
   const showPullCurrent = branch !== null && folderPath !== null

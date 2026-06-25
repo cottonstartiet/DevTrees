@@ -1,4 +1,9 @@
-import type { AppInfo, LaunchCopilotCliRequest, LaunchResult } from '@shared/system'
+import type {
+  AppInfo,
+  LaunchCopilotCliRequest,
+  LaunchCopilotResumeRequest,
+  LaunchResult
+} from '@shared/system'
 
 export function openInVSCode(folderPath: string): Promise<LaunchResult> {
   return window.api.system.openInVSCode(folderPath)
@@ -22,6 +27,10 @@ export function openPath(folderPath: string): Promise<LaunchResult> {
 
 export function launchCopilotCli(req: LaunchCopilotCliRequest): Promise<LaunchResult> {
   return window.api.system.launchCopilotCli(req)
+}
+
+export function launchCopilotResume(req: LaunchCopilotResumeRequest): Promise<LaunchResult> {
+  return window.api.system.launchCopilotResume(req)
 }
 
 export function getAppInfo(): Promise<AppInfo> {

@@ -2,6 +2,8 @@ export type LaunchResult = { ok: true } | { ok: false; error: string }
 
 export type LaunchCopilotCliRequest = { folderPath: string; prompt: string }
 
+export type LaunchCopilotResumeRequest = { folderPath: string; sessionId: string }
+
 export type AppInfo = { name: string; version: string }
 
 export const SystemIpcChannels = {
@@ -11,5 +13,6 @@ export const SystemIpcChannels = {
   OpenExternal: 'system:open-external',
   OpenPath: 'system:open-path',
   LaunchCopilotCli: 'system:launch-copilot-cli',
+  LaunchCopilotResume: 'system:launch-copilot-resume',
   GetAppInfo: 'system:get-app-info'
 } as const

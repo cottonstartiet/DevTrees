@@ -12,13 +12,12 @@ import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { TasksProvider } from '@/contexts/tasks-context'
-import { SessionsProvider } from '@/contexts/sessions-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useWorkspaces } from '@/hooks/use-workspaces'
+import { useAutoUpdate } from '@/hooks/use-auto-update'
 import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
-import { SessionsHeaderControls, SessionsPage } from '@/pages/sessions'
-import { loadViewMode, persistViewMode, type SessionViewMode } from '@/pages/sessions-view-mode'
+import { HistoryPage } from '@/pages/history'
 import { SettingsPage } from '@/pages/settings'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
@@ -30,6 +29,7 @@ function worktreeLabel(path: string): string {
 }
 
 function AppShell(): React.JSX.Element {
+  useAutoUpdate()
   const [view, setView] = useState<AppView>('home')
   const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null)
   const [dialogWorkspace, setDialogWorkspace] = useState<Workspace | null>(null)
@@ -45,12 +45,6 @@ function AppShell(): React.JSX.Element {
     worktree: Worktree
   } | null>(null)
   const [createBranchOpen, setCreateBranchOpen] = useState(false)
-  const [sessionsViewMode, setSessionsViewMode] = useState<SessionViewMode>(loadViewMode)
-
-  const changeSessionsViewMode = useCallback((mode: SessionViewMode): void => {
-    setSessionsViewMode(mode)
-    persistViewMode(mode)
-  }, [])
 
   const {
     workspaces,
@@ -182,8 +176,8 @@ function AppShell(): React.JSX.Element {
   const headerTitle =
     view === 'settings'
       ? 'Settings'
-      : view === 'sessions'
-        ? 'Sessions'
+      : view === 'history'
+        ? 'History'
         : activeWorktree
           ? worktreeLabel(activeWorktree.path)
           : activeWorkspace
@@ -404,8 +398,7 @@ function AppShell(): React.JSX.Element {
   }, [branchWebUrl])
 
   return (
-    <SessionsProvider onNavigateToSessions={() => setView('sessions')}>
-      <SidebarProvider className="flex h-svh flex-col">
+    <SidebarProvider className="flex h-svh flex-col">
         <div className="flex min-h-0 w-full flex-1">
           <AppSidebar
             activeView={view}
@@ -446,12 +439,6 @@ function AppShell(): React.JSX.Element {
                 <SidebarTrigger className="-ml-1" />
                 <Separator orientation="vertical" className="mr-2 h-4" />
                 <h2 className="text-sm font-medium">{headerTitle}</h2>
-                {view === 'sessions' ? (
-                  <SessionsHeaderControls
-                    viewMode={sessionsViewMode}
-                    onChange={changeSessionsViewMode}
-                  />
-                ) : null}
               </header>
             )}
             <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
@@ -459,8 +446,8 @@ function AppShell(): React.JSX.Element {
                 <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
                   <SettingsPage />
                 </div>
-              ) : view === 'sessions' ? (
-                <SessionsPage viewMode={sessionsViewMode} />
+              ) : view === 'history' ? (
+                <HistoryPage />
               ) : (
                 <DetailView
                   workspace={activeWorkspace}
@@ -528,7 +515,6 @@ function AppShell(): React.JSX.Element {
         />
         <Toaster richColors closeButton position="bottom-right" />
       </SidebarProvider>
-    </SessionsProvider>
   )
 }
 

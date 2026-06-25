@@ -28,7 +28,6 @@ jobs:
           # Need full tag history so we can compare against previously released versions.
           fetch-depth: 0
 
-
       - name: Determine version and whether to release
         id: check
         shell: bash
@@ -74,25 +73,121 @@ jobs:
           cache: 'yarn'
           cache-dependency-path: yarn.lock
 
+      # windows-latest ships a stable Rust toolchain; just make sure it is current.
+      - name: Update Rust toolchain
+        shell: bash
+        run: rustup update stable && rustup default stable
+
+      # Cache Cargo registry + the src-tauri build dir to keep release builds fast.
+      # actions/cache is GitHub-owned, so it satisfies the enterprise actions policy.
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
       - name: Install dependencies
         shell: bash
         env:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         run: yarn install --frozen-lockfile
 
-      - name: Build Windows installer
+      - name: Verify version consistency
         shell: bash
-        run: yarn build:win
+        # The updater manifest version comes from package.json, but the installed
+        # app version comes from src-tauri/tauri.conf.json. If they drift, the
+        # updater can loop (manifest says vN+1, installer still contains vN).
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          tauri_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          if [ "$VERSION" != "$tauri_version" ]; then
+            echo "::error::Version mismatch: package.json=${VERSION} vs tauri.conf.json=${tauri_version}. Bump both." >&2
+            exit 1
+          fi
+          echo "Versions match: ${VERSION}"
 
-      - name: List build output (debug)
+      - name: Build and sign Tauri installer
         shell: bash
-        run: ls -la dist
+        # The updater requires signed artifacts. Provide the minisign private key
+        # (and its password) via repository secrets; Tauri writes a `.sig` next to
+        # the NSIS installer when `createUpdaterArtifacts` is enabled. Clean the
+        # bundle dir first so a restored Cargo cache can never surface a stale
+        # installer/signature from a previous version.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          rm -rf src-tauri/target/release/bundle/nsis
+          yarn tauri build
+
+      - name: Assemble release artifacts and updater manifest
+        shell: bash
+        env:
+          TAG: ${{ needs.check-version.outputs.tag }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          bundle_dir="src-tauri/target/release/bundle/nsis"
+
+          # Select the exact artifacts for this version so a wrong installer/sig
+          # pair can never be uploaded.
+          installer_name="DevTrees_${VERSION}_x64-setup.exe"
+          installer="${bundle_dir}/${installer_name}"
+          signature_file="${installer}.sig"
+
+          if [ ! -f "$installer" ]; then
+            echo "::error::Expected installer not found: ${installer}" >&2
+            ls -la "$bundle_dir" >&2 || true
+            exit 1
+          fi
+          if [ ! -f "$signature_file" ]; then
+            echo "::error::Expected signature not found: ${signature_file} — is signing configured (TAURI_SIGNING_PRIVATE_KEY)?" >&2
+            ls -la "$bundle_dir" >&2 || true
+            exit 1
+          fi
+
+          # Stage assets under a flat dir for the release upload.
+          mkdir -p dist-release
+          cp "$installer" "dist-release/${installer_name}"
+          cp "$signature_file" "dist-release/${installer_name}.sig"
+
+          # Build the Tauri updater manifest that `plugins.updater.endpoints`
+          # points at (releases/latest/download/latest.json). The signature field
+          # is the *contents* of the .sig file, and the url points at the asset
+          # that will be uploaded to this release.
+          export SIGNATURE="$(cat "$signature_file")"
+          export DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${installer_name}"
+          node -e '
+            const fs = require("fs");
+            const manifest = {
+              version: process.env.VERSION,
+              notes: `DevTrees ${process.env.VERSION}`,
+              pub_date: new Date().toISOString(),
+              platforms: {
+                "windows-x86_64": {
+                  signature: process.env.SIGNATURE,
+                  url: process.env.DOWNLOAD_URL
+                }
+              }
+            };
+            fs.writeFileSync("dist-release/latest.json", JSON.stringify(manifest, null, 2));
+          '
 
       - name: Publish GitHub Release
-        # Uses the pre-installed `gh` CLI instead of a third-party action so
-        # the enterprise policy "all actions must be from a repository owned
-        # by your enterprise, created by GitHub, or verified in the GitHub
-        # Marketplace" is satisfied.
+        # Uses the pre-installed `gh` CLI instead of a third-party action so the
+        # enterprise policy "all actions must be from a repository owned by your
+        # enterprise, created by GitHub, or verified in the GitHub Marketplace"
+        # is satisfied. The release must stay "latest" so the updater endpoint
+        # (releases/latest/download/latest.json) resolves correctly.
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -100,27 +195,16 @@ jobs:
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
           set -euo pipefail
-          # Resolve the artifact paths explicitly so we fail fast if a file is
-          # missing (mirrors softprops' fail_on_unmatched_files: true behavior).
-          shopt -s nullglob
-          installers=(dist/devtrees-*-setup.exe)
-          blockmaps=(dist/devtrees-*-setup.exe.blockmap)
-          shopt -u nullglob
-
-          if [ "${#installers[@]}" -eq 0 ]; then
-            echo "::error::No installer found at dist/devtrees-*-setup.exe" >&2
-            ls -la dist >&2 || true
-            exit 1
-          fi
-          if [ ! -f dist/latest.yml ]; then
-            echo "::error::Missing dist/latest.yml (electron-builder auto-update metadata)" >&2
-            ls -la dist >&2 || true
+          if [ ! -f dist-release/latest.json ]; then
+            echo "::error::Missing dist-release/latest.json updater manifest" >&2
+            ls -la dist-release >&2 || true
             exit 1
           fi
 
           gh release create "$TAG" \
             --title "DevTrees $VERSION" \
             --target "$GITHUB_SHA" \
-            "${installers[@]}" \
-            "${blockmaps[@]}" \
-            dist/latest.yml
+            --latest \
+            dist-release/*-setup.exe \
+            dist-release/*-setup.exe.sig \
+            dist-release/latest.json
