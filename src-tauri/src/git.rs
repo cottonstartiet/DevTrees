@@ -1,11 +1,10 @@
 use std::process::Command;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppError;
 
 /// Output of a git invocation.
 pub struct GitOutput {
     pub stdout: String,
-    pub stderr: String,
 }
 
 /// A git command that exited non-zero. Mirrors the Electron `GitError`: the message
@@ -14,7 +13,6 @@ pub struct GitOutput {
 pub struct GitError {
     pub message: String,
     pub stderr: String,
-    pub code: Option<i32>,
 }
 
 impl From<GitError> for AppError {
@@ -43,7 +41,6 @@ pub async fn run_git(args: Vec<String>, cwd: String) -> Result<GitOutput, GitErr
         .map_err(|e| GitError {
             message: format!("git task panicked: {e}"),
             stderr: String::new(),
-            code: None,
         })?
 }
 
@@ -57,14 +54,13 @@ pub fn run_git_blocking(args: &[String], cwd: &str) -> Result<GitOutput, GitErro
     let output = cmd.output().map_err(|e| GitError {
         message: format!("failed to run git: {e}"),
         stderr: String::new(),
-        code: None,
     })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if output.status.success() {
-        Ok(GitOutput { stdout, stderr })
+        Ok(GitOutput { stdout })
     } else {
         let message = if !stderr.trim().is_empty() {
             stderr.trim().to_string()
@@ -73,15 +69,6 @@ pub fn run_git_blocking(args: &[String], cwd: &str) -> Result<GitOutput, GitErro
         } else {
             "git failed".to_string()
         };
-        Err(GitError {
-            message,
-            stderr,
-            code: output.status.code(),
-        })
+        Err(GitError { message, stderr })
     }
-}
-
-/// Convenience: returns `Ok(String)` of trimmed stdout, or an `AppError` on failure.
-pub async fn git_stdout(args: Vec<String>, cwd: String) -> AppResult<String> {
-    Ok(run_git(args, cwd).await?.stdout)
 }

@@ -5,7 +5,6 @@ use regex::Regex;
 
 pub struct AzOutput {
     pub stdout: String,
-    pub stderr: String,
 }
 
 #[derive(Debug)]
@@ -77,7 +76,7 @@ fn run_az_blocking(args: &[String]) -> Result<AzOutput, AzError> {
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if output.status.success() {
-        return Ok(AzOutput { stdout, stderr });
+        return Ok(AzOutput { stdout });
     }
 
     let stderr_trimmed = stderr.trim();

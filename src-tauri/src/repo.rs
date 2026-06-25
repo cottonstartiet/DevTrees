@@ -47,14 +47,6 @@ impl RepoStatusResult {
             error: None,
         }
     }
-
-    fn err(error: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            status: None,
-            error: Some(error.into()),
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -484,14 +476,6 @@ impl WorktreesOverviewResult {
             ok: true,
             rows: Some(rows),
             error: None,
-        }
-    }
-
-    fn err(error: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            rows: None,
-            error: Some(error.into()),
         }
     }
 }
