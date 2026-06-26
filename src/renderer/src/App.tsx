@@ -13,7 +13,8 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/s
 import { Toaster } from '@/components/ui/sonner'
 import { TasksProvider } from '@/contexts/tasks-context'
 import { ThemeProvider } from '@/contexts/theme-context'
-import { GithubAuthProvider } from '@/contexts/github-auth-context'
+import { TerminalModeProvider } from '@/contexts/terminal-mode-context'
+import { SessionsProvider } from '@/contexts/sessions-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
@@ -21,6 +22,12 @@ import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
 import { HistoryPage } from '@/pages/history'
 import { SettingsPage } from '@/pages/settings'
+import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
+import {
+  loadViewMode,
+  persistViewMode,
+  type SessionViewMode
+} from '@/pages/sessions-view-mode'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
@@ -33,6 +40,7 @@ function worktreeLabel(path: string): string {
 function AppShell(): React.JSX.Element {
   useAutoUpdate()
   const [view, setView] = useState<AppView>('home')
+  const [sessionsViewMode, setSessionsViewMode] = useState<SessionViewMode>(() => loadViewMode())
   const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null)
   const [dialogWorkspace, setDialogWorkspace] = useState<Workspace | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -175,16 +183,27 @@ function AppShell(): React.JSX.Element {
     if (!open) setCreateBranchTarget(null)
   }, [])
 
+  const handleSessionsViewModeChange = useCallback((mode: SessionViewMode): void => {
+    setSessionsViewMode(mode)
+    persistViewMode(mode)
+  }, [])
+
+  const handleNavigateToSessions = useCallback((): void => {
+    setView('sessions')
+  }, [])
+
   const headerTitle =
     view === 'settings'
       ? 'Settings'
       : view === 'history'
         ? 'History'
-        : activeWorktree
-          ? worktreeLabel(activeWorktree.path)
-          : activeWorkspace
-            ? activeWorkspace.name
-            : 'DevTrees'
+        : view === 'sessions'
+          ? 'Sessions'
+          : activeWorktree
+            ? worktreeLabel(activeWorktree.path)
+            : activeWorkspace
+              ? activeWorkspace.name
+              : 'DevTrees'
 
   const repo = useRepoStatus(activeWorkspace?.path ?? null, view === 'workspace')
 
@@ -400,7 +419,9 @@ function AppShell(): React.JSX.Element {
   }, [branchWebUrl])
 
   return (
-    <SidebarProvider className="flex h-svh flex-col">
+    <TerminalModeProvider>
+      <SessionsProvider onNavigateToSessions={handleNavigateToSessions}>
+        <SidebarProvider className="flex h-svh flex-col">
         <div className="flex min-h-0 w-full flex-1">
           <AppSidebar
             activeView={view}
@@ -441,6 +462,12 @@ function AppShell(): React.JSX.Element {
                 <SidebarTrigger className="-ml-1" />
                 <Separator orientation="vertical" className="mr-2 h-4" />
                 <h2 className="text-sm font-medium">{headerTitle}</h2>
+                {view === 'sessions' && (
+                  <SessionsHeaderControls
+                    viewMode={sessionsViewMode}
+                    onChange={handleSessionsViewModeChange}
+                  />
+                )}
               </header>
             )}
             <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
@@ -450,6 +477,8 @@ function AppShell(): React.JSX.Element {
                 </div>
               ) : view === 'history' ? (
                 <HistoryPage />
+              ) : view === 'sessions' ? (
+                <SessionsPage viewMode={sessionsViewMode} />
               ) : (
                 <DetailView
                   workspace={activeWorkspace}
@@ -516,18 +545,18 @@ function AppShell(): React.JSX.Element {
           onSubmit={handleCreateBranchSubmit}
         />
         <Toaster richColors closeButton position="bottom-right" />
-      </SidebarProvider>
+        </SidebarProvider>
+      </SessionsProvider>
+    </TerminalModeProvider>
   )
 }
 
 function App(): React.JSX.Element {
   return (
     <ThemeProvider>
-      <GithubAuthProvider>
-        <TasksProvider>
-          <AppShell />
-        </TasksProvider>
-      </GithubAuthProvider>
+      <TasksProvider>
+        <AppShell />
+      </TasksProvider>
     </ThemeProvider>
   )
 }

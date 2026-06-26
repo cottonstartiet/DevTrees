@@ -12,6 +12,7 @@
  *    handles, so a backend hiccup surfaces as an in-app error instead of an unhandled rejection.
  */
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 import type { AddWorkspaceResult, Workspace } from '@shared/workspace'
 import type {
@@ -76,13 +77,33 @@ import type {
 } from '@shared/system'
 import type { CopilotHistoryListResult } from '@shared/copilot-history'
 import type {
-  AuthStatus,
-  DeviceFlowStart,
-  PollResult,
-  UpdateCheckResult
-} from '@shared/updater'
+  CopilotSession,
+  CreateSessionRequest,
+  CreateSessionResult,
+  SessionDataEvent,
+  SessionExitEvent,
+  SessionSnapshot
+} from '@shared/sessions'
+import { SessionEvents } from '@shared/sessions'
 
 type Args = Record<string, unknown>
+
+/** A live output chunk for a session, with the raw bytes already decoded from base64. */
+export type SessionData = { id: string; seq: number; data: Uint8Array }
+
+/** A session snapshot with its rolling buffer decoded from base64. */
+export type DecodedSessionSnapshot = {
+  session: CopilotSession
+  buffer: Uint8Array
+  lastSeq: number
+}
+
+function decodeB64(b64: string): Uint8Array {
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
 
 function messageOf(err: unknown): string {
   if (typeof err === 'string') return err
@@ -257,16 +278,34 @@ const api = {
         message
       }))
   },
-  githubAuth: {
-    status: (): Promise<AuthStatus> => invoke('github_auth_status'),
-    startDeviceFlow: (): Promise<DeviceFlowStart> => invoke('github_auth_start_device_flow'),
-    poll: (): Promise<PollResult> => invoke('github_auth_poll'),
-    signOut: (): Promise<AuthStatus> => invoke('github_auth_sign_out')
-  },
-  updater: {
-    check: (): Promise<UpdateCheckResult> => invoke('update_check'),
-    install: (expectedVersion: string): Promise<void> =>
-      invoke('update_install', { expectedVersion })
+  sessions: {
+    create: (req: CreateSessionRequest): Promise<CreateSessionResult> =>
+      result('sessions_create', { req }, (error) => ({ ok: false, error })),
+    list: (): Promise<CopilotSession[]> => invoke('sessions_list'),
+    snapshot: async (id: string): Promise<DecodedSessionSnapshot | null> => {
+      const snap = await invoke<SessionSnapshot | null>('sessions_snapshot', { id })
+      if (!snap) return null
+      return { session: snap.session, buffer: decodeB64(snap.bufferB64), lastSeq: snap.lastSeq }
+    },
+    kill: (id: string): Promise<void> => invoke('sessions_kill', { id }),
+    sendInput: (id: string, data: string): Promise<void> =>
+      invoke('sessions_input', { id, data }),
+    resize: (id: string, cols: number, rows: number): Promise<void> =>
+      invoke('sessions_resize', { id, cols, rows }),
+    onData: (cb: (event: SessionData) => void): (() => void) => {
+      const unlisten = listen<SessionDataEvent>(SessionEvents.Data, (e) => {
+        cb({ id: e.payload.id, seq: e.payload.seq, data: decodeB64(e.payload.dataB64) })
+      })
+      return () => {
+        void unlisten.then((un) => un())
+      }
+    },
+    onExit: (cb: (event: SessionExitEvent) => void): (() => void) => {
+      const unlisten = listen<SessionExitEvent>(SessionEvents.Exit, (e) => cb(e.payload))
+      return () => {
+        void unlisten.then((un) => un())
+      }
+    }
   }
 }
 

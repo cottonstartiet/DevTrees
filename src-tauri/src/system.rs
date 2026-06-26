@@ -211,7 +211,7 @@ fn launch_copilot_resume(folder_path: &str, session_id: &str) -> LaunchResult {
             "This session's folder no longer exists:\n{folder_path}"
         ));
     }
-    let ps_command = format!("copilot --allow-all-tools --resume={session_id}");
+    let ps_command = format!("copilot --allow-all-tools --session-id={session_id}");
     let encoded = encode_ps_command(&ps_command);
     launch_detached(
         "wt",

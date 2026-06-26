@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::error::AppResult;
 use crate::git::{run_git, GitError};
+use crate::sessions::SessionManager;
 
 const MAX_NAME_LENGTH: usize = 64;
 
@@ -311,7 +312,11 @@ async fn get_worktree_change_status(worktree_path: &str) -> WorktreeStatusResult
     WorktreeStatusResult::ok(has_changes, has_unreachable_commits, None)
 }
 
-async fn delete_worktree(workspace_path: &str, worktree_path: &str) -> DeleteWorktreeResult {
+async fn delete_worktree(
+    workspace_path: &str,
+    worktree_path: &str,
+    sessions: &SessionManager,
+) -> DeleteWorktreeResult {
     if paths_equal(worktree_path, workspace_path) {
         return DeleteWorktreeResult::err(
             "is-main",
@@ -383,6 +388,10 @@ async fn delete_worktree(workspace_path: &str, worktree_path: &str) -> DeleteWor
         return DeleteWorktreeResult::ok();
     }
 
+    // Release any embedded Copilot sessions rooted in this worktree before removing it, so no
+    // child process keeps the folder locked. Returns only after each process tree is torn down.
+    sessions.kill_sessions_for_path(worktree_path);
+
     match run_git(
         vec![
             "worktree".into(),
@@ -427,10 +436,11 @@ pub async fn worktrees_create(
 
 #[tauri::command]
 pub async fn worktrees_delete(
+    sessions: tauri::State<'_, SessionManager>,
     workspace_path: String,
     worktree_path: String,
 ) -> AppResult<DeleteWorktreeResult> {
-    Ok(delete_worktree(&workspace_path, &worktree_path).await)
+    Ok(delete_worktree(&workspace_path, &worktree_path, &sessions).await)
 }
 
 #[tauri::command]

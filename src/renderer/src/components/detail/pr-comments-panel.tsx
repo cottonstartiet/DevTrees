@@ -14,7 +14,8 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePrThreads } from '@/hooks/use-pr-threads'
 import { buildPrCommentsPrompt } from '@/lib/copilot-pr-prompt'
-import { launchCopilotCli, openExternal } from '@/lib/system'
+import { openExternal } from '@/lib/system'
+import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { cn } from '@/lib/utils'
 import type { AdoPrThread, AdoPrThreadStatus } from '@shared/ado'
 
@@ -33,6 +34,7 @@ export function PrCommentsPanel({
 }: PrCommentsPanelProps): React.JSX.Element {
   const { data, error, isLoading, refresh } = usePrThreads(folderPath, pullRequestId, true)
   const [isLaunching, setIsLaunching] = React.useState(false)
+  const launchCopilot = useCopilotLauncher()
 
   const threads = data?.threads ?? []
   const activeCount = threads.reduce((acc, t) => (t.status === 'active' ? acc + 1 : acc), 0)
@@ -68,9 +70,10 @@ export function PrCommentsPanel({
         prTitle,
         prWebUrl
       })
-      const result = await launchCopilotCli({
+      const result = await launchCopilot({
         folderPath,
-        prompt
+        prompt,
+        label: `PR #${pullRequestId}`
       })
       if (result.ok) {
         toast.success('Copilot session started.')

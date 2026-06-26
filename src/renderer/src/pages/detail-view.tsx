@@ -24,7 +24,7 @@ import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-p
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { launchCopilotCli } from '@/lib/system'
+import { useCopilotLauncher } from '@/lib/copilot-launch'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
 import type { Worktree } from '@shared/worktree'
@@ -146,15 +146,21 @@ interface StartCopilotSessionActionProps {
 }
 
 function StartCopilotSessionAction({
-  folderPath
+  folderPath,
+  branch
 }: StartCopilotSessionActionProps): React.JSX.Element {
   const [isStarting, setIsStarting] = React.useState(false)
+  const launchCopilot = useCopilotLauncher()
 
   const handleStart = async (): Promise<void> => {
     if (isStarting) return
     setIsStarting(true)
     try {
-      const result = await launchCopilotCli({ folderPath, prompt: '' })
+      const result = await launchCopilot({
+        folderPath,
+        label: branch || folderPath.split(/[\\/]/).pop() || 'Copilot',
+        branch: branch || undefined
+      })
       if (result.ok) {
         toast.success('Copilot session started.')
       } else {

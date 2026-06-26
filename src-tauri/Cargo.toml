@@ -29,8 +29,7 @@ uuid = { version = "1", features = ["v4"] }
 regex = "1"
 base64 = "0.22"
 time = { version = "0.3", features = ["formatting", "macros"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
-keyring = { version = "3", features = ["windows-native"] }
+portable-pty = "0.9"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

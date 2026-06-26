@@ -4,11 +4,10 @@ mod copilot_history;
 mod db;
 mod error;
 mod git;
-mod github_auth;
 mod paths;
 mod repo;
+mod sessions;
 mod system;
-mod updater;
 mod workspaces;
 mod worktrees;
 
@@ -17,6 +16,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use db::DbState;
+use sessions::SessionManager;
 
 /// Build and run the DevTrees Tauri application.
 ///
@@ -51,8 +51,7 @@ pub fn run() {
             // and stash the connection in managed state for commands to use.
             let conn = db::init()?;
             app.manage(DbState(Mutex::new(conn)));
-            app.manage(github_auth::GithubAuthState::default());
-            app.manage(updater::PendingUpdate::default());
+            app.manage(SessionManager::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -98,13 +97,22 @@ pub fn run() {
             repo::repo_worktrees_overview,
             repo::repo_branch_web_url,
             repo::repo_detect_merge_state,
-            github_auth::github_auth_status,
-            github_auth::github_auth_sign_out,
-            github_auth::github_auth_start_device_flow,
-            github_auth::github_auth_poll,
-            updater::update_check,
-            updater::update_install,
+            sessions::sessions_create,
+            sessions::sessions_list,
+            sessions::sessions_snapshot,
+            sessions::sessions_kill,
+            sessions::sessions_input,
+            sessions::sessions_resize,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running DevTrees");
+        .build(tauri::generate_context!())
+        .expect("error while building DevTrees")
+        .run(|app, event| {
+            // On exit, tear down every embedded Copilot session's process tree so no lingering
+            // child keeps a worktree folder locked after the app quits.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(manager) = app.try_state::<SessionManager>() {
+                    manager.kill_all();
+                }
+            }
+        });
 }

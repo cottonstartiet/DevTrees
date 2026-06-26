@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   ChevronRight as ChevronRightIcon,
+  CircleDot as CircleDotIcon,
   Folder as FolderIcon,
   GitBranch as GitBranchIcon,
   GitBranchPlus as GitBranchPlusIcon,
@@ -11,7 +12,8 @@ import {
   Settings as SettingsIcon,
   Sparkles as SparklesIcon,
   SquareTerminal as SquareTerminalIcon,
-  Trash2 as Trash2Icon
+  Trash2 as Trash2Icon,
+  X as XIcon
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -49,7 +51,11 @@ import {
   SidebarMenuSubItem
 } from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
-import { launchCopilotCli, openInWindowsTerminal } from '@/lib/system'
+import { openInWindowsTerminal } from '@/lib/system'
+import { useCopilotLauncher } from '@/lib/copilot-launch'
+import { useSessions } from '@/contexts/sessions-context'
+import { useTerminalMode } from '@/contexts/terminal-mode-context'
+import { sessionPrimaryLabel, sessionRepoLabel } from '@/lib/session-label'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -85,7 +91,7 @@ function workspaceIcon(remoteKind: WorkspaceRemoteKind): React.JSX.Element {
   return <FolderIcon />
 }
 
-export type AppView = 'home' | 'settings' | 'workspace' | 'history'
+export type AppView = 'home' | 'settings' | 'workspace' | 'history' | 'sessions'
 
 interface AppSidebarProps {
   activeView: AppView
@@ -130,21 +136,35 @@ export function AppSidebar({
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
   const [workspacesOpen, setWorkspacesOpen] = React.useState(true)
+  const [sessionsOpen, setSessionsOpen] = React.useState(true)
+  const launchCopilot = useCopilotLauncher()
+  const { terminalMode } = useTerminalMode()
+  const { sessions, activeSessionId, selectSession, killSession } = useSessions()
+  const runningCount = sessions.filter((s) => s.status === 'running').length
+  const showSessions = terminalMode === 'embedded' || sessions.length > 0
 
-  const handleStartCopilotSession = React.useCallback(async (wt: Worktree): Promise<void> => {
-    try {
-      const result = await launchCopilotCli({ folderPath: wt.path, prompt: '' })
-      if (result.ok) {
-        toast.success('Copilot session started.')
-      } else {
-        toast.error(`Could not start Copilot session: ${result.error}`)
+  const handleStartCopilotSession = React.useCallback(
+    async (wt: Worktree, repository?: string): Promise<void> => {
+      try {
+        const result = await launchCopilot({
+          folderPath: wt.path,
+          label: worktreeLabel(wt.path),
+          branch: wt.branch || undefined,
+          repository
+        })
+        if (result.ok) {
+          toast.success('Copilot session started.')
+        } else {
+          toast.error(`Could not start Copilot session: ${result.error}`)
+        }
+      } catch (err) {
+        toast.error(
+          `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
+        )
       }
-    } catch (err) {
-      toast.error(
-        `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
-      )
-    }
-  }, [])
+    },
+    [launchCopilot]
+  )
 
   const handleOpenTerminal = React.useCallback(async (wt: Worktree): Promise<void> => {
     try {
@@ -322,7 +342,7 @@ export function AppSidebar({
                                           <span>Terminal</span>
                                         </ContextMenuItem>
                                         <ContextMenuItem
-                                          onSelect={() => void handleStartCopilotSession(wt)}
+                                          onSelect={() => void handleStartCopilotSession(wt, ws.name)}
                                         >
                                           <SparklesIcon />
                                           <span>Copilot</span>
@@ -357,7 +377,7 @@ export function AppSidebar({
                                             <span>Terminal</span>
                                           </DropdownMenuItem>
                                           <DropdownMenuItem
-                                            onSelect={() => void handleStartCopilotSession(wt)}
+                                            onSelect={() => void handleStartCopilotSession(wt, ws.name)}
                                           >
                                             <SparklesIcon />
                                             <span>Copilot</span>
@@ -388,6 +408,85 @@ export function AppSidebar({
             </SidebarGroupContent>
           </CollapsibleContent>
         </Collapsible>
+
+        {showSessions && (
+          <Collapsible
+            open={sessionsOpen}
+            onOpenChange={setSessionsOpen}
+            className="flex shrink-0 flex-col"
+          >
+            <SidebarGroup className="shrink-0">
+              <SidebarGroupLabel
+                asChild
+                className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              >
+                <CollapsibleTrigger className="group/se-label flex w-full items-center">
+                  <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/se-label:rotate-90 group-data-[collapsible=icon]:hidden" />
+                  Sessions
+                  {runningCount > 0 && (
+                    <span className="ml-auto rounded-full bg-primary/15 px-1.5 text-xs font-medium tabular-nums text-primary group-data-[collapsible=icon]:hidden">
+                      {runningCount}
+                    </span>
+                  )}
+                </CollapsibleTrigger>
+              </SidebarGroupLabel>
+            </SidebarGroup>
+            <CollapsibleContent className="overflow-x-hidden overflow-y-auto group-data-[collapsible=icon]:overflow-visible">
+              <SidebarGroupContent>
+                {sessions.length === 0 ? (
+                  <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
+                    No active sessions.
+                  </p>
+                ) : (
+                  <SidebarMenu>
+                    {sessions.map((session) => {
+                      const primary = sessionPrimaryLabel(session)
+                      const repoLabel = sessionRepoLabel(session)
+                      return (
+                        <SidebarMenuItem key={session.id}>
+                          <SidebarMenuButton
+                            tooltip={repoLabel ? `${primary} · ${repoLabel}` : primary}
+                            isActive={activeView === 'sessions' && activeSessionId === session.id}
+                            className="h-auto py-1"
+                            onClick={() => {
+                              selectSession(session.id)
+                              onSelectView('sessions')
+                            }}
+                          >
+                            <CircleDotIcon
+                              className={cn(
+                                'size-3.5 shrink-0',
+                                session.status === 'running'
+                                  ? 'text-emerald-500'
+                                  : 'text-muted-foreground'
+                              )}
+                            />
+                            <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                              <span className="truncate">{primary}</span>
+                              {repoLabel ? (
+                                <span className="text-sidebar-foreground/70 truncate text-[10px]">
+                                  {repoLabel}
+                                </span>
+                              ) : null}
+                            </div>
+                          </SidebarMenuButton>
+                          <SidebarMenuAction
+                            showOnHover
+                            title="Close session"
+                            onClick={() => killSession(session.id)}
+                          >
+                            <XIcon />
+                            <span className="sr-only">Close session</span>
+                          </SidebarMenuAction>
+                        </SidebarMenuItem>
+                      )
+                    })}
+                  </SidebarMenu>
+                )}
+              </SidebarGroupContent>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
       </SidebarContent>
 
       <SidebarFooter>

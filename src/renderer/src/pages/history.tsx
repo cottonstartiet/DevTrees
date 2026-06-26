@@ -22,7 +22,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { useCopilotHistory } from '@/hooks/use-copilot-history'
-import { launchCopilotResume, openPath } from '@/lib/system'
+import { openPath } from '@/lib/system'
+import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { baseName, cn } from '@/lib/utils'
 import type { CopilotHistorySession } from '@shared/copilot-history'
 
@@ -110,6 +111,7 @@ export function HistoryPage(): React.JSX.Element {
   const [query, setQuery] = React.useState('')
   const [hostFilter, setHostFilter] = React.useState<HostFilter | null>(null)
   const [timeFilter, setTimeFilter] = React.useState<TimeFilter>('7d')
+  const launchCopilot = useCopilotLauncher()
 
   const toggleHost = React.useCallback((host: HostFilter): void => {
     setHostFilter((prev) => (prev === host ? null : host))
@@ -135,10 +137,16 @@ export function HistoryPage(): React.JSX.Element {
         toast.error('This session has no recorded folder to resume in.')
         return
       }
-      const result = await launchCopilotResume({ folderPath: session.cwd, sessionId: session.id })
+      const result = await launchCopilot({
+        folderPath: session.cwd,
+        resumeSessionId: session.id,
+        label: baseName(session.cwd) || 'Resumed session',
+        branch: session.branch ?? undefined,
+        repository: session.repository ?? undefined
+      })
       if (!result.ok) toast.error(result.error)
     },
-    []
+    [launchCopilot]
   )
 
   const openFolder = React.useCallback(async (session: CopilotHistorySession): Promise<void> => {
