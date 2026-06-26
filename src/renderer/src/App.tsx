@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
 import { TasksProvider } from '@/contexts/tasks-context'
+import { ThemeProvider } from '@/contexts/theme-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
@@ -520,9 +521,11 @@ function AppShell(): React.JSX.Element {
 
 function App(): React.JSX.Element {
   return (
-    <TasksProvider>
-      <AppShell />
-    </TasksProvider>
+    <ThemeProvider>
+      <TasksProvider>
+        <AppShell />
+      </TasksProvider>
+    </ThemeProvider>
   )
 }
 
