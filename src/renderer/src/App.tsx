@@ -13,6 +13,7 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/s
 import { Toaster } from '@/components/ui/sonner'
 import { TasksProvider } from '@/contexts/tasks-context'
 import { ThemeProvider } from '@/contexts/theme-context'
+import { GithubAuthProvider } from '@/contexts/github-auth-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useWorkspaces } from '@/hooks/use-workspaces'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
@@ -522,9 +523,11 @@ function AppShell(): React.JSX.Element {
 function App(): React.JSX.Element {
   return (
     <ThemeProvider>
-      <TasksProvider>
-        <AppShell />
-      </TasksProvider>
+      <GithubAuthProvider>
+        <TasksProvider>
+          <AppShell />
+        </TasksProvider>
+      </GithubAuthProvider>
     </ThemeProvider>
   )
 }

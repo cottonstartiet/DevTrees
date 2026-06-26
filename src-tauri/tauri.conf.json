@@ -42,7 +42,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyMjZCMUEzREYzN0QwN0YKUldSLzBEZmZvN0VtTXJESUZZSU5OTC8vczlDbFBjZ3hUMGpNR2ZsQ2hJcHd2dXR6cUNxaWdMTGoK",
       "endpoints": [
-        "https://github.com/cottonstartiet/DevTrees/releases/latest/download/latest.json"
+        "https://github.com/REPLACE_WITH_ENTERPRISE_ORG/DevTrees/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

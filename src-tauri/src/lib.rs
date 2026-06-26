@@ -4,9 +4,11 @@ mod copilot_history;
 mod db;
 mod error;
 mod git;
+mod github_auth;
 mod paths;
 mod repo;
 mod system;
+mod updater;
 mod workspaces;
 mod worktrees;
 
@@ -49,6 +51,8 @@ pub fn run() {
             // and stash the connection in managed state for commands to use.
             let conn = db::init()?;
             app.manage(DbState(Mutex::new(conn)));
+            app.manage(github_auth::GithubAuthState::default());
+            app.manage(updater::PendingUpdate::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -94,6 +98,12 @@ pub fn run() {
             repo::repo_worktrees_overview,
             repo::repo_branch_web_url,
             repo::repo_detect_merge_state,
+            github_auth::github_auth_status,
+            github_auth::github_auth_sign_out,
+            github_auth::github_auth_start_device_flow,
+            github_auth::github_auth_poll,
+            updater::update_check,
+            updater::update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running DevTrees");

@@ -75,6 +75,12 @@ import type {
   LaunchResult
 } from '@shared/system'
 import type { CopilotHistoryListResult } from '@shared/copilot-history'
+import type {
+  AuthStatus,
+  DeviceFlowStart,
+  PollResult,
+  UpdateCheckResult
+} from '@shared/updater'
 
 type Args = Record<string, unknown>
 
@@ -250,6 +256,17 @@ const api = {
         reason: 'unreadable',
         message
       }))
+  },
+  githubAuth: {
+    status: (): Promise<AuthStatus> => invoke('github_auth_status'),
+    startDeviceFlow: (): Promise<DeviceFlowStart> => invoke('github_auth_start_device_flow'),
+    poll: (): Promise<PollResult> => invoke('github_auth_poll'),
+    signOut: (): Promise<AuthStatus> => invoke('github_auth_sign_out')
+  },
+  updater: {
+    check: (): Promise<UpdateCheckResult> => invoke('update_check'),
+    install: (expectedVersion: string): Promise<void> =>
+      invoke('update_install', { expectedVersion })
   }
 }
 

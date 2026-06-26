@@ -128,12 +128,10 @@ jobs:
           rm -rf src-tauri/target/release/bundle/nsis
           yarn tauri build
 
-      - name: Assemble release artifacts and updater manifest
+      - name: Stage release artifacts
         shell: bash
         env:
-          TAG: ${{ needs.check-version.outputs.tag }}
           VERSION: ${{ needs.check-version.outputs.version }}
-          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           bundle_dir="src-tauri/target/release/bundle/nsis"
@@ -160,12 +158,63 @@ jobs:
           cp "$installer" "dist-release/${installer_name}"
           cp "$signature_file" "dist-release/${installer_name}.sig"
 
-          # Build the Tauri updater manifest that `plugins.updater.endpoints`
-          # points at (releases/latest/download/latest.json). The signature field
-          # is the *contents* of the .sig file, and the url points at the asset
-          # that will be uploaded to this release.
+      - name: Publish GitHub Release (installer + signature)
+        # Uses the pre-installed `gh` CLI instead of a third-party action so the
+        # enterprise policy "all actions must be from a repository owned by your
+        # enterprise, created by GitHub, or verified in the GitHub Marketplace"
+        # is satisfied. The release must stay "latest" so the updater can resolve
+        # it via the REST API (releases/latest). The updater manifest is uploaded
+        # in the next step, once the installer asset id is known.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "DevTrees $VERSION" \
+            --target "$GITHUB_SHA" \
+            --latest \
+            dist-release/*-setup.exe \
+            dist-release/*-setup.exe.sig
+
+      - name: Generate and upload updater manifest (latest.json)
+        # The repository is private, so the updater downloads the installer
+        # through the GitHub REST asset API (api.github.com/.../releases/assets/{id})
+        # with an Authorization header, instead of the public
+        # releases/download/... URL. The asset id only exists after the release
+        # is created, so we look it up here and write it into latest.json, then
+        # upload the manifest as the final asset. See specs/ghe-update.md.
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          installer_name="DevTrees_${VERSION}_x64-setup.exe"
+          signature_file="dist-release/${installer_name}.sig"
+
+          if [ ! -f "$signature_file" ]; then
+            echo "::error::Missing signature file: ${signature_file}" >&2
+            exit 1
+          fi
+
+          # Discover the uploaded installer's asset id on the freshly created release.
+          asset_id="$(gh api "repos/${REPO}/releases/tags/${TAG}" \
+            --jq ".assets[] | select(.name == \"${installer_name}\") | .id")"
+          if [ -z "$asset_id" ]; then
+            echo "::error::Could not find asset id for ${installer_name} on ${TAG}" >&2
+            gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.assets[].name' >&2 || true
+            exit 1
+          fi
+
+          # The signature field is the *contents* of the .sig file; the url is the
+          # REST asset API endpoint the authenticated updater downloads.
           export SIGNATURE="$(cat "$signature_file")"
-          export DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${installer_name}"
+          export DOWNLOAD_URL="https://api.github.com/repos/${REPO}/releases/assets/${asset_id}"
           node -e '
             const fs = require("fs");
             const manifest = {
@@ -182,29 +231,5 @@ jobs:
             fs.writeFileSync("dist-release/latest.json", JSON.stringify(manifest, null, 2));
           '
 
-      - name: Publish GitHub Release
-        # Uses the pre-installed `gh` CLI instead of a third-party action so the
-        # enterprise policy "all actions must be from a repository owned by your
-        # enterprise, created by GitHub, or verified in the GitHub Marketplace"
-        # is satisfied. The release must stay "latest" so the updater endpoint
-        # (releases/latest/download/latest.json) resolves correctly.
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.check-version.outputs.tag }}
-          VERSION: ${{ needs.check-version.outputs.version }}
-        run: |
-          set -euo pipefail
-          if [ ! -f dist-release/latest.json ]; then
-            echo "::error::Missing dist-release/latest.json updater manifest" >&2
-            ls -la dist-release >&2 || true
-            exit 1
-          fi
+          gh release upload "$TAG" dist-release/latest.json --clobber
 
-          gh release create "$TAG" \
-            --title "DevTrees $VERSION" \
-            --target "$GITHUB_SHA" \
-            --latest \
-            dist-release/*-setup.exe \
-            dist-release/*-setup.exe.sig \
-            dist-release/latest.json

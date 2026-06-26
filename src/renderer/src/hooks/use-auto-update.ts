@@ -1,60 +1,75 @@
 import { useEffect } from 'react'
 import { toast } from 'sonner'
 
+import { useGithubAuth } from '@/contexts/github-auth-context'
+
 /**
- * Auto-update against the GitHub Releases published by the build workflow,
- * replacing the old `electron-updater` flow. On launch we ask Tauri's updater
- * whether a newer signed release exists; if so we surface a non-blocking toast
- * offering an immediate "restart & update". The install only runs when the user
- * accepts, so we never interrupt an in-progress session — mirroring
- * electron-updater's "notify, install on the user's terms" behaviour.
+ * Auto-update against the private GitHub Enterprise release repo. Because the
+ * repo is private, downloads must be authenticated: the check + install run in
+ * the Rust backend (`update_check` / `update_install`), which attaches the
+ * signed-in user's token to both the manifest fetch and the installer download.
+ * See `specs/ghe-update.md`.
  *
- * On Windows `downloadAndInstall()` runs the NSIS installer and terminates the
- * running process, so any code after it is not guaranteed to execute; the
- * installer (passive mode) applies the update and relaunches DevTrees. We still
- * call `relaunch()` as a best-effort fallback in case control returns.
+ * On launch we ask the backend whether a newer signed release exists. If the
+ * user is signed in and an update is available, we surface a non-blocking toast
+ * offering "Restart & update"; the install only runs when the user accepts, so
+ * an in-progress session is never interrupted. On Windows the NSIS installer
+ * (passive mode) applies the update and the backend relaunches DevTrees.
  *
- * The updater only works in a packaged build with a configured endpoint, so any
- * failure (running under plain `vite` in a browser, no releases yet, offline,
- * private repo without a token) is swallowed for the check itself: updates are
- * best-effort and must never crash or block the app. Failures during an
- * explicit user-triggered install are logged and surfaced.
+ * If the user is not signed in, we show a non-blocking prompt to sign in to
+ * receive updates rather than silently skipping the check. All check failures
+ * are swallowed/logged so updates remain best-effort and never block or crash
+ * the app.
  */
 export function useAutoUpdate(): void {
+  const { signedIn, signIn } = useGithubAuth()
+
   useEffect(() => {
+    // Wait until the initial sign-in status is known.
+    if (signedIn === null) return
     let cancelled = false
 
     void (async () => {
       try {
-        const { check } = await import('@tauri-apps/plugin-updater')
-        const update = await check()
-        if (cancelled || !update) return
+        const update = await window.api.updater.check()
+        if (cancelled) return
 
-        toast(`Update ${update.version} is available.`, {
+        if (!update.signedIn) {
+          toast('Sign in to GitHub to receive DevTrees updates.', {
+            duration: Infinity,
+            id: 'update-signin-prompt',
+            action: { label: 'Sign in', onClick: () => void signIn() }
+          })
+          return
+        }
+
+        if (!update.available || !update.version) return
+        const version = update.version
+
+        toast(`Update ${version} is available.`, {
           duration: Infinity,
+          id: 'update-available',
           action: {
             label: 'Restart & update',
             onClick: () => {
               void (async () => {
                 const toastId = toast.loading(
-                  `Installing update ${update.version}. DevTrees will restart…`
+                  `Installing update ${version}. DevTrees will restart…`
                 )
                 try {
-                  await update.downloadAndInstall()
-                  const { relaunch } = await import('@tauri-apps/plugin-process')
-                  await relaunch()
+                  await window.api.updater.install(version)
                 } catch (err) {
                   console.error('[updater] install failed', err)
-                  toast.error(`Update ${update.version} failed to install.`, { id: toastId })
+                  toast.error(`Update ${version} failed to install.`, { id: toastId })
                 }
               })()
             }
           }
         })
       } catch (err) {
-        // Best-effort: no Tauri runtime (browser dev), no release yet, or a
-        // network/manifest/signature failure. Keep running the current version,
-        // but log so production update failures remain diagnosable.
+        // Best-effort: no release yet, offline, or a manifest/signature/auth
+        // failure. Keep running the current version, but log so production
+        // update failures stay diagnosable.
         console.warn('[updater] update check skipped:', err)
       }
     })()
@@ -62,5 +77,5 @@ export function useAutoUpdate(): void {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [signedIn, signIn])
 }

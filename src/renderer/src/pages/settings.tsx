@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   Gamepad2 as GamepadIcon,
+  LogIn as LogInIcon,
   Monitor as MonitorIcon,
   Moon as MoonIcon,
   Sun as SunIcon
@@ -10,6 +11,7 @@ import appIcon from '../assets/icon.png'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTheme, type Theme } from '@/contexts/theme-context'
+import { useGithubAuth } from '@/contexts/github-auth-context'
 import { cn } from '@/lib/utils'
 import { getAppInfo } from '@/lib/system'
 import type { AppInfo } from '@shared/system'
@@ -61,6 +63,56 @@ function AppearanceSettings(): React.JSX.Element {
   )
 }
 
+function GithubAccountSettings(): React.JSX.Element {
+  const { signedIn, signingIn, device, signIn, signOut } = useGithubAuth()
+
+  return (
+    <section className="bg-card text-card-foreground flex w-full max-w-sm flex-col gap-3 rounded-2xl border px-6 py-5 shadow-sm">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-sm font-semibold tracking-tight">GitHub account</h2>
+        <p className="text-muted-foreground text-xs">
+          Sign in to download app updates from the private repository.
+        </p>
+      </div>
+
+      {device ? (
+        <div className="bg-muted flex flex-col gap-1 rounded-lg p-3 text-center">
+          <span className="text-muted-foreground text-xs">Enter this code in your browser:</span>
+          <span className="text-lg font-semibold tracking-widest">{device.userCode}</span>
+        </div>
+      ) : null}
+
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm">
+          {signedIn === null ? (
+            <Skeleton className="h-4 w-24" />
+          ) : signedIn ? (
+            <span className="text-muted-foreground">Signed in</span>
+          ) : (
+            <span className="text-muted-foreground">Not signed in</span>
+          )}
+        </span>
+
+        {signedIn ? (
+          <Button type="button" variant="outline" size="sm" onClick={() => void signOut()}>
+            Sign out
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            disabled={signingIn || signedIn === null}
+            onClick={() => void signIn()}
+          >
+            <LogInIcon className="size-4" />
+            {signingIn ? 'Signing in…' : 'Sign in'}
+          </Button>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function SettingsPage(): React.JSX.Element {
   const [info, setInfo] = React.useState<AppInfo | null>(null)
 
@@ -106,6 +158,7 @@ export function SettingsPage(): React.JSX.Element {
       </section>
 
       <AppearanceSettings />
+      <GithubAccountSettings />
     </div>
   )
 }
