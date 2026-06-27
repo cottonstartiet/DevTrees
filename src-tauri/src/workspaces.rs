@@ -146,8 +146,9 @@ fn enrich(base: BaseWorkspace) -> Workspace {
 }
 
 fn load_base_workspaces(conn: &Connection) -> AppResult<Vec<BaseWorkspace>> {
-    let mut stmt =
-        conn.prepare("SELECT id, path, name, added_at FROM workspaces ORDER BY added_at ASC")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, path, name, added_at FROM workspaces ORDER BY sort_order ASC, added_at ASC",
+    )?;
     let rows = stmt
         .query_map([], |row| {
             Ok(BaseWorkspace {
@@ -202,15 +203,24 @@ fn add_workspace(state: &State<'_, DbState>, folder: &str) -> AddWorkspaceResult
             Ok(c) => c,
             Err(_) => return AddWorkspaceResult::err("unknown", Some("db mutex poisoned".into())),
         };
+        // New workspaces sort to the bottom of the custom order.
+        let next_sort_order: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM workspaces",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(base.added_at);
         let result = conn.execute(
-            "INSERT INTO workspaces (id, path, name, added_at, path_key)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO workspaces (id, path, name, added_at, path_key, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 base.id,
                 base.path,
                 base.name,
                 base.added_at,
-                path_key(&resolved)
+                path_key(&resolved),
+                next_sort_order
             ],
         );
         if let Err(err) = result {
@@ -248,6 +258,51 @@ pub async fn workspaces_remove(state: State<'_, DbState>, id: String) -> AppResu
             .lock()
             .map_err(|_| AppError::msg("db mutex poisoned"))?;
         conn.execute("DELETE FROM workspaces WHERE id = ?1", [id])?;
+    }
+    load_workspaces(&state)
+}
+
+#[tauri::command]
+pub async fn workspaces_reorder(
+    state: State<'_, DbState>,
+    ordered_ids: Vec<String>,
+) -> AppResult<Vec<Workspace>> {
+    {
+        let mut conn = state
+            .0
+            .lock()
+            .map_err(|_| AppError::msg("db mutex poisoned"))?;
+        let tx = conn.transaction()?;
+        {
+            // Build the authoritative order: the requested ids first (deduped, and
+            // only those that actually exist), then any remaining existing ids in
+            // their current order. This makes the result robust to stale, partial,
+            // duplicated, or unknown ids so no row keeps a tying/stale sort_order.
+            let mut existing: Vec<String> = {
+                let mut stmt =
+                    tx.prepare("SELECT id FROM workspaces ORDER BY sort_order ASC, added_at ASC")?;
+                let ids = stmt
+                    .query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                ids
+            };
+            let mut final_order: Vec<String> = Vec::with_capacity(existing.len());
+            for id in &ordered_ids {
+                if existing.contains(id) && !final_order.contains(id) {
+                    final_order.push(id.clone());
+                }
+            }
+            for id in existing.drain(..) {
+                if !final_order.contains(&id) {
+                    final_order.push(id);
+                }
+            }
+            let mut stmt = tx.prepare("UPDATE workspaces SET sort_order = ?1 WHERE id = ?2")?;
+            for (index, id) in final_order.iter().enumerate() {
+                stmt.execute(rusqlite::params![index as i64, id])?;
+            }
+        }
+        tx.commit()?;
     }
     load_workspaces(&state)
 }

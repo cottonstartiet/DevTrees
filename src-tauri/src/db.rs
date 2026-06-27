@@ -54,6 +54,14 @@ fn migrations() -> Vec<Migration> {
         },
         // 0003 -> user_version 3: drop the now-orphaned notes table.
         |db| db.execute_batch("DROP TABLE IF EXISTS worktree_notes;"),
+        // 0004 -> user_version 4: per-workspace custom sort order. Backfill from
+        // added_at so existing rows keep their current (time-based) ordering.
+        |db| {
+            db.execute_batch(
+                "ALTER TABLE workspaces ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+                 UPDATE workspaces SET sort_order = added_at;",
+            )
+        },
     ]
 }
 

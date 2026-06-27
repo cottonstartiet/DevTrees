@@ -136,7 +136,9 @@ const api = {
         message
       })),
     list: (): Promise<Workspace[]> => invoke('workspaces_list'),
-    remove: (id: string): Promise<Workspace[]> => invoke('workspaces_remove', { id })
+    remove: (id: string): Promise<Workspace[]> => invoke('workspaces_remove', { id }),
+    reorder: (orderedIds: string[]): Promise<Workspace[]> =>
+      invoke('workspaces_reorder', { orderedIds })
   },
   worktrees: {
     listForWorkspace: (workspacePath: string): Promise<Worktree[]> =>

@@ -3,6 +3,7 @@ import * as React from 'react'
 
 import type { CopilotSession, CreateSessionRequest, CreateSessionResult } from '@shared/sessions'
 import type { DecodedSessionSnapshot, SessionData } from '@/lib/api'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 
 type DataListener = (event: { seq: number; data: Uint8Array }) => void
 
@@ -15,6 +16,11 @@ export interface SessionsContextValue {
   cycleSession: (delta: number) => void
   createSession: (req: CreateSessionRequest) => Promise<CreateSessionResult>
   killSession: (id: string) => void
+  /**
+   * Close a session, prompting for confirmation first if it is still running. Exited sessions are
+   * closed immediately. Prefer this over `killSession` for user-initiated closes (Ctrl+W, X buttons).
+   */
+  requestCloseSession: (id: string) => void
   sendInput: (id: string, data: string) => void
   resize: (id: string, cols: number, rows: number) => void
   snapshot: (id: string) => Promise<DecodedSessionSnapshot | null>
@@ -35,6 +41,7 @@ export function SessionsProvider({
 }: SessionsProviderProps): React.JSX.Element {
   const [sessions, setSessions] = React.useState<CopilotSession[]>([])
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null)
+  const [pendingCloseId, setPendingCloseId] = React.useState<string | null>(null)
 
   // Per-session live-output listeners. The Rust backend is the authoritative buffer (replayed via
   // snapshot on mount); the provider only routes live events to the currently mounted terminal.
@@ -117,6 +124,18 @@ export function SessionsProvider({
     setSessions((prev) => prev.filter((s) => s.id !== id))
   }, [])
 
+  const requestCloseSession = React.useCallback(
+    (id: string): void => {
+      const target = sessions.find((s) => s.id === id)
+      if (target && target.status === 'running') {
+        setPendingCloseId(id)
+        return
+      }
+      killSession(id)
+    },
+    [sessions, killSession]
+  )
+
   const sendInput = React.useCallback((id: string, data: string): void => {
     void window.api.sessions.sendInput(id, data)
   }, [])
@@ -155,6 +174,7 @@ export function SessionsProvider({
       cycleSession,
       createSession,
       killSession,
+      requestCloseSession,
       sendInput,
       resize,
       snapshot,
@@ -167,13 +187,35 @@ export function SessionsProvider({
     cycleSession,
     createSession,
     killSession,
+    requestCloseSession,
     sendInput,
     resize,
     snapshot,
     subscribeData
   ])
 
-  return <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>
+  const pendingCloseSession =
+    pendingCloseId !== null ? (sessions.find((s) => s.id === pendingCloseId) ?? null) : null
+
+  return (
+    <SessionsContext.Provider value={value}>
+      {children}
+      <ConfirmDialog
+        open={pendingCloseId !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingCloseId(null)
+        }}
+        title="Close session?"
+        description="Copilot is still running in this session. Closing will stop it."
+        body={pendingCloseSession ? pendingCloseSession.label : undefined}
+        confirmLabel="Close"
+        confirmVariant="destructive"
+        onConfirm={() => {
+          if (pendingCloseId !== null) killSession(pendingCloseId)
+        }}
+      />
+    </SessionsContext.Provider>
+  )
 }
 
 export function useSessions(): SessionsContextValue {

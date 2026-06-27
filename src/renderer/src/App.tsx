@@ -64,6 +64,7 @@ function AppShell(): React.JSX.Element {
     selectWorkspace,
     addWorkspace,
     removeWorkspace,
+    reorderWorkspaces,
     createWorktree,
     createBranchInWorktree,
     deleteWorktree,
@@ -437,6 +438,7 @@ function AppShell(): React.JSX.Element {
             onAddWorkspace={handleAddWorkspace}
             onSelectWorkspace={handleSelectWorkspace}
             onRemoveWorkspace={handleRemoveWorkspace}
+            onReorderWorkspaces={reorderWorkspaces}
             onCreateWorktree={handleCreateWorktreeClick}
             onSelectWorktree={handleSelectWorktree}
             onDeleteWorktree={handleDeleteWorktreeClick}

@@ -58,7 +58,7 @@ export function SessionsHeaderControls({
 }
 
 export function SessionsPage({ viewMode }: { viewMode: SessionViewMode }): React.JSX.Element {
-  const { sessions, activeSessionId, cycleSession } = useSessions()
+  const { sessions, activeSessionId, cycleSession, requestCloseSession } = useSessions()
 
   const activeSession = React.useMemo(
     () => sessions.find((s) => s.id === activeSessionId) ?? null,
@@ -80,11 +80,14 @@ export function SessionsPage({ viewMode }: { viewMode: SessionViewMode }): React
       } else if (e.key === 'PageUp') {
         e.preventDefault()
         cycleSession(-1)
+      } else if (e.key === 'w' || e.key === 'W') {
+        e.preventDefault()
+        if (activeSessionId) requestCloseSession(activeSessionId)
       }
     }
     window.addEventListener('keydown', handler, { capture: true })
     return () => window.removeEventListener('keydown', handler, { capture: true })
-  }, [cycleSession])
+  }, [cycleSession, requestCloseSession, activeSessionId])
 
   if (sessions.length === 0) {
     return (

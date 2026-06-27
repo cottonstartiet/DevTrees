@@ -57,6 +57,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             workspaces::workspaces_list,
             workspaces::workspaces_remove,
+            workspaces::workspaces_reorder,
             workspaces::workspaces_pick_and_add,
             worktrees::worktrees_list_for_workspace,
             worktrees::worktrees_create,

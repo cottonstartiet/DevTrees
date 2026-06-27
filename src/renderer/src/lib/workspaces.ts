@@ -28,3 +28,7 @@ export function listWorkspaces(): Promise<Workspace[]> {
 export function removeWorkspace(id: string): Promise<Workspace[]> {
   return window.api.workspaces.remove(id)
 }
+
+export function reorderWorkspaces(orderedIds: string[]): Promise<Workspace[]> {
+  return window.api.workspaces.reorder(orderedIds)
+}

@@ -1,6 +1,6 @@
 {
   "name": "devtrees",
-  "version": "0.95.0",
+  "version": "0.95.1",
   "description": "DevTrees — a Tauri desktop app built with Rust, TypeScript, Vite, React and shadcn/ui.",
   "author": "www.ritekode.com",
   "packageManager": "yarn@1.22.22",
@@ -17,6 +17,9 @@
     "build": "tauri build"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-context-menu": "^2.3.1",
     "@radix-ui/react-dialog": "^1.1.15",

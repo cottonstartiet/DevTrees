@@ -7,7 +7,8 @@ import { useTasks } from '@/contexts/tasks-context'
 import {
   listWorkspaces,
   pickAndAddWorkspace,
-  removeWorkspace as removeWorkspaceIpc
+  removeWorkspace as removeWorkspaceIpc,
+  reorderWorkspaces as reorderWorkspacesIpc
 } from '@/lib/workspaces'
 import { createBranch as createBranchIpc } from '@/lib/repo'
 import {
@@ -25,6 +26,7 @@ export interface UseWorkspacesResult {
   selectWorkspace: (id: string | null) => void
   addWorkspace: () => Promise<void>
   removeWorkspace: (id: string) => Promise<void>
+  reorderWorkspaces: (orderedIds: string[]) => Promise<void>
   refreshWorktreesFor: (workspaceId: string) => Promise<void>
   createWorktree: (workspace: Workspace, name: string) => Promise<boolean>
   createBranchInWorktree: (
@@ -47,6 +49,21 @@ export function useWorkspaces(): UseWorkspacesResult {
   )
   const { startTask, succeedTask, failTask } = useTasks()
 
+  // Always-current snapshot of workspaces for effects keyed on the workspace *set*
+  // (not its order), so reordering never triggers a worktree refetch.
+  const workspacesRef = React.useRef(workspaces)
+  React.useEffect(() => {
+    workspacesRef.current = workspaces
+  })
+  const workspaceSetKey = React.useMemo(
+    () =>
+      workspaces
+        .map((w) => `${w.id}::${w.path}`)
+        .sort()
+        .join('|'),
+    [workspaces]
+  )
+
   React.useEffect(() => {
     let cancelled = false
     listWorkspaces()
@@ -63,19 +80,20 @@ export function useWorkspaces(): UseWorkspacesResult {
 
   React.useEffect(() => {
     let cancelled = false
-    if (workspaces.length === 0) {
+    const current = workspacesRef.current
+    if (current.length === 0) {
       return () => {
         cancelled = true
       }
     }
 
     Promise.allSettled(
-      workspaces.map((ws) => listWorktreesForWorkspace(ws.path).then((wts) => ({ id: ws.id, wts })))
+      current.map((ws) => listWorktreesForWorkspace(ws.path).then((wts) => ({ id: ws.id, wts })))
     ).then((results) => {
       if (cancelled) return
       const next: Record<string, Worktree[]> = {}
       results.forEach((r, idx) => {
-        const ws = workspaces[idx]
+        const ws = current[idx]
         if (r.status === 'fulfilled') {
           next[r.value.id] = r.value.wts.filter((w) => !w.isMain)
         } else {
@@ -88,7 +106,7 @@ export function useWorkspaces(): UseWorkspacesResult {
     return () => {
       cancelled = true
     }
-  }, [workspaces])
+  }, [workspaceSetKey])
 
   const addWorkspace = React.useCallback(async (): Promise<void> => {
     const ws = await pickAndAddWorkspace()
@@ -112,6 +130,34 @@ export function useWorkspaces(): UseWorkspacesResult {
 
   const selectWorkspace = React.useCallback((id: string | null): void => {
     setActiveId(id)
+  }, [])
+
+  const reorderSeqRef = React.useRef(0)
+  const reorderWorkspaces = React.useCallback(async (orderedIds: string[]): Promise<void> => {
+    const seq = ++reorderSeqRef.current
+    const previous = workspacesRef.current
+    setWorkspaces((prev) => {
+      const byId = new Map(prev.map((w) => [w.id, w]))
+      const next = orderedIds
+        .map((id) => byId.get(id))
+        .filter((w): w is Workspace => w !== undefined)
+      // Safety: keep any workspace missing from orderedIds, preserving prior order.
+      for (const w of prev) {
+        if (!orderedIds.includes(w.id)) next.push(w)
+      }
+      return next
+    })
+    try {
+      const updated = await reorderWorkspacesIpc(orderedIds)
+      // Ignore stale responses if a newer reorder has since been issued.
+      if (seq === reorderSeqRef.current) setWorkspaces(updated)
+    } catch (err) {
+      console.error('[workspaces] reorder failed:', err)
+      if (seq === reorderSeqRef.current) {
+        setWorkspaces(previous)
+        toast.error('Could not save workspace order.')
+      }
+    }
   }, [])
 
   const refreshWorktreesFor = React.useCallback(
@@ -288,6 +334,7 @@ export function useWorkspaces(): UseWorkspacesResult {
     selectWorkspace,
     addWorkspace,
     removeWorkspace,
+    reorderWorkspaces,
     refreshWorktreesFor,
     createWorktree,
     createBranchInWorktree,

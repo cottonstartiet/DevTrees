@@ -45,7 +45,7 @@ interface SessionTileProps {
  * the focus view's filmstrip. Deliberately does NOT mount an xterm so many can render cheaply.
  */
 export function SessionTile({ session, isActive }: SessionTileProps): React.JSX.Element {
-  const { selectSession, killSession, snapshot, subscribeData } = useSessions()
+  const { selectSession, requestCloseSession, snapshot, subscribeData } = useSessions()
   const [lastLine, setLastLine] = React.useState('')
   const sessionId = session.id
 
@@ -107,7 +107,7 @@ export function SessionTile({ session, isActive }: SessionTileProps): React.JSX.
           tabIndex={-1}
           onClick={(e) => {
             e.stopPropagation()
-            killSession(sessionId)
+            requestCloseSession(sessionId)
           }}
           title={isRunning ? 'Stop and close session' : 'Close session'}
           className="hover:bg-accent hover:text-accent-foreground rounded-sm p-0.5 opacity-60 transition-opacity group-hover:opacity-100"

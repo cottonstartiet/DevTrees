@@ -5,6 +5,7 @@ import {
   Folder as FolderIcon,
   GitBranch as GitBranchIcon,
   GitBranchPlus as GitBranchPlusIcon,
+  GripVertical as GripVerticalIcon,
   History as HistoryIcon,
   Loader2 as Loader2Icon,
   MoreHorizontal as MoreHorizontalIcon,
@@ -16,6 +17,23 @@ import {
   X as XIcon
 } from 'lucide-react'
 import { toast } from 'sonner'
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent
+} from '@dnd-kit/core'
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 import type { Workspace, WorkspaceRemoteKind } from '@shared/workspace'
 import type { Worktree } from '@shared/worktree'
@@ -104,6 +122,7 @@ interface AppSidebarProps {
   onAddWorkspace: () => void
   onSelectWorkspace: (id: string) => void
   onRemoveWorkspace: (id: string) => void
+  onReorderWorkspaces: (orderedIds: string[]) => void
   onCreateWorktree: (workspace: Workspace) => void
   onSelectWorktree: (workspaceId: string, worktreePath: string) => void
   onDeleteWorktree: (workspaceId: string, worktree: Worktree) => void
@@ -120,6 +139,235 @@ function worktreeSubtitle(wt: Worktree): string | null {
   return null
 }
 
+interface SortableWorkspaceItemProps {
+  ws: Workspace
+  worktrees: Worktree[]
+  activeView: AppView
+  activeWorkspaceId: string | null
+  activeWorktreePath: string | null
+  deletingWorktreePaths: ReadonlySet<string>
+  onSelectWorkspace: (id: string) => void
+  onCreateWorktree: (workspace: Workspace) => void
+  onRemoveWorkspace: (id: string) => void
+  onSelectWorktree: (workspaceId: string, worktreePath: string) => void
+  onDeleteWorktree: (workspaceId: string, worktree: Worktree) => void
+  onOpenTerminal: (wt: Worktree) => void
+  onStartCopilotSession: (wt: Worktree, repository?: string) => void
+}
+
+function SortableWorkspaceItem({
+  ws,
+  worktrees,
+  activeView,
+  activeWorkspaceId,
+  activeWorktreePath,
+  deletingWorktreePaths,
+  onSelectWorkspace,
+  onCreateWorktree,
+  onRemoveWorkspace,
+  onSelectWorktree,
+  onDeleteWorktree,
+  onOpenTerminal,
+  onStartCopilotSession
+}: SortableWorkspaceItemProps): React.JSX.Element {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: ws.id
+  })
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition
+  }
+  const isWsRowActive =
+    activeView === 'workspace' && activeWorkspaceId === ws.id && !activeWorktreePath
+
+  return (
+    <SidebarMenuItem
+      ref={setNodeRef}
+      style={style}
+      className={cn(isDragging && 'z-50 opacity-80')}
+    >
+      <Collapsible defaultOpen className="group/collapsible">
+        <SidebarMenuAction
+          {...attributes}
+          {...listeners}
+          showOnHover
+          title="Drag to reorder"
+          aria-label="Drag to reorder workspace"
+          className="right-[3.25rem] cursor-grab touch-none active:cursor-grabbing group-data-[collapsible=icon]:hidden"
+        >
+          <GripVerticalIcon />
+          <span className="sr-only">Drag to reorder</span>
+        </SidebarMenuAction>
+
+        {worktrees.length > 0 ? (
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              title="Toggle worktrees"
+              aria-label="Toggle worktrees"
+              className="absolute top-1.5 left-1 z-10 flex size-5 items-center justify-center rounded-md text-sidebar-foreground/70 transition-transform hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-hidden group-data-[state=open]/collapsible:rotate-90 group-data-[collapsible=icon]:hidden [&>svg]:size-3.5"
+            >
+              <ChevronRightIcon />
+            </button>
+          </CollapsibleTrigger>
+        ) : null}
+
+        <SidebarMenuButton
+          tooltip={ws.path}
+          isActive={isWsRowActive}
+          onClick={() => onSelectWorkspace(ws.id)}
+          className={cn(worktrees.length > 0 && 'pl-7 group-data-[collapsible=icon]:!pl-2')}
+        >
+          {workspaceIcon(ws.remoteKind)}
+          <span>{ws.name}</span>
+        </SidebarMenuButton>
+
+        <SidebarMenuAction
+          showOnHover
+          className="right-7"
+          title="Create worktree"
+          onClick={() => onCreateWorktree(ws)}
+        >
+          <PlusIcon />
+          <span className="sr-only">Create worktree</span>
+        </SidebarMenuAction>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuAction showOnHover title="Workspace actions">
+              <MoreHorizontalIcon />
+              <span className="sr-only">Workspace actions</span>
+            </SidebarMenuAction>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start">
+            <DropdownMenuItem onSelect={() => onCreateWorktree(ws)}>
+              <GitBranchPlusIcon />
+              <span>Create worktree</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => onRemoveWorkspace(ws.id)}>
+              <Trash2Icon />
+              <span>Remove from list</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {worktrees.length > 0 ? (
+          <CollapsibleContent>
+            <SidebarMenuSub className="mr-0 pr-0">
+              {worktrees.map((wt) => {
+                const isActive =
+                  activeView === 'workspace' &&
+                  activeWorkspaceId === ws.id &&
+                  activeWorktreePath === wt.path
+                const isDeleting = deletingWorktreePaths.has(wt.path)
+                const subtitle = worktreeSubtitle(wt)
+                const tooltip = isDeleting
+                  ? `Deleting ${wt.path}…`
+                  : subtitle
+                    ? `${wt.path}\n${subtitle}`
+                    : wt.path
+                return (
+                  <SidebarMenuSubItem
+                    key={wt.path}
+                    className={cn('relative', isDeleting && 'pointer-events-none opacity-50')}
+                    aria-disabled={isDeleting || undefined}
+                  >
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                        <SidebarMenuSubButton
+                          asChild
+                          isActive={isActive}
+                          title={tooltip}
+                          className="h-auto py-1"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (isDeleting) return
+                              onSelectWorktree(ws.id, wt.path)
+                            }}
+                            className="w-full text-left"
+                            disabled={isDeleting}
+                          >
+                            {isDeleting ? (
+                              <Loader2Icon className="animate-spin" />
+                            ) : (
+                              <GitBranchIcon />
+                            )}
+                            <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                              <span className="truncate">{worktreeLabel(wt.path)}</span>
+                              {subtitle ? (
+                                <span className="truncate text-[10px] text-sidebar-foreground/70">
+                                  {subtitle}
+                                </span>
+                              ) : null}
+                            </div>
+                          </button>
+                        </SidebarMenuSubButton>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-52">
+                        <ContextMenuItem onSelect={() => onOpenTerminal(wt)}>
+                          <SquareTerminalIcon />
+                          <span>Terminal</span>
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => onStartCopilotSession(wt, ws.name)}>
+                          <SparklesIcon />
+                          <span>Copilot</span>
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          variant="destructive"
+                          onSelect={() => onDeleteWorktree(ws.id, wt)}
+                        >
+                          <Trash2Icon />
+                          <span>Delete worktree</span>
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
+                    {!isDeleting ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <SidebarMenuAction
+                            showOnHover
+                            title="Worktree actions"
+                            className="top-0.5"
+                          >
+                            <MoreHorizontalIcon />
+                            <span className="sr-only">Worktree actions</span>
+                          </SidebarMenuAction>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent side="right" align="start">
+                          <DropdownMenuItem onSelect={() => onOpenTerminal(wt)}>
+                            <SquareTerminalIcon />
+                            <span>Terminal</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => onStartCopilotSession(wt, ws.name)}>
+                            <SparklesIcon />
+                            <span>Copilot</span>
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            variant="destructive"
+                            onSelect={() => onDeleteWorktree(ws.id, wt)}
+                          >
+                            <Trash2Icon />
+                            <span>Delete worktree</span>
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : null}
+                  </SidebarMenuSubItem>
+                )
+              })}
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        ) : null}
+      </Collapsible>
+    </SidebarMenuItem>
+  )
+}
+
 export function AppSidebar({
   activeView,
   onSelectView,
@@ -131,6 +379,7 @@ export function AppSidebar({
   onAddWorkspace,
   onSelectWorkspace,
   onRemoveWorkspace,
+  onReorderWorkspaces,
   onCreateWorktree,
   onSelectWorktree,
   onDeleteWorktree
@@ -139,7 +388,7 @@ export function AppSidebar({
   const [sessionsOpen, setSessionsOpen] = React.useState(true)
   const launchCopilot = useCopilotLauncher()
   const { terminalMode } = useTerminalMode()
-  const { sessions, activeSessionId, selectSession, killSession } = useSessions()
+  const { sessions, activeSessionId, selectSession, requestCloseSession } = useSessions()
   const runningCount = sessions.filter((s) => s.status === 'running').length
   const showSessions = terminalMode === 'embedded' || sessions.length > 0
 
@@ -179,13 +428,31 @@ export function AppSidebar({
     }
   }, [])
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+
+  const handleWorkspaceDragEnd = React.useCallback(
+    (event: DragEndEvent): void => {
+      const { active, over } = event
+      if (!over || active.id === over.id) return
+      const ids = workspaces.map((w) => w.id)
+      const oldIndex = ids.indexOf(String(active.id))
+      const newIndex = ids.indexOf(String(over.id))
+      if (oldIndex < 0 || newIndex < 0) return
+      onReorderWorkspaces(arrayMove(ids, oldIndex, newIndex))
+    },
+    [workspaces, onReorderWorkspaces]
+  )
+
   return (
     <Sidebar collapsible="icon" className="top-0 bottom-5 h-[calc(100svh-1.25rem)]">
-      <SidebarContent className="overflow-hidden">
+      <SidebarContent className="overflow-x-hidden">
         <Collapsible
           open={workspacesOpen}
           onOpenChange={setWorkspacesOpen}
-          className={cn('flex min-h-0 flex-col', workspacesOpen && 'flex-1')}
+          className="flex flex-col"
         >
           <SidebarGroup className="shrink-0">
             <SidebarGroupLabel
@@ -202,7 +469,7 @@ export function AppSidebar({
               <span className="sr-only">Add workspace</span>
             </SidebarGroupAction>
           </SidebarGroup>
-          <CollapsibleContent className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto group-data-[collapsible=icon]:overflow-visible">
+          <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
             <SidebarGroupContent>
             {workspaces.length === 0 ? (
               <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
@@ -210,199 +477,35 @@ export function AppSidebar({
               </p>
             ) : (
               <SidebarMenu>
-                {workspaces.map((ws) => {
-                  const isWsRowActive =
-                    activeView === 'workspace' && activeWorkspaceId === ws.id && !activeWorktreePath
-                  const worktrees = worktreesByWorkspaceId[ws.id] ?? []
-                  return (
-                    <Collapsible key={ws.id} asChild defaultOpen className="group/collapsible">
-                      <SidebarMenuItem>
-                        {worktrees.length > 0 ? (
-                          <CollapsibleTrigger asChild>
-                            <button
-                              type="button"
-                              title="Toggle worktrees"
-                              aria-label="Toggle worktrees"
-                              className="absolute top-1.5 left-1 z-10 flex size-5 items-center justify-center rounded-md text-sidebar-foreground/70 transition-transform hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-hidden group-data-[state=open]/collapsible:rotate-90 group-data-[collapsible=icon]:hidden [&>svg]:size-3.5"
-                            >
-                              <ChevronRightIcon />
-                            </button>
-                          </CollapsibleTrigger>
-                        ) : null}
-
-                        <SidebarMenuButton
-                          tooltip={ws.path}
-                          isActive={isWsRowActive}
-                          onClick={() => onSelectWorkspace(ws.id)}
-                          className={cn(
-                            worktrees.length > 0 && 'pl-7 group-data-[collapsible=icon]:!pl-2'
-                          )}
-                        >
-                          {workspaceIcon(ws.remoteKind)}
-                          <span>{ws.name}</span>
-                        </SidebarMenuButton>
-
-                        <SidebarMenuAction
-                          showOnHover
-                          className="right-7"
-                          title="Create worktree"
-                          onClick={() => onCreateWorktree(ws)}
-                        >
-                          <PlusIcon />
-                          <span className="sr-only">Create worktree</span>
-                        </SidebarMenuAction>
-
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <SidebarMenuAction showOnHover title="Workspace actions">
-                              <MoreHorizontalIcon />
-                              <span className="sr-only">Workspace actions</span>
-                            </SidebarMenuAction>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent side="right" align="start">
-                            <DropdownMenuItem onSelect={() => onCreateWorktree(ws)}>
-                              <GitBranchPlusIcon />
-                              <span>Create worktree</span>
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              variant="destructive"
-                              onSelect={() => onRemoveWorkspace(ws.id)}
-                            >
-                              <Trash2Icon />
-                              <span>Remove from list</span>
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-
-                        {worktrees.length > 0 ? (
-                          <CollapsibleContent>
-                            <SidebarMenuSub className="mr-0 pr-0">
-                              {worktrees.map((wt) => {
-                                const isActive =
-                                  activeView === 'workspace' &&
-                                  activeWorkspaceId === ws.id &&
-                                  activeWorktreePath === wt.path
-                                const isDeleting = deletingWorktreePaths.has(wt.path)
-                                const subtitle = worktreeSubtitle(wt)
-                                const tooltip = isDeleting
-                                  ? `Deleting ${wt.path}…`
-                                  : subtitle
-                                    ? `${wt.path}\n${subtitle}`
-                                    : wt.path
-                                return (
-                                  <SidebarMenuSubItem
-                                    key={wt.path}
-                                    className={cn(
-                                      'relative',
-                                      isDeleting && 'pointer-events-none opacity-50'
-                                    )}
-                                    aria-disabled={isDeleting || undefined}
-                                  >
-                                    <ContextMenu>
-                                      <ContextMenuTrigger asChild>
-                                        <SidebarMenuSubButton
-                                          asChild
-                                          isActive={isActive}
-                                          title={tooltip}
-                                          className="h-auto py-1"
-                                        >
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              if (isDeleting) return
-                                              onSelectWorktree(ws.id, wt.path)
-                                            }}
-                                            className="w-full text-left"
-                                            disabled={isDeleting}
-                                          >
-                                            {isDeleting ? (
-                                              <Loader2Icon className="animate-spin" />
-                                            ) : (
-                                              <GitBranchIcon />
-                                            )}
-                                            <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                                              <span className="truncate">
-                                                {worktreeLabel(wt.path)}
-                                              </span>
-                                              {subtitle ? (
-                                                <span className="truncate text-[10px] text-sidebar-foreground/70">
-                                                  {subtitle}
-                                                </span>
-                                              ) : null}
-                                            </div>
-                                          </button>
-                                        </SidebarMenuSubButton>
-                                      </ContextMenuTrigger>
-                                      <ContextMenuContent className="w-52">
-                                        <ContextMenuItem
-                                          onSelect={() => void handleOpenTerminal(wt)}
-                                        >
-                                          <SquareTerminalIcon />
-                                          <span>Terminal</span>
-                                        </ContextMenuItem>
-                                        <ContextMenuItem
-                                          onSelect={() => void handleStartCopilotSession(wt, ws.name)}
-                                        >
-                                          <SparklesIcon />
-                                          <span>Copilot</span>
-                                        </ContextMenuItem>
-                                        <ContextMenuSeparator />
-                                        <ContextMenuItem
-                                          variant="destructive"
-                                          onSelect={() => onDeleteWorktree(ws.id, wt)}
-                                        >
-                                          <Trash2Icon />
-                                          <span>Delete worktree</span>
-                                        </ContextMenuItem>
-                                      </ContextMenuContent>
-                                    </ContextMenu>
-                                    {!isDeleting ? (
-                                      <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                          <SidebarMenuAction
-                                            showOnHover
-                                            title="Worktree actions"
-                                            className="top-0.5"
-                                          >
-                                            <MoreHorizontalIcon />
-                                            <span className="sr-only">Worktree actions</span>
-                                          </SidebarMenuAction>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent side="right" align="start">
-                                          <DropdownMenuItem
-                                            onSelect={() => void handleOpenTerminal(wt)}
-                                          >
-                                            <SquareTerminalIcon />
-                                            <span>Terminal</span>
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem
-                                            onSelect={() => void handleStartCopilotSession(wt, ws.name)}
-                                          >
-                                            <SparklesIcon />
-                                            <span>Copilot</span>
-                                          </DropdownMenuItem>
-                                          <DropdownMenuSeparator />
-                                          <DropdownMenuItem
-                                            variant="destructive"
-                                            onSelect={() => onDeleteWorktree(ws.id, wt)}
-                                          >
-                                            <Trash2Icon />
-                                            <span>Delete worktree</span>
-                                          </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
-                                    ) : null}
-                                  </SidebarMenuSubItem>
-                                )
-                              })}
-                            </SidebarMenuSub>
-                          </CollapsibleContent>
-                        ) : null}
-                      </SidebarMenuItem>
-                    </Collapsible>
-                  )
-                })}
+                <DndContext
+                  sensors={sensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleWorkspaceDragEnd}
+                >
+                  <SortableContext
+                    items={workspaces.map((w) => w.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {workspaces.map((ws) => (
+                      <SortableWorkspaceItem
+                        key={ws.id}
+                        ws={ws}
+                        worktrees={worktreesByWorkspaceId[ws.id] ?? []}
+                        activeView={activeView}
+                        activeWorkspaceId={activeWorkspaceId}
+                        activeWorktreePath={activeWorktreePath}
+                        deletingWorktreePaths={deletingWorktreePaths}
+                        onSelectWorkspace={onSelectWorkspace}
+                        onCreateWorktree={onCreateWorktree}
+                        onRemoveWorkspace={onRemoveWorkspace}
+                        onSelectWorktree={onSelectWorktree}
+                        onDeleteWorktree={onDeleteWorktree}
+                        onOpenTerminal={handleOpenTerminal}
+                        onStartCopilotSession={handleStartCopilotSession}
+                      />
+                    ))}
+                  </SortableContext>
+                </DndContext>
               </SidebarMenu>
             )}
             </SidebarGroupContent>
@@ -431,7 +534,7 @@ export function AppSidebar({
                 </CollapsibleTrigger>
               </SidebarGroupLabel>
             </SidebarGroup>
-            <CollapsibleContent className="overflow-x-hidden overflow-y-auto group-data-[collapsible=icon]:overflow-visible">
+            <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
               <SidebarGroupContent>
                 {sessions.length === 0 ? (
                   <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
@@ -473,7 +576,7 @@ export function AppSidebar({
                           <SidebarMenuAction
                             showOnHover
                             title="Close session"
-                            onClick={() => killSession(session.id)}
+                            onClick={() => requestCloseSession(session.id)}
                           >
                             <XIcon />
                             <span className="sr-only">Close session</span>

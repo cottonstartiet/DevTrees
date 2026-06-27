@@ -17,5 +17,6 @@ export type AddWorkspaceResult =
 export const WorkspaceIpcChannels = {
   PickAndAdd: 'workspaces:pick-and-add',
   List: 'workspaces:list',
-  Remove: 'workspaces:remove'
+  Remove: 'workspaces:remove',
+  Reorder: 'workspaces:reorder'
 } as const
