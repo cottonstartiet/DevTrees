@@ -29,7 +29,9 @@ import type {
   WorkingCopyStatusRequest,
   WorkingCopyStatusResult,
   WorktreesOverviewRequest,
-  WorktreesOverviewResult
+  WorktreesOverviewResult,
+  MyBranchesRequest,
+  MyBranchesResult
 } from '@shared/repo'
 
 export function getDefaultBranch(workspacePath: string): Promise<string | null> {
@@ -115,6 +117,10 @@ export function getWorktreesOverview(
   req: WorktreesOverviewRequest
 ): Promise<WorktreesOverviewResult> {
   return window.api.repo.worktreesOverview(req)
+}
+
+export function getMyBranches(req: MyBranchesRequest): Promise<MyBranchesResult> {
+  return window.api.repo.listMyBranches(req)
 }
 
 export function getBranchWebUrl(req: BranchWebUrlRequest): Promise<BranchWebUrlResult> {

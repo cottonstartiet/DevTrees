@@ -232,7 +232,8 @@ function AppShell(): React.JSX.Element {
           id: result.pullRequestId,
           title: branchName ?? `PR #${result.pullRequestId}`,
           webUrl: result.webUrl,
-          status: 'active'
+          status: 'active',
+          mergeStatus: 'notSet'
         }
         if (branchName && repo.defaultBranch) {
           const key = `${folderPath}::${branchName}::${repo.defaultBranch}`
@@ -376,6 +377,24 @@ function AppShell(): React.JSX.Element {
     if (!result.ok) toast.error(`Failed to open PR in browser: ${result.error}`)
   }, [existingPullRequest])
 
+  // Refetch the active PR (in place) so its mergeStatus reflects Azure DevOps' async
+  // re-evaluation. Used when the Pull Request tab becomes active.
+  const handleRefreshPullRequest = useCallback((): void => {
+    if (!prCacheKey || !detailFolderPath) return
+    const folderPath = detailFolderPath
+    const cacheKey = prCacheKey
+    const gen = ++prGenRef.current
+    void (async () => {
+      try {
+        const result = await window.api.repo.findActivePullRequest({ folderPath })
+        if (gen !== prGenRef.current) return
+        setPrCache((prev) => new Map(prev).set(cacheKey, result.ok ? result.pullRequest : null))
+      } catch {
+        // Silent: keep the previously cached value.
+      }
+    })()
+  }, [prCacheKey, detailFolderPath])
+
   const [branchUrlCache, setBranchUrlCache] = useState<Map<string, string | null>>(new Map())
   const branchUrlGenRef = useRef(0)
 
@@ -506,6 +525,7 @@ function AppShell(): React.JSX.Element {
                       : undefined
                   }
                   onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
+                  onPullRequestTabActive={existingPullRequest ? handleRefreshPullRequest : undefined}
                   isCreatingPullRequest={
                     !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
                   }

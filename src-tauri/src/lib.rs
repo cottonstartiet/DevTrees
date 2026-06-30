@@ -96,6 +96,7 @@ pub fn run() {
             repo::repo_discard_all_changes,
             repo::repo_commit,
             repo::repo_worktrees_overview,
+            repo::repo_list_my_branches,
             repo::repo_branch_web_url,
             repo::repo_detect_merge_state,
             sessions::sessions_create,

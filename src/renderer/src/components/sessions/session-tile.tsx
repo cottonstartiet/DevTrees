@@ -3,6 +3,12 @@ import { CircleDot as CircleDotIcon, X as XIcon } from 'lucide-react'
 
 import type { CopilotSession } from '@shared/sessions'
 import { useSessions } from '@/contexts/sessions-context'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { sessionPrimaryLabel, sessionRepoLabel } from '@/lib/session-label'
 import { cn } from '@/lib/utils'
 
@@ -102,18 +108,31 @@ export function SessionTile({ session, isActive }: SessionTileProps): React.JSX.
           )}
         />
         <span className="min-w-0 flex-1 truncate font-medium">{primary}</span>
-        <span
-          role="button"
-          tabIndex={-1}
-          onClick={(e) => {
-            e.stopPropagation()
-            requestCloseSession(sessionId)
-          }}
-          title={isRunning ? 'Stop and close session' : 'Close session'}
-          className="hover:bg-accent hover:text-accent-foreground rounded-sm p-0.5 opacity-60 transition-opacity group-hover:opacity-100"
-        >
-          <XIcon className="size-3" />
-        </span>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <span
+              role="button"
+              tabIndex={-1}
+              onClick={(e) => e.stopPropagation()}
+              title="Close session"
+              className="hover:bg-accent hover:text-accent-foreground rounded-sm p-0.5 opacity-60 transition-opacity group-hover:opacity-100"
+            >
+              <XIcon className="size-3" />
+            </span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="min-w-28"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => requestCloseSession(sessionId)}
+            >
+              Close
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <span className="text-muted-foreground truncate font-mono text-[10px]">
         {lastLine || (isRunning ? 'Waiting for output…' : `exited (${session.exitCode ?? 0})`)}

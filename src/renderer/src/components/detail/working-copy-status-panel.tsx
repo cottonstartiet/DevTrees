@@ -11,7 +11,6 @@ import {
   Plus as PlusIcon,
   RefreshCw as RefreshCwIcon,
   RotateCcw as RevertIcon,
-  Sparkles as SparklesIcon,
   Trash2 as Trash2Icon
 } from 'lucide-react'
 
@@ -81,11 +80,7 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
     stagedRows,
     changedRows,
     untrackedRows,
-    conflictedCount,
-    isResolvingConflicts,
-    handleResolveConflicts,
-    showResolveConflicts,
-    resolveConflictsDisabled
+    conflictedCount
   } = ctrl
 
   const discardTotal = stagedRows.length + changedRows.length + untrackedRows.length
@@ -176,39 +171,6 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
             {isRebasing
               ? `Rebasing on origin/${defaultBranch}…`
               : `Rebase ${branch} onto origin/${defaultBranch}.`}
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
-      {showResolveConflicts ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 px-2 text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400"
-                disabled={resolveConflictsDisabled}
-                onClick={() => void handleResolveConflicts()}
-              >
-                {isResolvingConflicts ? (
-                  <RefreshCwIcon className="size-3.5 animate-spin" />
-                ) : (
-                  <SparklesIcon className="size-3.5" />
-                )}
-                <span className="text-xs">
-                  {isResolvingConflicts
-                    ? 'Launching Copilot…'
-                    : `Resolve conflicts (${conflictedCount})`}
-                </span>
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {isResolvingConflicts
-              ? 'Launching Copilot CLI in Windows Terminal…'
-              : hasPending
-                ? 'Waiting for staging operations to finish…'
-                : `Launch Copilot CLI to resolve ${conflictedCount} file${conflictedCount === 1 ? '' : 's'} in conflict.`}
           </TooltipContent>
         </Tooltip>
       ) : null}

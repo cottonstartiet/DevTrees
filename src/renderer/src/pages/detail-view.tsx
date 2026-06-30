@@ -1,5 +1,6 @@
 import * as React from 'react'
 import {
+  GitMerge as GitMergeIcon,
   GitPullRequest as GitPullRequestIcon,
   GitPullRequestArrow as GitPullRequestArrowIcon,
   Loader2 as Loader2Icon,
@@ -21,10 +22,12 @@ import {
   type WorkingCopyController
 } from '@/components/detail/use-working-copy-controller'
 import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-panel'
+import { MyBranchesPanel } from '@/components/detail/my-branches-panel'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
+import { buildPrConflictsPrompt } from '@/lib/copilot-pr-conflicts-prompt'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
 import type { Worktree } from '@shared/worktree'
@@ -51,6 +54,7 @@ export interface DetailViewProps {
   onCreateBranch?: () => void
   onCreatePullRequest?: () => void
   onOpenPullRequest?: () => void
+  onPullRequestTabActive?: () => void
   isCreatingPullRequest?: boolean
   isPullRequestStatusResolved?: boolean
   onSelectWorktreePath?: (worktreePath: string) => void
@@ -92,11 +96,15 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
     <Tabs
       key={folderPath}
       defaultValue="changes"
+      onValueChange={(value) => {
+        if (value === 'pull-request') props.onPullRequestTabActive?.()
+      }}
       className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-4 p-6"
     >
       <div className="flex shrink-0 items-center gap-3">
         <TabsList>
           <TabsTrigger value="changes">Changes</TabsTrigger>
+          <TabsTrigger value="branches">Branches</TabsTrigger>
           <TabsTrigger value="pull-request">Pull Request</TabsTrigger>
         </TabsList>
         <div className="ml-auto flex items-center gap-1">
@@ -107,6 +115,9 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
           />
           <PrTabActions
             existingPullRequest={props.existingPullRequest}
+            folderPath={folderPath}
+            branch={props.branch}
+            defaultBranch={props.defaultBranch}
             onCreatePullRequest={props.onCreatePullRequest}
             onOpenPullRequest={props.onOpenPullRequest}
             isCreatingPullRequest={props.isCreatingPullRequest}
@@ -122,6 +133,14 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
         className="min-h-0 min-w-0 flex-1 data-[state=inactive]:hidden"
       >
         <ChangesTab ctrl={ctrl} folderPath={folderPath} />
+      </TabsContent>
+
+      <TabsContent
+        value="branches"
+        forceMount
+        className="min-h-0 min-w-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
+      >
+        <BranchesTab {...props} kind={kind} />
       </TabsContent>
 
       <TabsContent
@@ -204,6 +223,9 @@ function StartCopilotSessionAction({
 
 interface PrTabActionsProps {
   existingPullRequest: ExistingPullRequest | null
+  folderPath: string
+  branch: string | null
+  defaultBranch: string | null
   onCreatePullRequest?: () => void
   onOpenPullRequest?: () => void
   isCreatingPullRequest?: boolean
@@ -212,17 +234,25 @@ interface PrTabActionsProps {
 
 function PrTabActions({
   existingPullRequest,
+  folderPath,
+  branch,
+  defaultBranch,
   onCreatePullRequest,
   onOpenPullRequest,
   isCreatingPullRequest = false,
   isPullRequestStatusResolved = true
 }: PrTabActionsProps): React.JSX.Element | null {
   const [isOpeningPR, setIsOpeningPR] = React.useState(false)
+  const [isResolvingConflicts, setIsResolvingConflicts] = React.useState(false)
+  const launchCopilot = useCopilotLauncher()
 
   const showOpenPr = !!existingPullRequest && !!onOpenPullRequest
   const showCreatePr = !showOpenPr && (!!onCreatePullRequest || isCreatingPullRequest)
+  const showResolveConflicts = !!existingPullRequest
 
-  if (!showOpenPr && !showCreatePr) return null
+  if (!showOpenPr && !showCreatePr && !showResolveConflicts) return null
+
+  const hasMergeConflict = existingPullRequest?.mergeStatus === 'conflicts'
 
   const handleOpenPR = async (): Promise<void> => {
     if (!onOpenPullRequest || isOpeningPR) return
@@ -234,8 +264,66 @@ function PrTabActions({
     }
   }
 
+  const handleResolveConflicts = async (): Promise<void> => {
+    if (!existingPullRequest || !defaultBranch || isResolvingConflicts) return
+    setIsResolvingConflicts(true)
+    try {
+      const prompt = buildPrConflictsPrompt({
+        folderPath,
+        branch,
+        targetBranch: defaultBranch,
+        prId: existingPullRequest.id,
+        prTitle: existingPullRequest.title
+      })
+      const result = await launchCopilot({
+        folderPath,
+        prompt,
+        label: branch ? `Resolve PR conflicts: ${branch}` : 'Resolve PR conflicts',
+        branch: branch ?? undefined
+      })
+      if (result.ok) {
+        toast.success('Copilot session started.')
+      } else {
+        toast.error(`Could not start Copilot session: ${result.error}`)
+      }
+    } catch (err) {
+      toast.error(
+        `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
+      )
+    } finally {
+      setIsResolvingConflicts(false)
+    }
+  }
+
   return (
     <>
+      {showResolveConflicts ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={!hasMergeConflict || !defaultBranch || isResolvingConflicts}
+                onClick={() => void handleResolveConflicts()}
+              >
+                {isResolvingConflicts ? (
+                  <Loader2Icon className="size-3.5 animate-spin" />
+                ) : (
+                  <GitMergeIcon className="size-3.5" />
+                )}
+                <span className="text-xs">Resolve conflicts</span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {hasMergeConflict
+              ? 'Launch Copilot CLI to merge the target branch and resolve PR conflicts'
+              : 'No merge conflicts to resolve in this pull request'}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
       {showOpenPr ? (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -314,6 +402,30 @@ function ChangesTab({ ctrl, folderPath }: ChangesTabProps): React.JSX.Element {
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
       <WorkingCopyStatusView ctrl={ctrl} />
+    </div>
+  )
+}
+
+function BranchesTab({
+  folderPath,
+  workspace,
+  onSelectWorktreePath
+}: TabSectionProps): React.JSX.Element {
+  if (!workspace) {
+    return (
+      <PlaceholderCard
+        title="Branches"
+        hint="Branch list is available at the workspace level."
+      />
+    )
+  }
+  return (
+    <div className="grid grid-cols-1 gap-4">
+      <MyBranchesPanel
+        workspacePath={workspace.path}
+        activeFolderPath={folderPath}
+        onSelectWorktree={onSelectWorktreePath}
+      />
     </div>
   )
 }

@@ -1,4 +1,5 @@
 use std::fs;
+use std::collections::HashMap;
 use std::path::{absolute, Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -148,6 +149,8 @@ pub struct ExistingPullRequest {
     pub title: String,
     pub web_url: String,
     pub status: String,
+    /// Azure DevOps merge status: conflicts | succeeded | queued | rejectedByPolicy | notSet | failure.
+    pub merge_status: String,
 }
 
 #[derive(Serialize)]
@@ -472,6 +475,38 @@ pub struct WorktreesOverviewResult {
 
 impl WorktreesOverviewResult {
     fn ok(rows: Vec<WorktreeOverviewRow>) -> Self {
+        Self {
+            ok: true,
+            rows: Some(rows),
+            error: None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MyBranchRow {
+    pub name: String,
+    pub last_commit_iso: Option<String>,
+    pub last_commit_subject: Option<String>,
+    pub has_local: bool,
+    pub has_remote: bool,
+    pub has_worktree: bool,
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MyBranchesResult {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows: Option<Vec<MyBranchRow>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl MyBranchesResult {
+    fn ok(rows: Vec<MyBranchRow>) -> Self {
         Self {
             ok: true,
             rows: Some(rows),
@@ -958,16 +993,20 @@ pub async fn repo_pull_current_branch(folder_path: String) -> AppResult<PullResu
 
 #[tauri::command]
 pub async fn repo_user_alias(workspace_path: String) -> AppResult<String> {
+    Ok(resolve_user_alias(&workspace_path).await)
+}
+
+async fn resolve_user_alias(workspace_path: &str) -> String {
     if let Some(email) = try_git(
         vec!["config".into(), "--get".into(), "user.email".into()],
-        workspace_path,
+        workspace_path.to_string(),
     )
     .await
     {
         let local = email.split('@').next().unwrap_or("");
         let cleaned = sanitize_alias_fragment(local);
         if !cleaned.is_empty() {
-            return Ok(cleaned);
+            return cleaned;
         }
     }
     let fallback = sanitize_alias_fragment(
@@ -976,11 +1015,11 @@ pub async fn repo_user_alias(workspace_path: String) -> AppResult<String> {
             .or_else(|| std::env::var("USER").ok())
             .unwrap_or_default(),
     );
-    Ok(if fallback.is_empty() {
+    if fallback.is_empty() {
         "user".to_string()
     } else {
         fallback
-    })
+    }
 }
 
 #[tauri::command]
@@ -1297,6 +1336,11 @@ pub async fn repo_find_active_pull_request(
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("active")
+            .to_string(),
+        merge_status: first
+            .get("mergeStatus")
+            .and_then(Value::as_str)
+            .unwrap_or("notSet")
             .to_string(),
     })))
 }
@@ -1841,6 +1885,139 @@ pub async fn repo_worktrees_overview(workspace_path: String) -> AppResult<Worktr
     }
 
     Ok(WorktreesOverviewResult::ok(rows))
+}
+
+#[tauri::command]
+pub async fn repo_list_my_branches(workspace_path: String) -> AppResult<MyBranchesResult> {
+    let alias = resolve_user_alias(&workspace_path).await;
+    let prefix = format!("users/{alias}/");
+
+    let format_arg = format!(
+        "--format=%(refname:short){COMMIT_FIELD_SEPARATOR}%(committerdate:iso-strict){COMMIT_FIELD_SEPARATOR}%(contents:subject)"
+    );
+
+    // Ordered map keyed by logical branch name (origin/ stripped) to keep stable de-dup.
+    let mut order: Vec<String> = Vec::new();
+    let mut map: HashMap<String, MyBranchRow> = HashMap::new();
+
+    let local_ref = format!("refs/heads/{prefix}");
+    if let Some(output) = try_git(
+        vec![
+            "for-each-ref".into(),
+            format_arg.clone(),
+            local_ref,
+        ],
+        workspace_path.clone(),
+    )
+    .await
+    {
+        for line in output.lines() {
+            let (name, iso, subject) = parse_branch_ref_line(line);
+            if name.is_empty() {
+                continue;
+            }
+            let entry = map.entry(name.clone()).or_insert_with(|| {
+                order.push(name.clone());
+                MyBranchRow {
+                    name: name.clone(),
+                    last_commit_iso: None,
+                    last_commit_subject: None,
+                    has_local: false,
+                    has_remote: false,
+                    has_worktree: false,
+                    worktree_path: None,
+                }
+            });
+            entry.has_local = true;
+            entry.last_commit_iso = iso;
+            entry.last_commit_subject = subject;
+        }
+    }
+
+    let remote_ref = format!("refs/remotes/origin/{prefix}");
+    if let Some(output) = try_git(
+        vec!["for-each-ref".into(), format_arg, remote_ref],
+        workspace_path.clone(),
+    )
+    .await
+    {
+        for line in output.lines() {
+            let (raw_name, iso, subject) = parse_branch_ref_line(line);
+            // raw_name looks like "origin/users/<alias>/<suffix>"; strip the remote prefix.
+            let name = raw_name
+                .strip_prefix("origin/")
+                .unwrap_or(&raw_name)
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let entry = map.entry(name.clone()).or_insert_with(|| {
+                order.push(name.clone());
+                MyBranchRow {
+                    name: name.clone(),
+                    last_commit_iso: None,
+                    last_commit_subject: None,
+                    has_local: false,
+                    has_remote: false,
+                    has_worktree: false,
+                    worktree_path: None,
+                }
+            });
+            entry.has_remote = true;
+            if entry.last_commit_iso.is_none() {
+                entry.last_commit_iso = iso;
+                entry.last_commit_subject = subject;
+            }
+        }
+    }
+
+    // Mark branches that are checked out in a worktree.
+    for worktree in list_worktrees_local(&workspace_path).await {
+        if let Some(branch) = worktree.branch {
+            if let Some(entry) = map.get_mut(&branch) {
+                entry.has_worktree = true;
+                entry.worktree_path = Some(worktree.path);
+            }
+        }
+    }
+
+    let mut rows: Vec<MyBranchRow> = order
+        .into_iter()
+        .filter_map(|name| map.remove(&name))
+        .collect();
+    // Newest commit first; rows without a date sink to the bottom.
+    rows.sort_by(|a, b| {
+        b.last_commit_iso
+            .as_deref()
+            .unwrap_or("")
+            .cmp(a.last_commit_iso.as_deref().unwrap_or(""))
+    });
+
+    Ok(MyBranchesResult::ok(rows))
+}
+
+fn parse_branch_ref_line(line: &str) -> (String, Option<String>, Option<String>) {
+    let mut parts = line.split(COMMIT_FIELD_SEPARATOR);
+    let name = parts.next().unwrap_or("").trim().to_string();
+    let iso = parts
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let subject = {
+        let rest: Vec<&str> = parts.collect();
+        if rest.is_empty() {
+            None
+        } else {
+            let joined = rest.join(&COMMIT_FIELD_SEPARATOR.to_string());
+            if joined.is_empty() {
+                None
+            } else {
+                Some(joined)
+            }
+        }
+    };
+    (name, iso, subject)
 }
 
 #[tauri::command]

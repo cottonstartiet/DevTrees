@@ -9,7 +9,6 @@ import {
   type UseWorkingCopyStatusResult
 } from '@/hooks/use-working-copy-status'
 import {
-  detectMergeState,
   discardAllChanges,
   commit,
   pushBranch,
@@ -20,8 +19,6 @@ import {
   unstageFiles
 } from '@/lib/repo'
 import { openInVSCode, openInVSCodeScm, openPath } from '@/lib/system'
-import { useCopilotLauncher } from '@/lib/copilot-launch'
-import { buildConflictsPrompt } from '@/lib/copilot-conflicts-prompt'
 import type { RebaseOnDefaultResult, WorkingCopyEntry } from '@shared/repo'
 
 export interface UseWorkingCopyControllerArgs {
@@ -78,10 +75,6 @@ export interface WorkingCopyController {
   hasPending: boolean
   stagedCount: number
   unpushedCount: number
-  isResolvingConflicts: boolean
-  handleResolveConflicts: () => Promise<void>
-  showResolveConflicts: boolean
-  resolveConflictsDisabled: boolean
 }
 
 export function useWorkingCopyController({
@@ -96,7 +89,6 @@ export function useWorkingCopyController({
     folderPath !== null && branch !== null
   )
   const { startTask, succeedTask, failTask } = useTasks()
-  const launchCopilot = useCopilotLauncher()
   const [pending, setPending] = React.useState<Set<string>>(() => new Set())
   const [commitMode, setCommitMode] = React.useState<CommitDialogMode | null>(null)
   const [isPushing, setIsPushing] = React.useState(false)
@@ -104,7 +96,6 @@ export function useWorkingCopyController({
   const [isRebasing, setIsRebasing] = React.useState(false)
   const [isDiscarding, setIsDiscarding] = React.useState(false)
   const [isCommitting, setIsCommitting] = React.useState(false)
-  const [isResolvingConflicts, setIsResolvingConflicts] = React.useState(false)
 
   const entries = React.useMemo(() => data?.entries ?? [], [data])
   const stagedCount = data?.staged ?? 0
@@ -425,50 +416,6 @@ export function useWorkingCopyController({
     }
   }, [folderPath, refresh, refreshUnpushed, startTask, succeedTask, failTask])
 
-  const handleResolveConflicts = React.useCallback(async (): Promise<void> => {
-    if (!folderPath || conflictedRows.length === 0) return
-    setIsResolvingConflicts(true)
-    try {
-      const stateResult = await detectMergeState({ folderPath })
-      const mergeState = stateResult.ok ? stateResult.state : 'none'
-      const rebaseHeadName = stateResult.ok ? stateResult.rebaseHeadName : undefined
-      const rebaseOnto = stateResult.ok ? stateResult.rebaseOnto : undefined
-      const mergeHeads = stateResult.ok ? stateResult.mergeHeads : undefined
-
-      const prompt = buildConflictsPrompt({
-        folderPath,
-        branch,
-        defaultBranch,
-        conflictedFiles: conflictedRows.map((e) => ({
-          path: e.path,
-          indexStatus: e.indexStatus,
-          worktreeStatus: e.worktreeStatus
-        })),
-        mergeState,
-        rebaseHeadName,
-        rebaseOnto,
-        mergeHeads
-      })
-
-      const launchResult = await launchCopilot({
-        folderPath,
-        prompt,
-        label: branch ? `Conflicts: ${branch}` : 'Resolve conflicts'
-      })
-      if (launchResult.ok) {
-        toast.success('Copilot session started.')
-      } else {
-        toast.error(`Could not start Copilot session: ${launchResult.error}`)
-      }
-    } catch (err) {
-      toast.error(
-        `Could not start Copilot session: ${err instanceof Error ? err.message : 'unknown error'}`
-      )
-    } finally {
-      setIsResolvingConflicts(false)
-    }
-  }, [folderPath, branch, defaultBranch, conflictedRows, launchCopilot])
-
   const showPush = branch !== null && folderPath !== null
   const showPullCurrent = branch !== null && folderPath !== null
   const showRebase =
@@ -518,15 +465,6 @@ export function useWorkingCopyController({
     isCommitting ||
     !data ||
     entries.length === 0
-  const showResolveConflicts = conflictedCount > 0
-  const resolveConflictsDisabled =
-    hasPending ||
-    isPushing ||
-    isPullingCurrent ||
-    isRebasing ||
-    isDiscarding ||
-    isCommitting ||
-    isResolvingConflicts
 
   return {
     folderPath,
@@ -575,11 +513,7 @@ export function useWorkingCopyController({
     commitAllDisabled,
     hasPending,
     stagedCount,
-    unpushedCount,
-    isResolvingConflicts,
-    handleResolveConflicts,
-    showResolveConflicts,
-    resolveConflictsDisabled
+    unpushedCount
   }
 }
 

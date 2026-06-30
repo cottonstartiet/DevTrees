@@ -37,6 +37,8 @@ import type {
   FetchResult,
   FindPullRequestRequest,
   FindPullRequestResult,
+  MyBranchesRequest,
+  MyBranchesResult,
   OpenPullRequestRequest,
   OpenPullRequestResult,
   PullResult,
@@ -230,6 +232,8 @@ const api = {
       result('repo_commit', { ...req }, (error) => ({ ok: false, error })),
     worktreesOverview: (req: WorktreesOverviewRequest): Promise<WorktreesOverviewResult> =>
       result('repo_worktrees_overview', { ...req }, (error) => ({ ok: false, error })),
+    listMyBranches: (req: MyBranchesRequest): Promise<MyBranchesResult> =>
+      result('repo_list_my_branches', { ...req }, (error) => ({ ok: false, error })),
     branchWebUrl: (req: BranchWebUrlRequest): Promise<BranchWebUrlResult> =>
       result('repo_branch_web_url', { ...req }, () => ({ webUrl: null })),
     detectMergeState: (req: DetectMergeStateRequest): Promise<DetectMergeStateResult> =>

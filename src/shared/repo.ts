@@ -64,6 +64,8 @@ export type ExistingPullRequest = {
   title: string
   webUrl: string
   status: string
+  /** Azure DevOps merge status: conflicts | succeeded | queued | rejectedByPolicy | notSet | failure. */
+  mergeStatus: string
 }
 
 export type FindPullRequestResult =
@@ -192,6 +194,22 @@ export type WorktreesOverviewResult =
   | { ok: true; rows: WorktreeOverviewRow[] }
   | { ok: false; error: string }
 
+export type MyBranchRow = {
+  name: string
+  lastCommitIso: string | null
+  lastCommitSubject: string | null
+  hasLocal: boolean
+  hasRemote: boolean
+  hasWorktree: boolean
+  worktreePath: string | null
+}
+
+export type MyBranchesRequest = { workspacePath: string }
+
+export type MyBranchesResult =
+  | { ok: true; rows: MyBranchRow[] }
+  | { ok: false; error: string }
+
 export type BranchWebUrlRequest = { folderPath: string; branch: string }
 export type BranchWebUrlResult = { webUrl: string | null }
 
@@ -217,6 +235,7 @@ export const RepoIpcChannels = {
   Push: 'repo:push',
   RebaseOnDefault: 'repo:rebase-on-default',
   WorktreesOverview: 'repo:list-worktrees-overview',
+  ListMyBranches: 'repo:list-my-branches',
   BranchWebUrl: 'repo:branch-web-url',
   DetectMergeState: 'repo:detect-merge-state'
 } as const
