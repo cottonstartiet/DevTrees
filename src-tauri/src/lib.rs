@@ -99,6 +99,7 @@ pub fn run() {
             repo::repo_list_my_branches,
             repo::repo_branch_web_url,
             repo::repo_detect_merge_state,
+            repo::repo_journey_signal,
             sessions::sessions_create,
             sessions::sessions_list,
             sessions::sessions_snapshot,

@@ -13,7 +13,8 @@ export default tseslint.config(
       '**/dist-web',
       '**/out',
       'src-tauri/**',
-      '.github/scripts/**'
+      '.github/scripts/**',
+      '.github/skills/**'
     ]
   },
   js.configs.recommended,

@@ -7,7 +7,7 @@ import { CreateBranchDialog } from '@/components/create-branch-dialog'
 import { CreateWorktreeDialog } from '@/components/create-worktree-dialog'
 import { DeleteWorktreeDialog } from '@/components/delete-worktree-dialog'
 import { DetailToolbar } from '@/components/detail-toolbar'
-import { StatusBar } from '@/components/status-bar'
+import { StatusBar, type StatusBarContext } from '@/components/status-bar'
 import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
@@ -438,6 +438,35 @@ function AppShell(): React.JSX.Element {
     if (!result.ok) toast.error(`Failed to open branch in browser: ${result.error}`)
   }, [branchWebUrl])
 
+  const statusContext = useMemo<StatusBarContext | null>(() => {
+    if (view !== 'workspace' || !activeWorkspace || !detailFolderPath) return null
+    return {
+      folderLabel: activeWorktree ? worktreeLabel(activeWorktree.path) : activeWorkspace.name,
+      folderPath: detailFolderPath,
+      branch: detailBranch,
+      isDetached: detailIsDetached,
+      isWorktree: !!activeWorktree,
+      ahead: repo.status?.ahead ?? 0,
+      behind: repo.status?.behind ?? 0,
+      hasRemote: repo.status?.hasRemote ?? false,
+      syncing: repo.isFetching || repo.isPulling,
+      pr: existingPullRequest
+        ? { id: existingPullRequest.id, title: existingPullRequest.title }
+        : null
+    }
+  }, [
+    view,
+    activeWorkspace,
+    activeWorktree,
+    detailFolderPath,
+    detailBranch,
+    detailIsDetached,
+    repo.status,
+    repo.isFetching,
+    repo.isPulling,
+    existingPullRequest
+  ])
+
   return (
     <TerminalModeProvider>
       <SessionsProvider onNavigateToSessions={handleNavigateToSessions}>
@@ -540,7 +569,7 @@ function AppShell(): React.JSX.Element {
             </div>
           </SidebarInset>
         </div>
-        <StatusBar />
+        <StatusBar context={statusContext} />
         <CreateWorktreeDialog
           workspace={dialogWorkspace}
           open={dialogOpen}

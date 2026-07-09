@@ -23,11 +23,15 @@ import {
 } from '@/components/detail/use-working-copy-controller'
 import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-panel'
 import { MyBranchesPanel } from '@/components/detail/my-branches-panel'
+import { JourneyRail, type JourneyRailActions } from '@/components/detail/journey-rail'
+import { deriveJourney } from '@/components/detail/journey-stage'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useJourneySignal } from '@/hooks/use-journey-signal'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { buildPrConflictsPrompt } from '@/lib/copilot-pr-conflicts-prompt'
+import { openInVSCode } from '@/lib/system'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
 import type { Worktree } from '@shared/worktree'
@@ -93,65 +97,172 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
   const folderPath = props.folderPath as string
 
   return (
-    <Tabs
-      key={folderPath}
-      defaultValue="changes"
-      onValueChange={(value) => {
-        if (value === 'pull-request') props.onPullRequestTabActive?.()
-      }}
-      className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-4 p-6"
-    >
-      <div className="flex shrink-0 items-center gap-3">
-        <TabsList>
-          <TabsTrigger value="changes">Changes</TabsTrigger>
-          <TabsTrigger value="branches">Branches</TabsTrigger>
-          <TabsTrigger value="pull-request">Pull Request</TabsTrigger>
-        </TabsList>
-        <div className="ml-auto flex items-center gap-1">
-          <StartCopilotSessionAction
-            folderPath={folderPath}
-            branch={props.branch}
-            isWorktree={props.worktree != null}
-          />
-          <PrTabActions
-            existingPullRequest={props.existingPullRequest}
-            folderPath={folderPath}
-            branch={props.branch}
-            defaultBranch={props.defaultBranch}
-            onCreatePullRequest={props.onCreatePullRequest}
-            onOpenPullRequest={props.onOpenPullRequest}
-            isCreatingPullRequest={props.isCreatingPullRequest}
-            isPullRequestStatusResolved={props.isPullRequestStatusResolved}
-          />
-          <ChangesTabActions ctrl={ctrl} />
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-4 p-6">
+      <JourneyRailContainer {...props} ctrl={ctrl} folderPath={folderPath} />
+      <Tabs
+        key={folderPath}
+        defaultValue="changes"
+        onValueChange={(value) => {
+          if (value === 'pull-request') props.onPullRequestTabActive?.()
+        }}
+        className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-4"
+      >
+        <div className="flex shrink-0 items-center gap-3">
+          <TabsList>
+            <TabsTrigger value="changes">Changes</TabsTrigger>
+            <TabsTrigger value="branches">Branches</TabsTrigger>
+            <TabsTrigger value="pull-request">Pull Request</TabsTrigger>
+          </TabsList>
+          <div className="ml-auto flex items-center gap-1">
+            <StartCopilotSessionAction
+              folderPath={folderPath}
+              branch={props.branch}
+              isWorktree={props.worktree != null}
+            />
+            <PrTabActions
+              existingPullRequest={props.existingPullRequest}
+              folderPath={folderPath}
+              branch={props.branch}
+              defaultBranch={props.defaultBranch}
+              onCreatePullRequest={props.onCreatePullRequest}
+              onOpenPullRequest={props.onOpenPullRequest}
+              isCreatingPullRequest={props.isCreatingPullRequest}
+              isPullRequestStatusResolved={props.isPullRequestStatusResolved}
+            />
+            <ChangesTabActions ctrl={ctrl} />
+          </div>
         </div>
-      </div>
 
-      <TabsContent
-        value="changes"
-        forceMount
-        className="min-h-0 min-w-0 flex-1 data-[state=inactive]:hidden"
-      >
-        <ChangesTab ctrl={ctrl} folderPath={folderPath} />
-      </TabsContent>
+        <TabsContent
+          value="changes"
+          forceMount
+          className="min-h-0 min-w-0 flex-1 data-[state=inactive]:hidden"
+        >
+          <ChangesTab ctrl={ctrl} folderPath={folderPath} />
+        </TabsContent>
 
-      <TabsContent
-        value="branches"
-        forceMount
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
-      >
-        <BranchesTab {...props} kind={kind} />
-      </TabsContent>
+        <TabsContent
+          value="branches"
+          forceMount
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
+        >
+          <BranchesTab {...props} kind={kind} />
+        </TabsContent>
 
-      <TabsContent
-        value="pull-request"
-        forceMount
-        className="min-h-0 min-w-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
-      >
-        <PullRequestTab {...props} kind={kind} />
-      </TabsContent>
-    </Tabs>
+        <TabsContent
+          value="pull-request"
+          forceMount
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
+        >
+          <PullRequestTab {...props} kind={kind} />
+        </TabsContent>
+      </Tabs>
+    </div>
   )
+}
+
+interface JourneyRailContainerProps extends DetailViewProps {
+  ctrl: WorkingCopyController
+  folderPath: string
+}
+
+function JourneyRailContainer({
+  ctrl,
+  folderPath,
+  branch,
+  defaultBranch,
+  existingPullRequest,
+  isPullRequestStatusResolved = true,
+  isCreatingPullRequest = false,
+  onCreateBranch,
+  onCreatePullRequest,
+  onOpenPullRequest
+}: JourneyRailContainerProps): React.JSX.Element {
+  const journey = useJourneySignal(folderPath, folderPath !== null)
+  const launchCopilot = useCopilotLauncher()
+
+  const { refresh: refreshJourney } = journey
+  const entriesLength = ctrl.entries.length
+  const prId = existingPullRequest?.id ?? null
+
+  // Keep the topology signal fresh right after the user acts, rather than waiting for
+  // the poll — commit/push change working-copy scalars; create-branch/create-PR change
+  // the branch/PR identity.
+  React.useEffect(() => {
+    void refreshJourney()
+  }, [
+    refreshJourney,
+    entriesLength,
+    ctrl.stagedCount,
+    ctrl.unpushedCount,
+    ctrl.conflictedCount,
+    prId,
+    branch
+  ])
+
+  const view = deriveJourney({
+    signal: journey.data,
+    hasUncommitted: entriesLength > 0,
+    conflictedCount: ctrl.conflictedCount,
+    existingPullRequest,
+    isPullRequestStatusResolved,
+    isCommitting: ctrl.isCommitting,
+    isPushing: ctrl.isPushing,
+    isCreatingPullRequest,
+    canCreateBranch: !!onCreateBranch,
+    canCreatePr: !!onCreatePullRequest,
+    canOpenPr: !!onOpenPullRequest
+  })
+
+  const startImplement = async (): Promise<void> => {
+    if (IS_WINDOWS) {
+      const result = await launchCopilot({
+        folderPath,
+        label: branch || folderPath.split(/[\\/]/).pop() || 'Copilot',
+        branch: branch ?? undefined
+      })
+      if (result.ok) toast.success('Copilot session started.')
+      else toast.error(`Could not start Copilot session: ${result.error}`)
+      return
+    }
+    const result = await openInVSCode(folderPath)
+    if (!result.ok) toast.error(`Could not open VS Code: ${result.error}`)
+  }
+
+  const resolveConflicts = async (): Promise<void> => {
+    if (existingPullRequest && defaultBranch) {
+      const prompt = buildPrConflictsPrompt({
+        folderPath,
+        branch,
+        targetBranch: defaultBranch,
+        prId: existingPullRequest.id,
+        prTitle: existingPullRequest.title
+      })
+      const result = await launchCopilot({
+        folderPath,
+        prompt,
+        label: branch ? `Resolve PR conflicts: ${branch}` : 'Resolve PR conflicts',
+        branch: branch ?? undefined
+      })
+      if (result.ok) toast.success('Copilot session started.')
+      else toast.error(`Could not start Copilot session: ${result.error}`)
+      return
+    }
+    const result = await openInVSCode(folderPath)
+    if (!result.ok) toast.error(`Could not open VS Code: ${result.error}`)
+  }
+
+  const actions: JourneyRailActions = {
+    onCreateBranch: () => onCreateBranch?.(),
+    onStartImplement: () => void startImplement(),
+    onCommit: () => ctrl.setCommitMode('all'),
+    onPush: () => void ctrl.handlePush(),
+    onCreatePullRequest: () => onCreatePullRequest?.(),
+    onOpenPullRequest: () => onOpenPullRequest?.(),
+    onResolveConflicts: () => void resolveConflicts()
+  }
+
+  return <JourneyRail view={view} actions={actions} />
 }
 
 interface TabSectionProps extends DetailViewProps {

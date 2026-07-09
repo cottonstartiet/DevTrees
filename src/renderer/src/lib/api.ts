@@ -32,6 +32,8 @@ import type {
   CreateBranchResult,
   DetectMergeStateRequest,
   DetectMergeStateResult,
+  JourneySignalRequest,
+  JourneySignalResult,
   DiscardAllChangesRequest,
   DiscardAllChangesResult,
   FetchResult,
@@ -237,7 +239,9 @@ const api = {
     branchWebUrl: (req: BranchWebUrlRequest): Promise<BranchWebUrlResult> =>
       result('repo_branch_web_url', { ...req }, () => ({ webUrl: null })),
     detectMergeState: (req: DetectMergeStateRequest): Promise<DetectMergeStateResult> =>
-      result('repo_detect_merge_state', { ...req }, (error) => ({ ok: false, error }))
+      result('repo_detect_merge_state', { ...req }, (error) => ({ ok: false, error })),
+    journeySignal: (req: JourneySignalRequest): Promise<JourneySignalResult> =>
+      result('repo_journey_signal', { ...req }, (error) => ({ ok: false, error }))
   },
   ado: {
     prDetails: (req: AdoPrDetailsRequest): Promise<AdoPrDetailsResult> =>

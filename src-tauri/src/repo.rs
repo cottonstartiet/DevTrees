@@ -449,6 +449,45 @@ impl DetectMergeStateResult {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct JourneySignal {
+    pub branch: Option<String>,
+    pub is_detached: bool,
+    pub is_default_branch: bool,
+    /// None when `git status` could not be read (unknown, not clean).
+    pub has_uncommitted: Option<bool>,
+    pub has_remote_branch: bool,
+    /// Commits on HEAD not on the default branch (origin/default preferred). None if unresolved.
+    pub ahead_of_default: Option<i64>,
+    pub behind_of_default: Option<i64>,
+    /// Commits on HEAD not on origin/<branch> (unpushed). None if no upstream or unresolved.
+    pub ahead_of_upstream: Option<i64>,
+    pub behind_of_upstream: Option<i64>,
+    /// "none" | "merge" | "rebase".
+    pub merge_operation: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JourneySignalResult {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signal: Option<JourneySignal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl JourneySignalResult {
+    fn ok(signal: JourneySignal) -> Self {
+        Self {
+            ok: true,
+            signal: Some(signal),
+            error: None,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WorktreeOverviewRow {
     pub path: String,
     pub branch: Option<String>,
@@ -2094,4 +2133,128 @@ fn read_file_trimmed(path: impl AsRef<Path>) -> Option<String> {
         .ok()
         .map(|contents| contents.trim().to_string())
         .filter(|contents| !contents.is_empty())
+}
+
+/// Counts commits on each side of a symmetric range `left...right` via
+/// `git rev-list --left-right --count`. Returns `(left_only, right_only)` where
+/// `left_only` are commits reachable from `left` but not `right` (i.e. "behind")
+/// and `right_only` are commits reachable from `right` but not `left` ("ahead").
+async fn count_left_right(folder_path: &str, left: &str, right: &str) -> Option<(i64, i64)> {
+    let out = try_git(
+        vec![
+            "rev-list".into(),
+            "--left-right".into(),
+            "--count".into(),
+            format!("{left}...{right}"),
+        ],
+        folder_path.to_string(),
+    )
+    .await?;
+    let mut parts = out.split_whitespace();
+    let left_only = parts.next()?.parse::<i64>().ok()?;
+    let right_only = parts.next()?.parse::<i64>().ok()?;
+    Some((left_only, right_only))
+}
+
+async fn ref_exists(folder_path: &str, full_ref: &str) -> bool {
+    run_git(
+        vec![
+            "show-ref".into(),
+            "--verify".into(),
+            "--quiet".into(),
+            full_ref.to_string(),
+        ],
+        folder_path.to_string(),
+    )
+    .await
+    .is_ok()
+}
+
+#[tauri::command]
+pub async fn repo_journey_signal(folder_path: String) -> AppResult<JourneySignalResult> {
+    let branch = repo_current_branch(folder_path.clone()).await?;
+    let is_detached = branch.is_none();
+
+    let default_branch = repo_default_branch(folder_path.clone()).await.ok().flatten();
+    let is_default_branch = match (&branch, &default_branch) {
+        (Some(b), Some(d)) => b == d,
+        _ => false,
+    };
+
+    // `try_git` filters empty stdout to None, which for `git status` means a clean
+    // tree (not a failure), so a clean repo maps to `false`.
+    let has_uncommitted = Some(
+        try_git(
+            vec![
+                "status".into(),
+                "--porcelain=v1".into(),
+                "--untracked-files=all".into(),
+            ],
+            folder_path.clone(),
+        )
+        .await
+        .map(|out| !out.trim().is_empty())
+        .unwrap_or(false),
+    );
+
+    // Ahead/behind vs default branch: prefer origin/<default>, fall back to local.
+    let (ahead_of_default, behind_of_default) = if let Some(default) = default_branch.as_deref() {
+        let base = if ref_exists(&folder_path, &format!("refs/remotes/origin/{default}")).await {
+            format!("refs/remotes/origin/{default}")
+        } else if ref_exists(&folder_path, &format!("refs/heads/{default}")).await {
+            format!("refs/heads/{default}")
+        } else {
+            String::new()
+        };
+        if base.is_empty() {
+            (None, None)
+        } else {
+            match count_left_right(&folder_path, &base, "HEAD").await {
+                Some((behind, ahead)) => (Some(ahead), Some(behind)),
+                None => (None, None),
+            }
+        }
+    } else {
+        (None, None)
+    };
+
+    // Ahead/behind vs upstream (origin/<branch>): only when the branch is pushed.
+    let has_remote_branch = match branch.as_deref() {
+        Some(b) => has_remote_branch(&folder_path, b).await,
+        None => false,
+    };
+    let (ahead_of_upstream, behind_of_upstream) = match branch.as_deref() {
+        Some(b) if has_remote_branch => {
+            match count_left_right(
+                &folder_path,
+                &format!("refs/remotes/origin/{b}"),
+                "HEAD",
+            )
+            .await
+            {
+                Some((behind, ahead)) => (Some(ahead), Some(behind)),
+                None => (None, None),
+            }
+        }
+        _ => (None, None),
+    };
+
+    let merge_operation = repo_detect_merge_state(folder_path.clone())
+        .await
+        .ok()
+        .and_then(|result| result.state)
+        .unwrap_or_else(|| "none".to_string());
+
+    Ok(JourneySignalResult::ok(JourneySignal {
+        branch,
+        is_detached,
+        is_default_branch,
+        has_uncommitted,
+        has_remote_branch,
+        ahead_of_default,
+        behind_of_default,
+        ahead_of_upstream,
+        behind_of_upstream,
+        merge_operation,
+    }))
 }

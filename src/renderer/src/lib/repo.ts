@@ -7,6 +7,8 @@ import type {
   CreateBranchResult,
   DetectMergeStateRequest,
   DetectMergeStateResult,
+  JourneySignalRequest,
+  JourneySignalResult,
   DiscardAllChangesRequest,
   DiscardAllChangesResult,
   FetchResult,
@@ -129,4 +131,8 @@ export function getBranchWebUrl(req: BranchWebUrlRequest): Promise<BranchWebUrlR
 
 export function detectMergeState(req: DetectMergeStateRequest): Promise<DetectMergeStateResult> {
   return window.api.repo.detectMergeState(req)
+}
+
+export function getJourneySignal(req: JourneySignalRequest): Promise<JourneySignalResult> {
+  return window.api.repo.journeySignal(req)
 }
