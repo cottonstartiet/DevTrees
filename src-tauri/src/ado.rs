@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::az::{classify_az_generic_failure, run_az, AzError};
 use crate::error::AppResult;
 use crate::git::run_git;
+use crate::reviews::{categorize, ident_eq, short_ref, RepoOpenPrsResult, RepoPr};
 
 #[derive(Debug, Clone)]
 pub struct AdoRemote {
@@ -1062,4 +1063,191 @@ pub async fn ado_my_open_prs(folder_path: String) -> AppResult<AdoMyOpenPrsResul
         .collect();
 
     Ok(AdoMyOpenPrsResult::ok(prs))
+}
+
+/// Resolve the signed-in Azure account's identifier (UPN / `user.name`), lowercased, for categorizing
+/// PRs. Best-effort: returns `None` if `az account show` fails, in which case callers treat every PR
+/// as "other".
+async fn resolve_ado_current_user() -> Option<String> {
+    let output = run_az(vec![
+        "account".into(),
+        "show".into(),
+        "--output".into(),
+        "json".into(),
+    ])
+    .await
+    .ok()?;
+
+    let parsed = parse_json_from_az_output(&output.stdout).ok()?;
+    parsed
+        .get("user")
+        .and_then(Value::as_object)
+        .and_then(|user| user.get("name"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// List all active pull requests for the Azure DevOps repository at `folder_path`, categorized
+/// relative to the signed-in user (mine / assigned / other).
+#[tauri::command]
+pub async fn ado_repo_open_prs(folder_path: String) -> AppResult<RepoOpenPrsResult> {
+    if folder_path.trim().is_empty() {
+        return Ok(RepoOpenPrsResult::err(
+            "git-failed",
+            Some("folderPath is required".to_string()),
+        ));
+    }
+
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(RepoOpenPrsResult::err(code, message)),
+    };
+
+    let current_user = resolve_ado_current_user().await;
+
+    let output = match run_az(vec![
+        "repos".into(),
+        "pr".into(),
+        "list".into(),
+        "--status".into(),
+        "active".into(),
+        "--top".into(),
+        "200".into(),
+        "--organization".into(),
+        format!("https://dev.azure.com/{}", remote.org),
+        "--project".into(),
+        remote.project.clone(),
+        "--repository".into(),
+        remote.repo.clone(),
+        "--output".into(),
+        "json".into(),
+    ])
+    .await
+    {
+        Ok(output) => output,
+        Err(AzError::NotInstalled) => {
+            return Ok(RepoOpenPrsResult::err(
+                "az-not-installed",
+                Some("Azure CLI (az) was not found on PATH.".to_string()),
+            ))
+        }
+        Err(AzError::Failed {
+            stdout,
+            stderr,
+            code,
+        }) => {
+            if let Some((code, message)) = classify_az_generic_failure(&stderr) {
+                return Ok(RepoOpenPrsResult::err(code, Some(message)));
+            }
+            return Ok(RepoOpenPrsResult::err(
+                "az-failed",
+                Some(az_failed_message(&stdout, &stderr, code)),
+            ));
+        }
+    };
+
+    let parsed = match parse_json_from_az_output(&output.stdout) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            return Ok(RepoOpenPrsResult::err(
+                "az-failed",
+                Some(format!("Could not parse az output: {err}")),
+            ))
+        }
+    };
+
+    let Some(items) = parsed.as_array() else {
+        return Ok(RepoOpenPrsResult::ok(Vec::new()));
+    };
+
+    let prs = items
+        .iter()
+        .filter_map(Value::as_object)
+        .map(|item| {
+            let id = json_i64(item.get("pullRequestId").unwrap_or(&Value::Null))
+                .or_else(|| json_i64(item.get("codeReviewId").unwrap_or(&Value::Null)))
+                .unwrap_or(0);
+
+            let created_by = item.get("createdBy").and_then(Value::as_object);
+            let author = created_by
+                .and_then(|c| c.get("displayName"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let author_unique = created_by
+                .and_then(|c| c.get("uniqueName"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+
+            let is_author = current_user
+                .as_deref()
+                .map(|me| ident_eq(author_unique, me))
+                .unwrap_or(false);
+            let is_assigned = current_user
+                .as_deref()
+                .map(|me| reviewers_contain(item.get("reviewers"), me))
+                .unwrap_or(false);
+
+            let web_url = item
+                .get("_links")
+                .and_then(Value::as_object)
+                .and_then(|links| links.get("web"))
+                .and_then(Value::as_object)
+                .and_then(|web| web.get("href"))
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| build_ado_pr_web_url(&remote, id));
+
+            RepoPr {
+                provider: "ado".to_string(),
+                id,
+                title: item
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                author,
+                source_ref: short_ref(
+                    item.get("sourceRefName")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                ),
+                target_ref: short_ref(
+                    item.get("targetRefName")
+                        .and_then(Value::as_str)
+                        .unwrap_or(""),
+                ),
+                web_url,
+                created_at: item
+                    .get("creationDate")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                is_draft: item
+                    .get("isDraft")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                category: categorize(is_author, is_assigned),
+            }
+        })
+        .collect();
+
+    Ok(RepoOpenPrsResult::ok(prs))
+}
+
+/// True if any reviewer in an ADO PR `reviewers` array has a `uniqueName` matching `needle`.
+fn reviewers_contain(value: Option<&Value>, needle: &str) -> bool {
+    value
+        .and_then(Value::as_array)
+        .map(|items| {
+            items.iter().any(|entry| {
+                entry
+                    .as_object()
+                    .and_then(|obj| obj.get("uniqueName"))
+                    .and_then(Value::as_str)
+                    .map(|unique| ident_eq(unique, needle))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
 }

@@ -3,9 +3,12 @@ mod az;
 mod copilot_history;
 mod db;
 mod error;
+mod gh;
 mod git;
+mod github;
 mod paths;
 mod repo;
+mod reviews;
 mod sessions;
 mod system;
 mod workspaces;
@@ -75,6 +78,8 @@ pub fn run() {
             ado::ado_pr_details,
             ado::ado_pr_threads,
             ado::ado_my_open_prs,
+            ado::ado_repo_open_prs,
+            github::github_repo_open_prs,
             repo::repo_default_branch,
             repo::repo_current_branch,
             repo::repo_status,

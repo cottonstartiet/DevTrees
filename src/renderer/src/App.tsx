@@ -21,13 +21,10 @@ import { useAutoUpdate } from '@/hooks/use-auto-update'
 import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
 import { HistoryPage } from '@/pages/history'
+import { ReviewsPage } from '@/pages/reviews'
 import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
-import {
-  loadViewMode,
-  persistViewMode,
-  type SessionViewMode
-} from '@/pages/sessions-view-mode'
+import { loadViewMode, persistViewMode, type SessionViewMode } from '@/pages/sessions-view-mode'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Workspace } from '@shared/workspace'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
@@ -198,13 +195,15 @@ function AppShell(): React.JSX.Element {
       ? 'Settings'
       : view === 'history'
         ? 'History'
-        : view === 'sessions'
-          ? 'Sessions'
-          : activeWorktree
-            ? worktreeLabel(activeWorktree.path)
-            : activeWorkspace
-              ? activeWorkspace.name
-              : 'DevTrees'
+        : view === 'reviews'
+          ? 'Reviews'
+          : view === 'sessions'
+            ? 'Sessions'
+            : activeWorktree
+              ? worktreeLabel(activeWorktree.path)
+              : activeWorkspace
+                ? activeWorkspace.name
+                : 'DevTrees'
 
   const repo = useRepoStatus(activeWorkspace?.path ?? null, view === 'workspace')
 
@@ -471,131 +470,135 @@ function AppShell(): React.JSX.Element {
     <TerminalModeProvider>
       <SessionsProvider onNavigateToSessions={handleNavigateToSessions}>
         <SidebarProvider className="flex h-svh flex-col">
-        <div className="flex min-h-0 w-full flex-1">
-          <AppSidebar
-            activeView={view}
-            onSelectView={(v) => {
-              setView(v)
-              setActiveWorktreePath(null)
-            }}
-            workspaces={workspaces}
-            activeWorkspaceId={activeWorkspaceId}
-            activeWorktreePath={activeWorktreePath}
-            worktreesByWorkspaceId={worktreesByWorkspaceId}
-            deletingWorktreePaths={deletingWorktreePaths}
-            onAddWorkspace={handleAddWorkspace}
-            onSelectWorkspace={handleSelectWorkspace}
-            onRemoveWorkspace={handleRemoveWorkspace}
-            onReorderWorkspaces={reorderWorkspaces}
-            onCreateWorktree={handleCreateWorktreeClick}
-            onSelectWorktree={handleSelectWorktree}
-            onDeleteWorktree={handleDeleteWorktreeClick}
-          />
-          <SidebarInset className="min-w-0 overflow-hidden">
-            {showDetailToolbar && detailFolderPath ? (
-              <DetailToolbar
-                title={headerTitle}
-                folderPath={detailFolderPath}
-                branch={detailBranch}
-                isDetached={detailIsDetached}
-                headState={detailHeadState}
-                isWorktree={!!activeWorktree}
-                workspacePath={activeWorkspace?.path ?? null}
-                repo={repo}
-                existingPullRequest={existingPullRequest}
-                onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
-                branchWebUrl={branchWebUrl}
-                onOpenBranch={branchWebUrl ? handleOpenBranch : undefined}
-              />
-            ) : (
-              <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-                <SidebarTrigger className="-ml-1" />
-                <Separator orientation="vertical" className="mr-2 h-4" />
-                <h2 className="text-sm font-medium">{headerTitle}</h2>
-                {view === 'sessions' && (
-                  <SessionsHeaderControls
-                    viewMode={sessionsViewMode}
-                    onChange={handleSessionsViewModeChange}
-                  />
-                )}
-              </header>
-            )}
-            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-              {view === 'settings' ? (
-                <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
-                  <SettingsPage />
-                </div>
-              ) : view === 'history' ? (
-                <HistoryPage />
-              ) : view === 'sessions' ? (
-                <SessionsPage viewMode={sessionsViewMode} />
-              ) : (
-                <DetailView
-                  workspace={activeWorkspace}
-                  worktree={activeWorktree}
+          <div className="flex min-h-0 w-full flex-1">
+            <AppSidebar
+              activeView={view}
+              onSelectView={(v) => {
+                setView(v)
+                setActiveWorktreePath(null)
+              }}
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              activeWorktreePath={activeWorktreePath}
+              worktreesByWorkspaceId={worktreesByWorkspaceId}
+              deletingWorktreePaths={deletingWorktreePaths}
+              onAddWorkspace={handleAddWorkspace}
+              onSelectWorkspace={handleSelectWorkspace}
+              onRemoveWorkspace={handleRemoveWorkspace}
+              onReorderWorkspaces={reorderWorkspaces}
+              onCreateWorktree={handleCreateWorktreeClick}
+              onSelectWorktree={handleSelectWorktree}
+              onDeleteWorktree={handleDeleteWorktreeClick}
+            />
+            <SidebarInset className="min-w-0 overflow-hidden">
+              {showDetailToolbar && detailFolderPath ? (
+                <DetailToolbar
+                  title={headerTitle}
                   folderPath={detailFolderPath}
                   branch={detailBranch}
-                  defaultBranch={repo.defaultBranch ?? null}
+                  isDetached={detailIsDetached}
                   headState={detailHeadState}
+                  isWorktree={!!activeWorktree}
+                  workspacePath={activeWorkspace?.path ?? null}
+                  repo={repo}
                   existingPullRequest={existingPullRequest}
-                  onCreateBranch={
-                    activeWorktree && activeWorktree.isDetached
-                      ? handleCreateBranchClick
-                      : undefined
-                  }
-                  onCreatePullRequest={
-                    detailHeadState === 'branch' &&
-                    detailFolderPath &&
-                    detailBranch &&
-                    repo.defaultBranch &&
-                    detailBranch !== repo.defaultBranch &&
-                    !existingPullRequest
-                      ? handleCreatePullRequest
-                      : undefined
-                  }
                   onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
-                  onPullRequestTabActive={existingPullRequest ? handleRefreshPullRequest : undefined}
-                  isCreatingPullRequest={
-                    !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
-                  }
-                  isPullRequestStatusResolved={isPullRequestStatusResolved}
-                  onSelectWorktreePath={
-                    activeWorkspace
-                      ? (path: string) => handleSelectWorktree(activeWorkspace.id, path)
-                      : undefined
-                  }
+                  branchWebUrl={branchWebUrl}
+                  onOpenBranch={branchWebUrl ? handleOpenBranch : undefined}
                 />
+              ) : (
+                <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+                  <SidebarTrigger className="-ml-1" />
+                  <Separator orientation="vertical" className="mr-2 h-4" />
+                  <h2 className="text-sm font-medium">{headerTitle}</h2>
+                  {view === 'sessions' && (
+                    <SessionsHeaderControls
+                      viewMode={sessionsViewMode}
+                      onChange={handleSessionsViewModeChange}
+                    />
+                  )}
+                </header>
               )}
-            </div>
-          </SidebarInset>
-        </div>
-        <StatusBar context={statusContext} />
-        <CreateWorktreeDialog
-          workspace={dialogWorkspace}
-          open={dialogOpen}
-          onOpenChange={setDialogOpen}
-          onSubmit={handleDialogSubmit}
-        />
-        <DeleteWorktreeDialog
-          worktree={deleteTarget?.worktree ?? null}
-          workspaceName={
-            deleteTarget
-              ? (workspaces.find((w) => w.id === deleteTarget.workspaceId)?.name ?? null)
-              : null
-          }
-          status={deleteStatus}
-          open={deleteOpen}
-          onOpenChange={handleDeleteOpenChange}
-          onConfirm={handleDeleteConfirm}
-        />
-        <CreateBranchDialog
-          workspace={createBranchTarget?.workspace ?? null}
-          worktree={createBranchTarget?.worktree ?? null}
-          open={createBranchOpen}
-          onOpenChange={handleCreateBranchOpenChange}
-          onSubmit={handleCreateBranchSubmit}
-        />
-        <Toaster richColors closeButton position="bottom-right" />
+              <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+                {view === 'settings' ? (
+                  <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
+                    <SettingsPage />
+                  </div>
+                ) : view === 'history' ? (
+                  <HistoryPage />
+                ) : view === 'reviews' ? (
+                  <ReviewsPage workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
+                ) : view === 'sessions' ? (
+                  <SessionsPage viewMode={sessionsViewMode} />
+                ) : (
+                  <DetailView
+                    workspace={activeWorkspace}
+                    worktree={activeWorktree}
+                    folderPath={detailFolderPath}
+                    branch={detailBranch}
+                    defaultBranch={repo.defaultBranch ?? null}
+                    headState={detailHeadState}
+                    existingPullRequest={existingPullRequest}
+                    onCreateBranch={
+                      activeWorktree && activeWorktree.isDetached
+                        ? handleCreateBranchClick
+                        : undefined
+                    }
+                    onCreatePullRequest={
+                      detailHeadState === 'branch' &&
+                      detailFolderPath &&
+                      detailBranch &&
+                      repo.defaultBranch &&
+                      detailBranch !== repo.defaultBranch &&
+                      !existingPullRequest
+                        ? handleCreatePullRequest
+                        : undefined
+                    }
+                    onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
+                    onPullRequestTabActive={
+                      existingPullRequest ? handleRefreshPullRequest : undefined
+                    }
+                    isCreatingPullRequest={
+                      !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
+                    }
+                    isPullRequestStatusResolved={isPullRequestStatusResolved}
+                    onSelectWorktreePath={
+                      activeWorkspace
+                        ? (path: string) => handleSelectWorktree(activeWorkspace.id, path)
+                        : undefined
+                    }
+                  />
+                )}
+              </div>
+            </SidebarInset>
+          </div>
+          <StatusBar context={statusContext} />
+          <CreateWorktreeDialog
+            workspace={dialogWorkspace}
+            open={dialogOpen}
+            onOpenChange={setDialogOpen}
+            onSubmit={handleDialogSubmit}
+          />
+          <DeleteWorktreeDialog
+            worktree={deleteTarget?.worktree ?? null}
+            workspaceName={
+              deleteTarget
+                ? (workspaces.find((w) => w.id === deleteTarget.workspaceId)?.name ?? null)
+                : null
+            }
+            status={deleteStatus}
+            open={deleteOpen}
+            onOpenChange={handleDeleteOpenChange}
+            onConfirm={handleDeleteConfirm}
+          />
+          <CreateBranchDialog
+            workspace={createBranchTarget?.workspace ?? null}
+            worktree={createBranchTarget?.worktree ?? null}
+            open={createBranchOpen}
+            onOpenChange={handleCreateBranchOpenChange}
+            onSubmit={handleCreateBranchSubmit}
+          />
+          <Toaster richColors closeButton position="bottom-right" />
         </SidebarProvider>
       </SessionsProvider>
     </TerminalModeProvider>

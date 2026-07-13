@@ -73,6 +73,7 @@ import type {
   AdoPrThreadsRequest,
   AdoPrThreadsResult
 } from '@shared/ado'
+import type { RepoOpenPrsRequest, RepoOpenPrsResult } from '@shared/reviews'
 import type {
   AppInfo,
   LaunchCopilotCliRequest,
@@ -261,6 +262,20 @@ const api = {
         ok: false,
         code: 'git-failed',
         message
+      })),
+    repoOpenPrs: (req: RepoOpenPrsRequest): Promise<RepoOpenPrsResult> =>
+      result('ado_repo_open_prs', { ...req }, (message) => ({
+        ok: false,
+        code: 'git-failed',
+        message
+      }))
+  },
+  github: {
+    repoOpenPrs: (req: RepoOpenPrsRequest): Promise<RepoOpenPrsResult> =>
+      result('github_repo_open_prs', { ...req }, (message) => ({
+        ok: false,
+        code: 'gh-failed',
+        message
       }))
   },
   system: {
@@ -298,8 +313,7 @@ const api = {
       return { session: snap.session, buffer: decodeB64(snap.bufferB64), lastSeq: snap.lastSeq }
     },
     kill: (id: string): Promise<void> => invoke('sessions_kill', { id }),
-    sendInput: (id: string, data: string): Promise<void> =>
-      invoke('sessions_input', { id, data }),
+    sendInput: (id: string, data: string): Promise<void> => invoke('sessions_input', { id, data }),
     resize: (id: string, cols: number, rows: number): Promise<void> =>
       invoke('sessions_resize', { id, cols, rows }),
     onData: (cb: (event: SessionData) => void): (() => void) => {

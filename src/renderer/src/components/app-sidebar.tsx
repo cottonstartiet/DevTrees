@@ -5,6 +5,7 @@ import {
   Folder as FolderIcon,
   GitBranch as GitBranchIcon,
   GitBranchPlus as GitBranchPlusIcon,
+  GitPullRequest as GitPullRequestIcon,
   GripVertical as GripVerticalIcon,
   History as HistoryIcon,
   Loader2 as Loader2Icon,
@@ -109,7 +110,7 @@ function workspaceIcon(remoteKind: WorkspaceRemoteKind): React.JSX.Element {
   return <FolderIcon />
 }
 
-export type AppView = 'home' | 'settings' | 'workspace' | 'history' | 'sessions'
+export type AppView = 'home' | 'settings' | 'workspace' | 'history' | 'sessions' | 'reviews'
 
 interface AppSidebarProps {
   activeView: AppView
@@ -181,11 +182,7 @@ function SortableWorkspaceItem({
     activeView === 'workspace' && activeWorkspaceId === ws.id && !activeWorktreePath
 
   return (
-    <SidebarMenuItem
-      ref={setNodeRef}
-      style={style}
-      className={cn(isDragging && 'z-50 opacity-80')}
-    >
+    <SidebarMenuItem ref={setNodeRef} style={style} className={cn(isDragging && 'z-50 opacity-80')}>
       <Collapsible defaultOpen className="group/collapsible">
         <SidebarMenuAction
           {...attributes}
@@ -471,43 +468,43 @@ export function AppSidebar({
           </SidebarGroup>
           <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
             <SidebarGroupContent>
-            {workspaces.length === 0 ? (
-              <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
-                No workspaces yet. Click + to add a git repository.
-              </p>
-            ) : (
-              <SidebarMenu>
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handleWorkspaceDragEnd}
-                >
-                  <SortableContext
-                    items={workspaces.map((w) => w.id)}
-                    strategy={verticalListSortingStrategy}
+              {workspaces.length === 0 ? (
+                <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
+                  No workspaces yet. Click + to add a git repository.
+                </p>
+              ) : (
+                <SidebarMenu>
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleWorkspaceDragEnd}
                   >
-                    {workspaces.map((ws) => (
-                      <SortableWorkspaceItem
-                        key={ws.id}
-                        ws={ws}
-                        worktrees={worktreesByWorkspaceId[ws.id] ?? []}
-                        activeView={activeView}
-                        activeWorkspaceId={activeWorkspaceId}
-                        activeWorktreePath={activeWorktreePath}
-                        deletingWorktreePaths={deletingWorktreePaths}
-                        onSelectWorkspace={onSelectWorkspace}
-                        onCreateWorktree={onCreateWorktree}
-                        onRemoveWorkspace={onRemoveWorkspace}
-                        onSelectWorktree={onSelectWorktree}
-                        onDeleteWorktree={onDeleteWorktree}
-                        onOpenTerminal={handleOpenTerminal}
-                        onStartCopilotSession={handleStartCopilotSession}
-                      />
-                    ))}
-                  </SortableContext>
-                </DndContext>
-              </SidebarMenu>
-            )}
+                    <SortableContext
+                      items={workspaces.map((w) => w.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {workspaces.map((ws) => (
+                        <SortableWorkspaceItem
+                          key={ws.id}
+                          ws={ws}
+                          worktrees={worktreesByWorkspaceId[ws.id] ?? []}
+                          activeView={activeView}
+                          activeWorkspaceId={activeWorkspaceId}
+                          activeWorktreePath={activeWorktreePath}
+                          deletingWorktreePaths={deletingWorktreePaths}
+                          onSelectWorkspace={onSelectWorkspace}
+                          onCreateWorktree={onCreateWorktree}
+                          onRemoveWorkspace={onRemoveWorkspace}
+                          onSelectWorktree={onSelectWorktree}
+                          onDeleteWorktree={onDeleteWorktree}
+                          onOpenTerminal={handleOpenTerminal}
+                          onStartCopilotSession={handleStartCopilotSession}
+                        />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                </SidebarMenu>
+              )}
             </SidebarGroupContent>
           </CollapsibleContent>
         </Collapsible>
@@ -594,6 +591,16 @@ export function AppSidebar({
 
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="Reviews"
+              isActive={activeView === 'reviews'}
+              onClick={() => onSelectView('reviews')}
+            >
+              <GitPullRequestIcon />
+              <span>Reviews</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               tooltip="History"
