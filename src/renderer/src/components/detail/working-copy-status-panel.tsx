@@ -116,37 +116,6 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
           </TooltipContent>
         </Tooltip>
       ) : null}
-      {showPush ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1.5 px-2"
-                disabled={pushDisabled}
-                onClick={() => void handlePush()}
-              >
-                {isPushing ? (
-                  <RefreshCwIcon className="size-3.5 animate-spin" />
-                ) : (
-                  <PushIcon className="size-3.5" />
-                )}
-                <span className="text-xs">
-                  {isPushing ? 'Pushing…' : unpushedCount > 0 ? `Push (${unpushedCount})` : 'Push'}
-                </span>
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>
-            {isPushing
-              ? `Pushing to origin/${branch}…`
-              : unpushedCount === 0
-                ? `All commits pushed to origin/${branch}.`
-                : `Push ${unpushedCount} commit${unpushedCount === 1 ? '' : 's'} to origin/${branch}.`}
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
       {showRebase ? (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -220,6 +189,37 @@ export function ChangesTabActions({ ctrl }: ChangesTabActionsProps): React.JSX.E
               : 'Stage every change (incl. untracked) and commit.'}
         </TooltipContent>
       </Tooltip>
+      {showPush ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={pushDisabled}
+                onClick={() => void handlePush()}
+              >
+                {isPushing ? (
+                  <RefreshCwIcon className="size-3.5 animate-spin" />
+                ) : (
+                  <PushIcon className="size-3.5" />
+                )}
+                <span className="text-xs">
+                  {isPushing ? 'Pushing…' : unpushedCount > 0 ? `Push (${unpushedCount})` : 'Push'}
+                </span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            {isPushing
+              ? `Pushing to origin/${branch}…`
+              : unpushedCount === 0
+                ? `All commits pushed to origin/${branch}.`
+                : `Push ${unpushedCount} commit${unpushedCount === 1 ? '' : 's'} to origin/${branch}.`}
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
       <Tooltip>
         <TooltipTrigger asChild>
           <span>

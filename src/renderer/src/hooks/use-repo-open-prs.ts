@@ -66,13 +66,18 @@ export function useRepoOpenPrs(
 
   React.useEffect(() => {
     activePathRef.current = folderPath
+    let cancelled = false
     if (!folderPath || !enabled || isUnsupported) {
       // No fetch will run for this selection, so clear any spinner left by an in-flight request
-      // for a previously-selected (now abandoned) repo.
-      setIsLoading(false)
-      return
+      // for a previously-selected (now abandoned) repo. Deferred so the effect body never calls
+      // setState synchronously (react-hooks/set-state-in-effect).
+      queueMicrotask(() => {
+        if (!cancelled) setIsLoading(false)
+      })
+      return () => {
+        cancelled = true
+      }
     }
-    let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) void runRefresh()
     })
