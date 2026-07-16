@@ -10,8 +10,8 @@ export type Worktree = {
 export type CreateWorktreeErrorCode = 'invalid-name' | 'already-exists' | 'git-failed' | 'unknown'
 
 export type CreateWorktreeRequest = {
-  workspaceId: string
-  workspacePath: string
+  repositoryId: string
+  repositoryPath: string
   name: string
 }
 
@@ -29,7 +29,7 @@ export type DeleteWorktreeErrorCode =
   | 'unknown'
 
 export type DeleteWorktreeRequest = {
-  workspacePath: string
+  repositoryPath: string
   worktreePath: string
 }
 
@@ -44,7 +44,7 @@ export type WorktreeStatusResult =
   | { ok: false; error: WorktreeStatusErrorCode; message?: string }
 
 export const WorktreeIpcChannels = {
-  ListForWorkspace: 'worktrees:list-for-workspace',
+  ListForRepository: 'worktrees:list-for-repository',
   Create: 'worktrees:create',
   Delete: 'worktrees:delete',
   Status: 'worktrees:status'

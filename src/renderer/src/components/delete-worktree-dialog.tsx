@@ -19,7 +19,7 @@ function worktreeLabel(path: string): string {
 
 export interface DeleteWorktreeDialogProps {
   worktree: Worktree | null
-  workspaceName: string | null
+  repositoryName: string | null
   status: WorktreeStatusResult | null
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -28,7 +28,7 @@ export interface DeleteWorktreeDialogProps {
 
 export function DeleteWorktreeDialog({
   worktree,
-  workspaceName,
+  repositoryName,
   status,
   open,
   onOpenChange,
@@ -86,7 +86,7 @@ export function DeleteWorktreeDialog({
         <p>
           The worktree folder no longer exists on disk. Deleting will just unregister this stale
           entry from{' '}
-          <span className="font-medium">{workspaceName ?? 'the workspace'}</span> (via{' '}
+          <span className="font-medium">{repositoryName ?? 'the repository'}</span> (via{' '}
           <code className="bg-muted rounded px-1 font-mono">git worktree prune</code>).
         </p>
         {worktree ? (
@@ -102,7 +102,7 @@ export function DeleteWorktreeDialog({
       <div className="flex flex-col gap-2 text-sm">
         <p>
           The worktree folder will be removed from disk and unregistered from{' '}
-          <span className="font-medium">{workspaceName ?? 'the workspace'}</span>.
+          <span className="font-medium">{repositoryName ?? 'the repository'}</span>.
         </p>
         {worktree ? (
           <code className="bg-muted text-muted-foreground rounded px-2 py-1.5 font-mono text-xs break-all">

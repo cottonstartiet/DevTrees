@@ -9,7 +9,7 @@ const POLL_INTERVAL_MS = 60_000
 
 export interface UseRepoStatusResult {
   defaultBranch: string | null
-  workspaceCurrentBranch: string | null
+  repositoryCurrentBranch: string | null
   status: RepoStatus | null
   isFetching: boolean
   isPulling: boolean
@@ -17,16 +17,16 @@ export interface UseRepoStatusResult {
   pull: () => Promise<void>
 }
 
-export function useRepoStatus(workspacePath: string | null, enabled: boolean): UseRepoStatusResult {
+export function useRepoStatus(repositoryPath: string | null, enabled: boolean): UseRepoStatusResult {
   const [snapshot, setSnapshot] = React.useState<{
-    workspacePath: string | null
+    repositoryPath: string | null
     defaultBranch: string | null
-    workspaceCurrentBranch: string | null
+    repositoryCurrentBranch: string | null
     status: RepoStatus | null
   }>({
-    workspacePath: null,
+    repositoryPath: null,
     defaultBranch: null,
-    workspaceCurrentBranch: null,
+    repositoryCurrentBranch: null,
     status: null
   })
   const [isFetching, setIsFetching] = React.useState(false)
@@ -37,61 +37,61 @@ export function useRepoStatus(workspacePath: string | null, enabled: boolean): U
   const pullingRef = React.useRef(false)
   const activePathRef = React.useRef<string | null>(null)
 
-  const isCurrent = snapshot.workspacePath === workspacePath
+  const isCurrent = snapshot.repositoryPath === repositoryPath
   const defaultBranch = isCurrent ? snapshot.defaultBranch : null
-  const workspaceCurrentBranch = isCurrent ? snapshot.workspaceCurrentBranch : null
+  const repositoryCurrentBranch = isCurrent ? snapshot.repositoryCurrentBranch : null
   const status = isCurrent ? snapshot.status : null
 
   React.useEffect(() => {
-    activePathRef.current = workspacePath
-    if (!workspacePath || !enabled) return
+    activePathRef.current = repositoryPath
+    if (!repositoryPath || !enabled) return
     let cancelled = false
     void (async (): Promise<void> => {
       const [def, cur] = await Promise.all([
-        getDefaultBranch(workspacePath),
-        getCurrentBranch(workspacePath)
+        getDefaultBranch(repositoryPath),
+        getCurrentBranch(repositoryPath)
       ])
-      if (cancelled || activePathRef.current !== workspacePath) return
+      if (cancelled || activePathRef.current !== repositoryPath) return
       setSnapshot((prev) => ({
-        workspacePath,
+        repositoryPath,
         defaultBranch: def,
-        workspaceCurrentBranch: cur,
-        status: prev.workspacePath === workspacePath ? prev.status : null
+        repositoryCurrentBranch: cur,
+        status: prev.repositoryPath === repositoryPath ? prev.status : null
       }))
     })()
     return () => {
       cancelled = true
     }
-  }, [workspacePath, enabled])
+  }, [repositoryPath, enabled])
 
   const runRefresh = React.useCallback(async (): Promise<void> => {
-    if (!workspacePath || !defaultBranch) return
+    if (!repositoryPath || !defaultBranch) return
     if (fetchingRef.current) return
     fetchingRef.current = true
     setIsFetching(true)
     try {
-      const fetchResult = await fetchRepo(workspacePath, defaultBranch)
+      const fetchResult = await fetchRepo(repositoryPath, defaultBranch)
       if (!fetchResult.ok) {
         console.warn('[repo] fetch failed:', fetchResult.error)
       }
-      const result = await getRepoStatus(workspacePath, defaultBranch)
+      const result = await getRepoStatus(repositoryPath, defaultBranch)
       if ('error' in result) {
         console.warn('[repo] status failed:', result.error)
         return
       }
-      if (activePathRef.current === workspacePath) {
+      if (activePathRef.current === repositoryPath) {
         setSnapshot((prev) =>
-          prev.workspacePath === workspacePath ? { ...prev, status: result } : prev
+          prev.repositoryPath === repositoryPath ? { ...prev, status: result } : prev
         )
       }
     } finally {
       fetchingRef.current = false
       setIsFetching(false)
     }
-  }, [workspacePath, defaultBranch])
+  }, [repositoryPath, defaultBranch])
 
   React.useEffect(() => {
-    if (!workspacePath || !defaultBranch || !enabled) return
+    if (!repositoryPath || !defaultBranch || !enabled) return
     void runRefresh()
     let intervalId: ReturnType<typeof setInterval> | null = null
     const start = (): void => {
@@ -120,10 +120,10 @@ export function useRepoStatus(workspacePath: string | null, enabled: boolean): U
       document.removeEventListener('visibilitychange', onVisibility)
       stop()
     }
-  }, [workspacePath, defaultBranch, enabled, runRefresh])
+  }, [repositoryPath, defaultBranch, enabled, runRefresh])
 
   const pull = React.useCallback(async (): Promise<void> => {
-    if (!workspacePath || !defaultBranch) {
+    if (!repositoryPath || !defaultBranch) {
       toast.error('Default branch is not resolved yet.')
       return
     }
@@ -132,7 +132,7 @@ export function useRepoStatus(workspacePath: string | null, enabled: boolean): U
     setIsPulling(true)
     const taskId = startTask(`Pulling origin/${defaultBranch}`)
     try {
-      const result = await pullRepo(workspacePath, defaultBranch)
+      const result = await pullRepo(repositoryPath, defaultBranch)
       if (!result.ok) {
         failTask(taskId, result.error)
         toast.error(result.error)
@@ -145,15 +145,15 @@ export function useRepoStatus(workspacePath: string | null, enabled: boolean): U
         toast.success(`Pulled latest into ${defaultBranch}.`)
       }
       const [nextStatus, nextCurrent] = await Promise.all([
-        getRepoStatus(workspacePath, defaultBranch),
-        getCurrentBranch(workspacePath)
+        getRepoStatus(repositoryPath, defaultBranch),
+        getCurrentBranch(repositoryPath)
       ])
-      if (activePathRef.current !== workspacePath) return
+      if (activePathRef.current !== repositoryPath) return
       setSnapshot((prev) => {
-        if (prev.workspacePath !== workspacePath) return prev
+        if (prev.repositoryPath !== repositoryPath) return prev
         return {
           ...prev,
-          workspaceCurrentBranch: nextCurrent,
+          repositoryCurrentBranch: nextCurrent,
           status: 'error' in nextStatus ? prev.status : nextStatus
         }
       })
@@ -161,11 +161,11 @@ export function useRepoStatus(workspacePath: string | null, enabled: boolean): U
       pullingRef.current = false
       setIsPulling(false)
     }
-  }, [workspacePath, defaultBranch, startTask, succeedTask, failTask])
+  }, [repositoryPath, defaultBranch, startTask, succeedTask, failTask])
 
   return {
     defaultBranch,
-    workspaceCurrentBranch,
+    repositoryCurrentBranch,
     status,
     isFetching,
     isPulling,

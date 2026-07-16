@@ -1,46 +1,46 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 
-import type { Workspace } from '@shared/workspace'
+import type { Repository } from '@shared/repository'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
 import { useTasks } from '@/contexts/tasks-context'
 import {
-  listWorkspaces,
-  pickAndAddWorkspace,
-  removeWorkspace as removeWorkspaceIpc,
-  reorderWorkspaces as reorderWorkspacesIpc
-} from '@/lib/workspaces'
+  listRepositories,
+  pickAndAddRepository,
+  removeRepository as removeRepositoryIpc,
+  reorderRepositories as reorderRepositoriesIpc
+} from '@/lib/repositories'
 import { createBranch as createBranchIpc } from '@/lib/repo'
 import {
   createWorktree as createWorktreeIpc,
   deleteWorktree as deleteWorktreeIpc,
   getWorktreeStatus as getWorktreeStatusIpc,
-  listWorktreesForWorkspace
+  listWorktreesForRepository
 } from '@/lib/worktrees'
 
-export interface UseWorkspacesResult {
-  workspaces: Workspace[]
-  worktreesByWorkspaceId: Record<string, Worktree[]>
+export interface UseRepositoriesResult {
+  repositories: Repository[]
+  worktreesByRepositoryId: Record<string, Worktree[]>
   activeId: string | null
   deletingWorktreePaths: ReadonlySet<string>
-  selectWorkspace: (id: string | null) => void
-  addWorkspace: () => Promise<void>
-  removeWorkspace: (id: string) => Promise<void>
-  reorderWorkspaces: (orderedIds: string[]) => Promise<void>
-  refreshWorktreesFor: (workspaceId: string) => Promise<void>
-  createWorktree: (workspace: Workspace, name: string) => Promise<boolean>
+  selectRepository: (id: string | null) => void
+  addRepository: () => Promise<void>
+  removeRepository: (id: string) => Promise<void>
+  reorderRepositories: (orderedIds: string[]) => Promise<void>
+  refreshWorktreesFor: (repositoryId: string) => Promise<void>
+  createWorktree: (repository: Repository, name: string) => Promise<boolean>
   createBranchInWorktree: (
-    workspace: Workspace,
+    repository: Repository,
     worktree: Worktree,
     fullBranchName: string
   ) => Promise<boolean>
-  deleteWorktree: (workspace: Workspace, worktree: Worktree) => Promise<boolean>
+  deleteWorktree: (repository: Repository, worktree: Worktree) => Promise<boolean>
   checkWorktreeStatus: (worktreePath: string) => Promise<WorktreeStatusResult>
 }
 
-export function useWorkspaces(): UseWorkspacesResult {
-  const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
-  const [worktreesByWorkspaceId, setWorktreesByWorkspaceId] = React.useState<
+export function useRepositories(): UseRepositoriesResult {
+  const [repositories, setRepositories] = React.useState<Repository[]>([])
+  const [worktreesByRepositoryId, setWorktreesByRepositoryId] = React.useState<
     Record<string, Worktree[]>
   >({})
   const [activeId, setActiveId] = React.useState<string | null>(null)
@@ -49,29 +49,29 @@ export function useWorkspaces(): UseWorkspacesResult {
   )
   const { startTask, succeedTask, failTask } = useTasks()
 
-  // Always-current snapshot of workspaces for effects keyed on the workspace *set*
+  // Always-current snapshot of repositories for effects keyed on the repository *set*
   // (not its order), so reordering never triggers a worktree refetch.
-  const workspacesRef = React.useRef(workspaces)
+  const repositoriesRef = React.useRef(repositories)
   React.useEffect(() => {
-    workspacesRef.current = workspaces
+    repositoriesRef.current = repositories
   })
-  const workspaceSetKey = React.useMemo(
+  const repositorySetKey = React.useMemo(
     () =>
-      workspaces
+      repositories
         .map((w) => `${w.id}::${w.path}`)
         .sort()
         .join('|'),
-    [workspaces]
+    [repositories]
   )
 
   React.useEffect(() => {
     let cancelled = false
-    listWorkspaces()
+    listRepositories()
       .then((list) => {
-        if (!cancelled) setWorkspaces(list)
+        if (!cancelled) setRepositories(list)
       })
       .catch((err) => {
-        console.error('[workspaces] failed to load list:', err)
+        console.error('[repositories] failed to load list:', err)
       })
     return () => {
       cancelled = true
@@ -80,7 +80,7 @@ export function useWorkspaces(): UseWorkspacesResult {
 
   React.useEffect(() => {
     let cancelled = false
-    const current = workspacesRef.current
+    const current = repositoriesRef.current
     if (current.length === 0) {
       return () => {
         cancelled = true
@@ -88,7 +88,7 @@ export function useWorkspaces(): UseWorkspacesResult {
     }
 
     Promise.allSettled(
-      current.map((ws) => listWorktreesForWorkspace(ws.path).then((wts) => ({ id: ws.id, wts })))
+      current.map((ws) => listWorktreesForRepository(ws.path).then((wts) => ({ id: ws.id, wts })))
     ).then((results) => {
       if (cancelled) return
       const next: Record<string, Worktree[]> = {}
@@ -100,26 +100,26 @@ export function useWorkspaces(): UseWorkspacesResult {
           next[ws.id] = []
         }
       })
-      setWorktreesByWorkspaceId(next)
+      setWorktreesByRepositoryId(next)
     })
 
     return () => {
       cancelled = true
     }
-  }, [workspaceSetKey])
+  }, [repositorySetKey])
 
-  const addWorkspace = React.useCallback(async (): Promise<void> => {
-    const ws = await pickAndAddWorkspace()
+  const addRepository = React.useCallback(async (): Promise<void> => {
+    const ws = await pickAndAddRepository()
     if (ws) {
-      setWorkspaces((prev) => [...prev, ws])
+      setRepositories((prev) => [...prev, ws])
       setActiveId(ws.id)
     }
   }, [])
 
-  const removeWorkspace = React.useCallback(async (id: string): Promise<void> => {
-    const next = await removeWorkspaceIpc(id)
-    setWorkspaces(next)
-    setWorktreesByWorkspaceId((prev) => {
+  const removeRepository = React.useCallback(async (id: string): Promise<void> => {
+    const next = await removeRepositoryIpc(id)
+    setRepositories(next)
+    setWorktreesByRepositoryId((prev) => {
       if (!(id in prev)) return prev
       const copy = { ...prev }
       delete copy[id]
@@ -128,68 +128,68 @@ export function useWorkspaces(): UseWorkspacesResult {
     setActiveId((current) => (current === id ? null : current))
   }, [])
 
-  const selectWorkspace = React.useCallback((id: string | null): void => {
+  const selectRepository = React.useCallback((id: string | null): void => {
     setActiveId(id)
   }, [])
 
   const reorderSeqRef = React.useRef(0)
-  const reorderWorkspaces = React.useCallback(async (orderedIds: string[]): Promise<void> => {
+  const reorderRepositories = React.useCallback(async (orderedIds: string[]): Promise<void> => {
     const seq = ++reorderSeqRef.current
-    const previous = workspacesRef.current
-    setWorkspaces((prev) => {
+    const previous = repositoriesRef.current
+    setRepositories((prev) => {
       const byId = new Map(prev.map((w) => [w.id, w]))
       const next = orderedIds
         .map((id) => byId.get(id))
-        .filter((w): w is Workspace => w !== undefined)
-      // Safety: keep any workspace missing from orderedIds, preserving prior order.
+        .filter((w): w is Repository => w !== undefined)
+      // Safety: keep any repository missing from orderedIds, preserving prior order.
       for (const w of prev) {
         if (!orderedIds.includes(w.id)) next.push(w)
       }
       return next
     })
     try {
-      const updated = await reorderWorkspacesIpc(orderedIds)
+      const updated = await reorderRepositoriesIpc(orderedIds)
       // Ignore stale responses if a newer reorder has since been issued.
-      if (seq === reorderSeqRef.current) setWorkspaces(updated)
+      if (seq === reorderSeqRef.current) setRepositories(updated)
     } catch (err) {
-      console.error('[workspaces] reorder failed:', err)
+      console.error('[repositories] reorder failed:', err)
       if (seq === reorderSeqRef.current) {
-        setWorkspaces(previous)
-        toast.error('Could not save workspace order.')
+        setRepositories(previous)
+        toast.error('Could not save repository order.')
       }
     }
   }, [])
 
   const refreshWorktreesFor = React.useCallback(
-    async (workspaceId: string): Promise<void> => {
-      const ws = workspaces.find((w) => w.id === workspaceId)
+    async (repositoryId: string): Promise<void> => {
+      const ws = repositories.find((w) => w.id === repositoryId)
       if (!ws) return
       try {
-        const list = await listWorktreesForWorkspace(ws.path)
-        setWorktreesByWorkspaceId((prev) => ({
+        const list = await listWorktreesForRepository(ws.path)
+        setWorktreesByRepositoryId((prev) => ({
           ...prev,
-          [workspaceId]: list.filter((w) => !w.isMain)
+          [repositoryId]: list.filter((w) => !w.isMain)
         }))
       } catch (err) {
         console.error('[worktrees] refresh failed:', err)
       }
     },
-    [workspaces]
+    [repositories]
   )
 
   const createWorktree = React.useCallback(
-    async (workspace: Workspace, name: string): Promise<boolean> => {
-      const taskId = startTask(`Creating worktree "${name}" in ${workspace.name}`)
+    async (repository: Repository, name: string): Promise<boolean> => {
+      const taskId = startTask(`Creating worktree "${name}" in ${repository.name}`)
       try {
         const result = await createWorktreeIpc({
-          workspaceId: workspace.id,
-          workspacePath: workspace.path,
+          repositoryId: repository.id,
+          repositoryPath: repository.path,
           name
         })
         if (result.ok) {
           succeedTask(taskId)
           toast.success(`Worktree "${name}" created`)
-          await refreshWorktreesFor(workspace.id)
+          await refreshWorktreesFor(repository.id)
           return true
         }
         const message =
@@ -219,13 +219,13 @@ export function useWorkspaces(): UseWorkspacesResult {
 
   const createBranchInWorktree = React.useCallback(
     async (
-      workspace: Workspace,
+      repository: Repository,
       worktree: Worktree,
       fullBranchName: string
     ): Promise<boolean> => {
       const label = worktreeLabel(worktree.path)
       const taskId = startTask(
-        `Creating branch "${fullBranchName}" in ${workspace.name} / ${label}`
+        `Creating branch "${fullBranchName}" in ${repository.name} / ${label}`
       )
       try {
         const result = await createBranchIpc({
@@ -235,7 +235,7 @@ export function useWorkspaces(): UseWorkspacesResult {
         if (result.ok) {
           succeedTask(taskId)
           toast.success(`Branch "${result.branch}" created`)
-          await refreshWorktreesFor(workspace.id)
+          await refreshWorktreesFor(repository.id)
           return true
         }
         const message =
@@ -259,23 +259,23 @@ export function useWorkspaces(): UseWorkspacesResult {
   )
 
   const deleteWorktree = React.useCallback(
-    async (workspace: Workspace, worktree: Worktree): Promise<boolean> => {
+    async (repository: Repository, worktree: Worktree): Promise<boolean> => {
       const label = worktreeLabel(worktree.path)
       setDeletingWorktreePaths((prev) => {
         const next = new Set(prev)
         next.add(worktree.path)
         return next
       })
-      const taskId = startTask(`Deleting worktree "${label}" in ${workspace.name}`)
+      const taskId = startTask(`Deleting worktree "${label}" in ${repository.name}`)
       try {
         const result = await deleteWorktreeIpc({
-          workspacePath: workspace.path,
+          repositoryPath: repository.path,
           worktreePath: worktree.path
         })
         if (result.ok) {
           succeedTask(taskId)
           toast.success(`Worktree "${label}" deleted`)
-          await refreshWorktreesFor(workspace.id)
+          await refreshWorktreesFor(repository.id)
           return true
         }
         const message =
@@ -327,14 +327,14 @@ export function useWorkspaces(): UseWorkspacesResult {
   )
 
   return {
-    workspaces,
-    worktreesByWorkspaceId,
+    repositories,
+    worktreesByRepositoryId,
     activeId,
     deletingWorktreePaths,
-    selectWorkspace,
-    addWorkspace,
-    removeWorkspace,
-    reorderWorkspaces,
+    selectRepository,
+    addRepository,
+    removeRepository,
+    reorderRepositories,
     refreshWorktreesFor,
     createWorktree,
     createBranchInWorktree,

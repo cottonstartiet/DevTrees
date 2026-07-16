@@ -16,7 +16,7 @@ import { ThemeProvider } from '@/contexts/theme-context'
 import { TerminalModeProvider } from '@/contexts/terminal-mode-context'
 import { SessionsProvider } from '@/contexts/sessions-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
-import { useWorkspaces } from '@/hooks/use-workspaces'
+import { useRepositories } from '@/hooks/use-repositories'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
 import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
@@ -26,7 +26,7 @@ import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
 import { loadViewMode, persistViewMode, type SessionViewMode } from '@/pages/sessions-view-mode'
 import type { ExistingPullRequest } from '@shared/repo'
-import type { Workspace } from '@shared/workspace'
+import type { Repository } from '@shared/repository'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
 
 function worktreeLabel(path: string): string {
@@ -39,80 +39,80 @@ function AppShell(): React.JSX.Element {
   const [view, setView] = useState<AppView>('home')
   const [sessionsViewMode, setSessionsViewMode] = useState<SessionViewMode>(() => loadViewMode())
   const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null)
-  const [dialogWorkspace, setDialogWorkspace] = useState<Workspace | null>(null)
+  const [dialogRepository, setDialogRepository] = useState<Repository | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{
-    workspaceId: string
+    repositoryId: string
     worktree: Worktree
   } | null>(null)
   const [deleteStatus, setDeleteStatus] = useState<WorktreeStatusResult | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [createBranchTarget, setCreateBranchTarget] = useState<{
-    workspace: Workspace
+    repository: Repository
     worktree: Worktree
   } | null>(null)
   const [createBranchOpen, setCreateBranchOpen] = useState(false)
 
   const {
-    workspaces,
-    worktreesByWorkspaceId,
-    activeId: activeWorkspaceId,
+    repositories,
+    worktreesByRepositoryId,
+    activeId: activeRepositoryId,
     deletingWorktreePaths,
-    selectWorkspace,
-    addWorkspace,
-    removeWorkspace,
-    reorderWorkspaces,
+    selectRepository,
+    addRepository,
+    removeRepository,
+    reorderRepositories,
     createWorktree,
     createBranchInWorktree,
     deleteWorktree,
     checkWorktreeStatus
-  } = useWorkspaces()
+  } = useRepositories()
 
-  const handleSelectWorkspace = useCallback(
+  const handleSelectRepository = useCallback(
     (id: string): void => {
-      selectWorkspace(id)
+      selectRepository(id)
       setActiveWorktreePath(null)
-      setView('workspace')
+      setView('repository')
     },
-    [selectWorkspace]
+    [selectRepository]
   )
 
   const handleSelectWorktree = useCallback(
-    (workspaceId: string, worktreePath: string): void => {
-      selectWorkspace(workspaceId)
+    (repositoryId: string, worktreePath: string): void => {
+      selectRepository(repositoryId)
       setActiveWorktreePath(worktreePath)
-      setView('workspace')
+      setView('repository')
     },
-    [selectWorkspace]
+    [selectRepository]
   )
 
-  const handleAddWorkspace = useCallback((): void => {
-    void addWorkspace()
-  }, [addWorkspace])
+  const handleAddRepository = useCallback((): void => {
+    void addRepository()
+  }, [addRepository])
 
-  const handleRemoveWorkspace = useCallback(
+  const handleRemoveRepository = useCallback(
     (id: string): void => {
-      void removeWorkspace(id)
+      void removeRepository(id)
     },
-    [removeWorkspace]
+    [removeRepository]
   )
 
-  const handleCreateWorktreeClick = useCallback((workspace: Workspace): void => {
-    setDialogWorkspace(workspace)
+  const handleCreateWorktreeClick = useCallback((repository: Repository): void => {
+    setDialogRepository(repository)
     setDialogOpen(true)
   }, [])
 
   const handleDialogSubmit = useCallback(
     async (name: string): Promise<boolean> => {
-      if (!dialogWorkspace) return false
-      return createWorktree(dialogWorkspace, name)
+      if (!dialogRepository) return false
+      return createWorktree(dialogRepository, name)
     },
-    [createWorktree, dialogWorkspace]
+    [createWorktree, dialogRepository]
   )
 
   const handleDeleteWorktreeClick = useCallback(
-    (workspaceId: string, worktree: Worktree): void => {
-      setDeleteTarget({ workspaceId, worktree })
+    (repositoryId: string, worktree: Worktree): void => {
+      setDeleteTarget({ repositoryId, worktree })
       setDeleteStatus(null)
       setDeleteOpen(true)
       const requestedPath = worktree.path
@@ -130,14 +130,14 @@ function AppShell(): React.JSX.Element {
 
   const handleDeleteConfirm = useCallback((): void => {
     if (!deleteTarget) return
-    const workspace = workspaces.find((w) => w.id === deleteTarget.workspaceId)
-    if (!workspace) return
+    const repository = repositories.find((w) => w.id === deleteTarget.repositoryId)
+    if (!repository) return
     const target = deleteTarget.worktree
     if (activeWorktreePath === target.path) {
       setActiveWorktreePath(null)
     }
-    void deleteWorktree(workspace, target)
-  }, [deleteTarget, deleteWorktree, workspaces, activeWorktreePath])
+    void deleteWorktree(repository, target)
+  }, [deleteTarget, deleteWorktree, repositories, activeWorktreePath])
 
   const handleDeleteOpenChange = useCallback((open: boolean): void => {
     setDeleteOpen(open)
@@ -147,28 +147,28 @@ function AppShell(): React.JSX.Element {
     }
   }, [])
 
-  const activeWorkspace =
-    view === 'workspace' && activeWorkspaceId
-      ? (workspaces.find((w) => w.id === activeWorkspaceId) ?? null)
+  const activeRepository =
+    view === 'repository' && activeRepositoryId
+      ? (repositories.find((w) => w.id === activeRepositoryId) ?? null)
       : null
 
   const activeWorktree =
-    activeWorkspace && activeWorktreePath
-      ? (worktreesByWorkspaceId[activeWorkspace.id]?.find((w) => w.path === activeWorktreePath) ??
+    activeRepository && activeWorktreePath
+      ? (worktreesByRepositoryId[activeRepository.id]?.find((w) => w.path === activeWorktreePath) ??
         null)
       : null
 
   const handleCreateBranchClick = useCallback((): void => {
-    if (!activeWorkspace || !activeWorktree) return
-    setCreateBranchTarget({ workspace: activeWorkspace, worktree: activeWorktree })
+    if (!activeRepository || !activeWorktree) return
+    setCreateBranchTarget({ repository: activeRepository, worktree: activeWorktree })
     setCreateBranchOpen(true)
-  }, [activeWorkspace, activeWorktree])
+  }, [activeRepository, activeWorktree])
 
   const handleCreateBranchSubmit = useCallback(
     async (fullBranchName: string): Promise<boolean> => {
       if (!createBranchTarget) return false
       return createBranchInWorktree(
-        createBranchTarget.workspace,
+        createBranchTarget.repository,
         createBranchTarget.worktree,
         fullBranchName
       )
@@ -201,22 +201,22 @@ function AppShell(): React.JSX.Element {
             ? 'Sessions'
             : activeWorktree
               ? worktreeLabel(activeWorktree.path)
-              : activeWorkspace
-                ? activeWorkspace.name
+              : activeRepository
+                ? activeRepository.name
                 : 'DevTrees'
 
-  const repo = useRepoStatus(activeWorkspace?.path ?? null, view === 'workspace')
+  const repo = useRepoStatus(activeRepository?.path ?? null, view === 'repository')
 
   const [prCache, setPrCache] = useState<Map<string, ExistingPullRequest | null>>(new Map())
   const prGenRef = useRef(0)
   const [creatingPrFolders, setCreatingPrFolders] = useState<Set<string>>(new Set())
 
   const handleCreatePullRequest = useCallback(async (): Promise<void> => {
-    const folderPath = activeWorktree?.path ?? activeWorkspace?.path ?? null
+    const folderPath = activeWorktree?.path ?? activeRepository?.path ?? null
     if (!folderPath) return
     const branchName = activeWorktree
       ? activeWorktree.branch
-      : (repo.workspaceCurrentBranch ?? null)
+      : (repo.repositoryCurrentBranch ?? null)
     setCreatingPrFolders((prev) => {
       if (prev.has(folderPath)) return prev
       const next = new Set(prev)
@@ -305,12 +305,12 @@ function AppShell(): React.JSX.Element {
         return next
       })
     }
-  }, [activeWorkspace, activeWorktree, repo.workspaceCurrentBranch, repo.defaultBranch])
+  }, [activeRepository, activeWorktree, repo.repositoryCurrentBranch, repo.defaultBranch])
 
-  const detailFolderPath = activeWorktree?.path ?? activeWorkspace?.path ?? null
+  const detailFolderPath = activeWorktree?.path ?? activeRepository?.path ?? null
   const detailBranch = activeWorktree
     ? activeWorktree.branch
-    : (repo.workspaceCurrentBranch ?? null)
+    : (repo.repositoryCurrentBranch ?? null)
   const detailIsDetached = activeWorktree?.isDetached ?? false
   const detailHeadState: 'branch' | 'detached' | undefined = activeWorktree
     ? activeWorktree.isDetached
@@ -319,7 +319,7 @@ function AppShell(): React.JSX.Element {
     : detailBranch
       ? 'branch'
       : undefined
-  const showDetailToolbar = view === 'workspace' && !!activeWorkspace && !!detailFolderPath
+  const showDetailToolbar = view === 'repository' && !!activeRepository && !!detailFolderPath
 
   const prCacheKey = useMemo(() => {
     if (
@@ -438,9 +438,9 @@ function AppShell(): React.JSX.Element {
   }, [branchWebUrl])
 
   const statusContext = useMemo<StatusBarContext | null>(() => {
-    if (view !== 'workspace' || !activeWorkspace || !detailFolderPath) return null
+    if (view !== 'repository' || !activeRepository || !detailFolderPath) return null
     return {
-      folderLabel: activeWorktree ? worktreeLabel(activeWorktree.path) : activeWorkspace.name,
+      folderLabel: activeWorktree ? worktreeLabel(activeWorktree.path) : activeRepository.name,
       folderPath: detailFolderPath,
       branch: detailBranch,
       isDetached: detailIsDetached,
@@ -455,7 +455,7 @@ function AppShell(): React.JSX.Element {
     }
   }, [
     view,
-    activeWorkspace,
+    activeRepository,
     activeWorktree,
     detailFolderPath,
     detailBranch,
@@ -477,15 +477,15 @@ function AppShell(): React.JSX.Element {
                 setView(v)
                 setActiveWorktreePath(null)
               }}
-              workspaces={workspaces}
-              activeWorkspaceId={activeWorkspaceId}
+              repositories={repositories}
+              activeRepositoryId={activeRepositoryId}
               activeWorktreePath={activeWorktreePath}
-              worktreesByWorkspaceId={worktreesByWorkspaceId}
+              worktreesByRepositoryId={worktreesByRepositoryId}
               deletingWorktreePaths={deletingWorktreePaths}
-              onAddWorkspace={handleAddWorkspace}
-              onSelectWorkspace={handleSelectWorkspace}
-              onRemoveWorkspace={handleRemoveWorkspace}
-              onReorderWorkspaces={reorderWorkspaces}
+              onAddRepository={handleAddRepository}
+              onSelectRepository={handleSelectRepository}
+              onRemoveRepository={handleRemoveRepository}
+              onReorderRepositories={reorderRepositories}
               onCreateWorktree={handleCreateWorktreeClick}
               onSelectWorktree={handleSelectWorktree}
               onDeleteWorktree={handleDeleteWorktreeClick}
@@ -499,7 +499,7 @@ function AppShell(): React.JSX.Element {
                   isDetached={detailIsDetached}
                   headState={detailHeadState}
                   isWorktree={!!activeWorktree}
-                  workspacePath={activeWorkspace?.path ?? null}
+                  repositoryPath={activeRepository?.path ?? null}
                   repo={repo}
                   existingPullRequest={existingPullRequest}
                   onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
@@ -527,12 +527,12 @@ function AppShell(): React.JSX.Element {
                 ) : view === 'history' ? (
                   <HistoryPage />
                 ) : view === 'reviews' ? (
-                  <ReviewsPage workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} />
+                  <ReviewsPage repositories={repositories} activeRepositoryId={activeRepositoryId} />
                 ) : view === 'sessions' ? (
                   <SessionsPage viewMode={sessionsViewMode} />
                 ) : (
                   <DetailView
-                    workspace={activeWorkspace}
+                    repository={activeRepository}
                     worktree={activeWorktree}
                     folderPath={detailFolderPath}
                     branch={detailBranch}
@@ -563,8 +563,8 @@ function AppShell(): React.JSX.Element {
                     }
                     isPullRequestStatusResolved={isPullRequestStatusResolved}
                     onSelectWorktreePath={
-                      activeWorkspace
-                        ? (path: string) => handleSelectWorktree(activeWorkspace.id, path)
+                      activeRepository
+                        ? (path: string) => handleSelectWorktree(activeRepository.id, path)
                         : undefined
                     }
                   />
@@ -574,16 +574,16 @@ function AppShell(): React.JSX.Element {
           </div>
           <StatusBar context={statusContext} />
           <CreateWorktreeDialog
-            workspace={dialogWorkspace}
+            repository={dialogRepository}
             open={dialogOpen}
             onOpenChange={setDialogOpen}
             onSubmit={handleDialogSubmit}
           />
           <DeleteWorktreeDialog
             worktree={deleteTarget?.worktree ?? null}
-            workspaceName={
+            repositoryName={
               deleteTarget
-                ? (workspaces.find((w) => w.id === deleteTarget.workspaceId)?.name ?? null)
+                ? (repositories.find((w) => w.id === deleteTarget.repositoryId)?.name ?? null)
                 : null
             }
             status={deleteStatus}
@@ -592,7 +592,7 @@ function AppShell(): React.JSX.Element {
             onConfirm={handleDeleteConfirm}
           />
           <CreateBranchDialog
-            workspace={createBranchTarget?.workspace ?? null}
+            repository={createBranchTarget?.repository ?? null}
             worktree={createBranchTarget?.worktree ?? null}
             open={createBranchOpen}
             onOpenChange={handleCreateBranchOpenChange}

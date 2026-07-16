@@ -15,47 +15,47 @@ export interface UseWorktreesOverviewResult {
 }
 
 export function useWorktreesOverview(
-  workspacePath: string | null,
+  repositoryPath: string | null,
   enabled: boolean
 ): UseWorktreesOverviewResult {
   const [snapshot, setSnapshot] = React.useState<{
-    workspacePath: string | null
+    repositoryPath: string | null
     data: LoadedWorktreesOverview | null
     error: string | null
-  }>({ workspacePath: null, data: null, error: null })
+  }>({ repositoryPath: null, data: null, error: null })
   const [isLoading, setIsLoading] = React.useState(false)
   const activePathRef = React.useRef<string | null>(null)
 
-  const isCurrent = snapshot.workspacePath === workspacePath
+  const isCurrent = snapshot.repositoryPath === repositoryPath
   const data = isCurrent ? snapshot.data : null
   const error = isCurrent ? snapshot.error : null
 
   const runRefresh = React.useCallback(async (): Promise<void> => {
-    if (!workspacePath) return
+    if (!repositoryPath) return
     setIsLoading(true)
     try {
-      const result = await getWorktreesOverview({ workspacePath })
-      if (activePathRef.current !== workspacePath) return
+      const result = await getWorktreesOverview({ repositoryPath })
+      if (activePathRef.current !== repositoryPath) return
       if (result.ok) {
-        setSnapshot({ workspacePath, data: result, error: null })
+        setSnapshot({ repositoryPath, data: result, error: null })
       } else {
-        setSnapshot({ workspacePath, data: null, error: result.error })
+        setSnapshot({ repositoryPath, data: null, error: result.error })
       }
     } catch (err) {
-      if (activePathRef.current !== workspacePath) return
+      if (activePathRef.current !== repositoryPath) return
       setSnapshot({
-        workspacePath,
+        repositoryPath,
         data: null,
         error: err instanceof Error ? err.message : 'worktrees-overview failed'
       })
     } finally {
       setIsLoading(false)
     }
-  }, [workspacePath])
+  }, [repositoryPath])
 
   React.useEffect(() => {
-    activePathRef.current = workspacePath
-    if (!workspacePath || !enabled) return
+    activePathRef.current = repositoryPath
+    if (!repositoryPath || !enabled) return
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) void runRefresh()
@@ -88,7 +88,7 @@ export function useWorktreesOverview(
       document.removeEventListener('visibilitychange', onVisibility)
       stop()
     }
-  }, [workspacePath, enabled, runRefresh])
+  }, [repositoryPath, enabled, runRefresh])
 
   return { data, error, isLoading, refresh: runRefresh }
 }

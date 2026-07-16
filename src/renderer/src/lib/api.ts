@@ -14,7 +14,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
-import type { AddWorkspaceResult, Workspace } from '@shared/workspace'
+import type { AddRepositoryResult, Repository } from '@shared/repository'
 import type {
   CreateWorktreeRequest,
   CreateWorktreeResult,
@@ -32,8 +32,6 @@ import type {
   CreateBranchResult,
   DetectMergeStateRequest,
   DetectMergeStateResult,
-  JourneySignalRequest,
-  JourneySignalResult,
   DiscardAllChangesRequest,
   DiscardAllChangesResult,
   FetchResult,
@@ -133,21 +131,21 @@ async function result<T>(
 }
 
 const api = {
-  workspaces: {
-    pickAndAdd: (): Promise<AddWorkspaceResult> =>
-      result('workspaces_pick_and_add', undefined, (message) => ({
+  repositories: {
+    pickAndAdd: (): Promise<AddRepositoryResult> =>
+      result('repositories_pick_and_add', undefined, (message) => ({
         ok: false,
         error: 'unknown',
         message
       })),
-    list: (): Promise<Workspace[]> => invoke('workspaces_list'),
-    remove: (id: string): Promise<Workspace[]> => invoke('workspaces_remove', { id }),
-    reorder: (orderedIds: string[]): Promise<Workspace[]> =>
-      invoke('workspaces_reorder', { orderedIds })
+    list: (): Promise<Repository[]> => invoke('repositories_list'),
+    remove: (id: string): Promise<Repository[]> => invoke('repositories_remove', { id }),
+    reorder: (orderedIds: string[]): Promise<Repository[]> =>
+      invoke('repositories_reorder', { orderedIds })
   },
   worktrees: {
-    listForWorkspace: (workspacePath: string): Promise<Worktree[]> =>
-      invoke('worktrees_list_for_workspace', { workspacePath }),
+    listForRepository: (repositoryPath: string): Promise<Worktree[]> =>
+      invoke('worktrees_list_for_repository', { repositoryPath }),
     create: (req: CreateWorktreeRequest): Promise<CreateWorktreeResult> =>
       result('worktrees_create', { ...req }, (message) => ({
         ok: false,
@@ -168,29 +166,29 @@ const api = {
       }))
   },
   repo: {
-    defaultBranch: (workspacePath: string): Promise<string | null> =>
-      invoke('repo_default_branch', { workspacePath }),
+    defaultBranch: (repositoryPath: string): Promise<string | null> =>
+      invoke('repo_default_branch', { repositoryPath }),
     currentBranch: (folderPath: string): Promise<string | null> =>
       invoke('repo_current_branch', { folderPath }),
     status: async (
-      workspacePath: string,
+      repositoryPath: string,
       branch: string
     ): Promise<RepoStatus | { error: string }> => {
       const res = await result<RepoStatusResult>(
         'repo_status',
-        { workspacePath, branch },
+        { repositoryPath, branch },
         (message) => ({ ok: false, error: message })
       )
       return res.ok ? res.status : { error: res.error }
     },
-    fetch: (workspacePath: string, branch?: string): Promise<FetchResult> =>
-      result('repo_fetch', { workspacePath, branch }, (error) => ({ ok: false, error })),
-    pull: (workspacePath: string, branch: string): Promise<PullResult> =>
-      result('repo_pull', { workspacePath, branch }, (error) => ({ ok: false, error })),
+    fetch: (repositoryPath: string, branch?: string): Promise<FetchResult> =>
+      result('repo_fetch', { repositoryPath, branch }, (error) => ({ ok: false, error })),
+    pull: (repositoryPath: string, branch: string): Promise<PullResult> =>
+      result('repo_pull', { repositoryPath, branch }, (error) => ({ ok: false, error })),
     pullCurrentBranch: (folderPath: string): Promise<PullResult> =>
       result('repo_pull_current_branch', { folderPath }, (error) => ({ ok: false, error })),
-    userAlias: (workspacePath: string): Promise<string> =>
-      invoke('repo_user_alias', { workspacePath }),
+    userAlias: (repositoryPath: string): Promise<string> =>
+      invoke('repo_user_alias', { repositoryPath }),
     createBranch: (req: CreateBranchRequest): Promise<CreateBranchResult> =>
       result('repo_create_branch', { ...req }, (message) => ({
         ok: false,
@@ -240,9 +238,7 @@ const api = {
     branchWebUrl: (req: BranchWebUrlRequest): Promise<BranchWebUrlResult> =>
       result('repo_branch_web_url', { ...req }, () => ({ webUrl: null })),
     detectMergeState: (req: DetectMergeStateRequest): Promise<DetectMergeStateResult> =>
-      result('repo_detect_merge_state', { ...req }, (error) => ({ ok: false, error })),
-    journeySignal: (req: JourneySignalRequest): Promise<JourneySignalResult> =>
-      result('repo_journey_signal', { ...req }, (error) => ({ ok: false, error }))
+      result('repo_detect_merge_state', { ...req }, (error) => ({ ok: false, error }))
   },
   ado: {
     prDetails: (req: AdoPrDetailsRequest): Promise<AdoPrDetailsResult> =>

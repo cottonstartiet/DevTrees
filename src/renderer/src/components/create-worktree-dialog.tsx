@@ -1,6 +1,6 @@
 import * as React from 'react'
 
-import type { Workspace } from '@shared/workspace'
+import type { Repository } from '@shared/repository'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -35,10 +35,10 @@ function basename(p: string): string {
   return idx < 0 ? p : p.slice(idx + 1)
 }
 
-function computeHint(workspacePath: string, name: string): string {
-  const style = isWindowsPath(workspacePath) ? 'win' : 'posix'
-  const parent = dirname(workspacePath)
-  const wsName = basename(workspacePath)
+function computeHint(repositoryPath: string, name: string): string {
+  const style = isWindowsPath(repositoryPath) ? 'win' : 'posix'
+  const parent = dirname(repositoryPath)
+  const wsName = basename(repositoryPath)
   const display = name.trim() || '<name>'
   return joinPath([parent, `${wsName}.worktrees`, display], style)
 }
@@ -53,25 +53,25 @@ function validateName(name: string): string | null {
 }
 
 interface CreateWorktreeDialogProps {
-  workspace: Workspace | null
+  repository: Repository | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onSubmit: (name: string) => Promise<boolean> | void
 }
 
 interface WorktreeFormProps {
-  workspace: Workspace
+  repository: Repository
   onSubmit: (name: string) => void
   onCancel: () => void
 }
 
-function WorktreeForm({ workspace, onSubmit, onCancel }: WorktreeFormProps): React.JSX.Element {
+function WorktreeForm({ repository, onSubmit, onCancel }: WorktreeFormProps): React.JSX.Element {
   const [name, setName] = React.useState('')
   const [touched, setTouched] = React.useState(false)
 
   const error = validateName(name)
   const showError = touched && error !== null
-  const hint = computeHint(workspace.path, name)
+  const hint = computeHint(repository.path, name)
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>): void => {
     e.preventDefault()
@@ -126,7 +126,7 @@ function WorktreeForm({ workspace, onSubmit, onCancel }: WorktreeFormProps): Rea
 }
 
 export function CreateWorktreeDialog({
-  workspace,
+  repository,
   open,
   onOpenChange,
   onSubmit
@@ -137,16 +137,16 @@ export function CreateWorktreeDialog({
         <DialogHeader>
           <DialogTitle>Create worktree</DialogTitle>
           <DialogDescription>
-            {workspace
-              ? `Adds a new git worktree to "${workspace.name}". Runs in the background.`
+            {repository
+              ? `Adds a new git worktree to "${repository.name}". Runs in the background.`
               : 'Adds a new git worktree.'}
           </DialogDescription>
         </DialogHeader>
 
-        {workspace ? (
+        {repository ? (
           <WorktreeForm
-            key={`${workspace.id}-${open ? 'o' : 'c'}`}
-            workspace={workspace}
+            key={`${repository.id}-${open ? 'o' : 'c'}`}
+            repository={repository}
             onSubmit={(name) => {
               void onSubmit(name)
               onOpenChange(false)

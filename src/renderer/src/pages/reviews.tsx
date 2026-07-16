@@ -27,11 +27,11 @@ import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { openExternal } from '@/lib/system'
 import { cn } from '@/lib/utils'
 import type { PrCategory, RepoPr } from '@shared/reviews'
-import type { Workspace, WorkspaceRemoteKind } from '@shared/workspace'
+import type { Repository, RepositoryRemoteKind } from '@shared/repository'
 
 export interface ReviewsPageProps {
-  workspaces: Workspace[]
-  activeWorkspaceId: string | null
+  repositories: Repository[]
+  activeRepositoryId: string | null
 }
 
 const CATEGORY_ORDER: { key: PrCategory; title: string; empty: string }[] = [
@@ -40,35 +40,35 @@ const CATEGORY_ORDER: { key: PrCategory; title: string; empty: string }[] = [
   { key: 'other', title: 'Others', empty: 'No other open PRs.' }
 ]
 
-function isSupported(kind: WorkspaceRemoteKind): boolean {
+function isSupported(kind: RepositoryRemoteKind): boolean {
   return kind === 'ado' || kind === 'github'
 }
 
-function providerLabel(kind: WorkspaceRemoteKind): string {
+function providerLabel(kind: RepositoryRemoteKind): string {
   if (kind === 'ado') return 'Azure DevOps'
   if (kind === 'github') return 'GitHub'
   return 'Unsupported remote'
 }
 
 export function ReviewsPage({
-  workspaces,
-  activeWorkspaceId
+  repositories,
+  activeRepositoryId
 }: ReviewsPageProps): React.JSX.Element {
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
 
   // Resolve the effective selection: keep an explicit choice when still valid, otherwise default to
-  // the active workspace (when supported), then the first supported workspace, then anything.
+  // the active repository (when supported), then the first supported repository, then anything.
   const effectiveId = React.useMemo(() => {
-    const known = new Set(workspaces.map((w) => w.id))
+    const known = new Set(repositories.map((w) => w.id))
     if (selectedId && known.has(selectedId)) return selectedId
-    const active = workspaces.find((w) => w.id === activeWorkspaceId)
+    const active = repositories.find((w) => w.id === activeRepositoryId)
     if (active && isSupported(active.remoteKind)) return active.id
-    const supported = workspaces.find((w) => isSupported(w.remoteKind))
+    const supported = repositories.find((w) => isSupported(w.remoteKind))
     if (supported) return supported.id
-    return active?.id ?? workspaces[0]?.id ?? null
-  }, [selectedId, workspaces, activeWorkspaceId])
+    return active?.id ?? repositories[0]?.id ?? null
+  }, [selectedId, repositories, activeRepositoryId])
 
-  const selected = workspaces.find((w) => w.id === effectiveId) ?? null
+  const selected = repositories.find((w) => w.id === effectiveId) ?? null
 
   const { prs, error, isLoading, isUnsupported, refresh } = useRepoOpenPrs(
     selected?.path ?? null,
@@ -85,7 +85,7 @@ export function ReviewsPage({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b px-6 py-3">
-        <RepoSwitcher workspaces={workspaces} selected={selected} onSelect={setSelectedId} />
+        <RepoSwitcher repositories={repositories} selected={selected} onSelect={setSelectedId} />
         <div className="flex-1" />
         <Tooltip>
           <TooltipTrigger asChild>
@@ -106,7 +106,7 @@ export function ReviewsPage({
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
         {!selected ? (
-          <EmptyState title="No repository" hint="Add a workspace to review its pull requests." />
+          <EmptyState title="No repository" hint="Add a repository to review its pull requests." />
         ) : isUnsupported ? (
           <EmptyState
             title="Unsupported remote"
@@ -132,12 +132,12 @@ export function ReviewsPage({
 }
 
 function RepoSwitcher({
-  workspaces,
+  repositories,
   selected,
   onSelect
 }: {
-  workspaces: Workspace[]
-  selected: Workspace | null
+  repositories: Repository[]
+  selected: Repository | null
   onSelect: (id: string) => void
 }): React.JSX.Element {
   return (
@@ -152,10 +152,10 @@ function RepoSwitcher({
       <DropdownMenuContent align="start" className="w-64">
         <DropdownMenuLabel>Repository</DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {workspaces.length === 0 ? (
-          <DropdownMenuItem disabled>No workspaces</DropdownMenuItem>
+        {repositories.length === 0 ? (
+          <DropdownMenuItem disabled>No repositories</DropdownMenuItem>
         ) : (
-          workspaces.map((w) => (
+          repositories.map((w) => (
             <DropdownMenuItem
               key={w.id}
               onSelect={() => onSelect(w.id)}

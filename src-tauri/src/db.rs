@@ -62,6 +62,16 @@ fn migrations() -> Vec<Migration> {
                  UPDATE workspaces SET sort_order = added_at;",
             )
         },
+        // 0005 -> user_version 5: rename the `workspaces` table to `repositories`.
+        // Every prior version (0..=4) reaches this slot with a `workspaces` table and
+        // no `repositories` table, so an unconditional rename is safe for all of them.
+        |db| {
+            db.execute_batch(
+                "ALTER TABLE workspaces RENAME TO repositories;
+                 DROP INDEX IF EXISTS idx_workspaces_added_at;
+                 CREATE INDEX IF NOT EXISTS idx_repositories_added_at ON repositories(added_at);",
+            )
+        },
     ]
 }
 
@@ -99,7 +109,7 @@ fn import_legacy_json(db: &Connection) -> AppResult<()> {
         return Ok(());
     }
 
-    let count: i64 = db.query_row("SELECT COUNT(*) AS n FROM workspaces", [], |r| r.get(0))?;
+    let count: i64 = db.query_row("SELECT COUNT(*) AS n FROM repositories", [], |r| r.get(0))?;
     if count > 0 {
         return Ok(());
     }
@@ -122,7 +132,7 @@ fn import_legacy_json(db: &Connection) -> AppResult<()> {
     {
         let tx = db.unchecked_transaction()?;
         let mut stmt = db.prepare(
-            "INSERT OR IGNORE INTO workspaces (id, path, name, added_at, path_key)
+            "INSERT OR IGNORE INTO repositories (id, path, name, added_at, path_key)
              VALUES (?1, ?2, ?3, ?4, ?5)",
         )?;
         for w in &parsed {

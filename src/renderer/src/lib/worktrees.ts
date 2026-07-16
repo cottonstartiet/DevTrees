@@ -7,8 +7,8 @@ import type {
   WorktreeStatusResult
 } from '@shared/worktree'
 
-export function listWorktreesForWorkspace(workspacePath: string): Promise<Worktree[]> {
-  return window.api.worktrees.listForWorkspace(workspacePath)
+export function listWorktreesForRepository(repositoryPath: string): Promise<Worktree[]> {
+  return window.api.worktrees.listForRepository(repositoryPath)
 }
 
 export function createWorktree(req: CreateWorktreeRequest): Promise<CreateWorktreeResult> {

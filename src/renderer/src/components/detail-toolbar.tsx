@@ -34,7 +34,7 @@ export interface DetailToolbarProps {
   isDetached?: boolean
   headState?: 'branch' | 'detached'
   isWorktree?: boolean
-  workspacePath?: string | null
+  repositoryPath?: string | null
   repo: UseRepoStatusResult
   existingPullRequest?: DetailToolbarExistingPr | null
   onOpenPullRequest?: () => void

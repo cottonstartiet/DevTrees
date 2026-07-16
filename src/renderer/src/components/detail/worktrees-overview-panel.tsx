@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import type { WorktreeOverviewRow } from '@shared/repo'
 
 export interface WorktreesOverviewPanelProps {
-  workspacePath: string
+  repositoryPath: string
   activeFolderPath: string | null
   onSelectWorktree?: (worktreePath: string) => void
 }
@@ -20,11 +20,11 @@ function basename(p: string): string {
 }
 
 export function WorktreesOverviewPanel({
-  workspacePath,
+  repositoryPath,
   activeFolderPath,
   onSelectWorktree
 }: WorktreesOverviewPanelProps): React.JSX.Element {
-  const { data, error, isLoading, refresh } = useWorktreesOverview(workspacePath, true)
+  const { data, error, isLoading, refresh } = useWorktreesOverview(repositoryPath, true)
 
   const rows = data?.rows ?? []
   const description = data

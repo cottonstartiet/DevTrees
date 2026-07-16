@@ -28,7 +28,7 @@ fn configure_no_window(cmd: &mut Command) {
 fn configure_no_window(_cmd: &mut Command) {}
 
 /// Run the GitHub CLI (`gh`) with `cwd` as the working directory so the host and repository are
-/// inferred from the workspace's git remote (supports github.com and GitHub Enterprise).
+/// inferred from the repository's git remote (supports github.com and GitHub Enterprise).
 pub async fn run_gh(args: Vec<String>, cwd: String) -> Result<GhOutput, GhError> {
     tauri::async_runtime::spawn_blocking(move || run_gh_blocking(&args, &cwd))
         .await

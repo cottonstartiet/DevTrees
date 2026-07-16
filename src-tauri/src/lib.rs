@@ -11,7 +11,7 @@ mod repo;
 mod reviews;
 mod sessions;
 mod system;
-mod workspaces;
+mod repositories;
 mod worktrees;
 
 use std::sync::Mutex;
@@ -58,11 +58,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            workspaces::workspaces_list,
-            workspaces::workspaces_remove,
-            workspaces::workspaces_reorder,
-            workspaces::workspaces_pick_and_add,
-            worktrees::worktrees_list_for_workspace,
+            repositories::repositories_list,
+            repositories::repositories_remove,
+            repositories::repositories_reorder,
+            repositories::repositories_pick_and_add,
+            worktrees::worktrees_list_for_repository,
             worktrees::worktrees_create,
             worktrees::worktrees_delete,
             worktrees::worktrees_status,
@@ -104,7 +104,6 @@ pub fn run() {
             repo::repo_list_my_branches,
             repo::repo_branch_web_url,
             repo::repo_detect_merge_state,
-            repo::repo_journey_signal,
             sessions::sessions_create,
             sessions::sessions_list,
             sessions::sessions_snapshot,

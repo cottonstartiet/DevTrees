@@ -1,26 +1,26 @@
 import * as React from 'react'
 
 import type { RepoPr } from '@shared/reviews'
-import type { WorkspaceRemoteKind } from '@shared/workspace'
+import type { RepositoryRemoteKind } from '@shared/repository'
 import { getRepoOpenPrs } from '@/lib/reviews'
 
 export interface UseRepoOpenPrsResult {
   prs: RepoPr[] | null
   error: string | null
   isLoading: boolean
-  /** True when the selected workspace's remote is neither GitHub nor Azure DevOps. */
+  /** True when the selected repository's remote is neither GitHub nor Azure DevOps. */
   isUnsupported: boolean
   refresh: () => Promise<void>
 }
 
 /**
- * Fetches all open PRs for a workspace, dispatching to the ADO or GitHub backend by `remoteKind`.
+ * Fetches all open PRs for a repository, dispatching to the ADO or GitHub backend by `remoteKind`.
  * Snapshots are keyed by `folderPath` so a slow response for a no-longer-selected repo is discarded
- * (avoids workspace-switch races). Mirrors `use-my-open-prs`.
+ * (avoids repository-switch races). Mirrors `use-my-open-prs`.
  */
 export function useRepoOpenPrs(
   folderPath: string | null,
-  remoteKind: WorkspaceRemoteKind | null,
+  remoteKind: RepositoryRemoteKind | null,
   enabled: boolean
 ): UseRepoOpenPrsResult {
   const [snapshot, setSnapshot] = React.useState<{

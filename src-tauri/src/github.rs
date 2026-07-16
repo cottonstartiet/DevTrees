@@ -8,7 +8,7 @@ use crate::reviews::{categorize, ident_eq, RepoOpenPrsResult, RepoPr};
 /// the authenticated user (mine / assigned / other).
 ///
 /// `gh` is run with `folder_path` as the working directory so the host (github.com or Enterprise)
-/// and repository are inferred from the workspace's git remote.
+/// and repository are inferred from the repository's git remote.
 #[tauri::command]
 pub async fn github_repo_open_prs(folder_path: String) -> AppResult<RepoOpenPrsResult> {
     if folder_path.trim().is_empty() {

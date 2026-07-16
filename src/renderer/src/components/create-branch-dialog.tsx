@@ -1,6 +1,6 @@
 import * as React from 'react'
 
-import type { Workspace } from '@shared/workspace'
+import type { Repository } from '@shared/repository'
 import type { Worktree } from '@shared/worktree'
 import { Button } from '@/components/ui/button'
 import {
@@ -44,7 +44,7 @@ function validateSuffix(name: string): string | null {
 }
 
 interface CreateBranchDialogProps {
-  workspace: Workspace | null
+  repository: Repository | null
   worktree: Worktree | null
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -52,14 +52,14 @@ interface CreateBranchDialogProps {
 }
 
 interface BranchFormProps {
-  workspace: Workspace
+  repository: Repository
   worktree: Worktree
   onSubmit: (fullBranchName: string) => void
   onCancel: () => void
 }
 
 function BranchForm({
-  workspace,
+  repository,
   worktree,
   onSubmit,
   onCancel
@@ -67,22 +67,22 @@ function BranchForm({
   const [suffix, setSuffix] = React.useState(() => defaultSuffixFromWorktree(worktree.path))
   const [touched, setTouched] = React.useState(false)
   const [aliasSnapshot, setAliasSnapshot] = React.useState<{
-    workspacePath: string
+    repositoryPath: string
     alias: string | null
     error: string | null
-  }>(() => ({ workspacePath: workspace.path, alias: null, error: null }))
+  }>(() => ({ repositoryPath: repository.path, alias: null, error: null }))
 
-  const isAliasCurrent = aliasSnapshot.workspacePath === workspace.path
+  const isAliasCurrent = aliasSnapshot.repositoryPath === repository.path
   const alias = isAliasCurrent ? aliasSnapshot.alias : null
   const aliasError = isAliasCurrent ? aliasSnapshot.error : null
 
   React.useEffect(() => {
     let cancelled = false
-    getUserAlias(workspace.path)
+    getUserAlias(repository.path)
       .then((value) => {
         if (cancelled) return
         setAliasSnapshot({
-          workspacePath: workspace.path,
+          repositoryPath: repository.path,
           alias: value || null,
           error: value ? null : 'Could not determine your alias.'
         })
@@ -90,7 +90,7 @@ function BranchForm({
       .catch((err) => {
         if (cancelled) return
         setAliasSnapshot({
-          workspacePath: workspace.path,
+          repositoryPath: repository.path,
           alias: null,
           error: err instanceof Error ? err.message : 'Could not determine your alias.'
         })
@@ -98,7 +98,7 @@ function BranchForm({
     return () => {
       cancelled = true
     }
-  }, [workspace.path])
+  }, [repository.path])
 
   const error = validateSuffix(suffix)
   const showError = touched && error !== null
@@ -180,7 +180,7 @@ function BranchForm({
 }
 
 export function CreateBranchDialog({
-  workspace,
+  repository,
   worktree,
   open,
   onOpenChange,
@@ -200,10 +200,10 @@ export function CreateBranchDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {workspace && worktree ? (
+        {repository && worktree ? (
           <BranchForm
             key={`${worktree.path}-${open ? 'o' : 'c'}`}
-            workspace={workspace}
+            repository={repository}
             worktree={worktree}
             onSubmit={(fullName) => {
               void onSubmit(fullName)

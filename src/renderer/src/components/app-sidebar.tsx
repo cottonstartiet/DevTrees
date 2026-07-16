@@ -36,7 +36,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
-import type { Workspace, WorkspaceRemoteKind } from '@shared/workspace'
+import type { Repository, RepositoryRemoteKind } from '@shared/repository'
 import type { Worktree } from '@shared/worktree'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import {
@@ -104,29 +104,29 @@ function AzureDevOpsIcon({ className }: { className?: string }): React.JSX.Eleme
   )
 }
 
-function workspaceIcon(remoteKind: WorkspaceRemoteKind): React.JSX.Element {
+function repositoryIcon(remoteKind: RepositoryRemoteKind): React.JSX.Element {
   if (remoteKind === 'github') return <GithubIcon className="size-4" />
   if (remoteKind === 'ado') return <AzureDevOpsIcon className="size-4" />
   return <FolderIcon />
 }
 
-export type AppView = 'home' | 'settings' | 'workspace' | 'history' | 'sessions' | 'reviews'
+export type AppView = 'home' | 'settings' | 'repository' | 'history' | 'sessions' | 'reviews'
 
 interface AppSidebarProps {
   activeView: AppView
   onSelectView: (view: AppView) => void
-  workspaces: Workspace[]
-  activeWorkspaceId: string | null
+  repositories: Repository[]
+  activeRepositoryId: string | null
   activeWorktreePath: string | null
-  worktreesByWorkspaceId: Record<string, Worktree[]>
+  worktreesByRepositoryId: Record<string, Worktree[]>
   deletingWorktreePaths: ReadonlySet<string>
-  onAddWorkspace: () => void
-  onSelectWorkspace: (id: string) => void
-  onRemoveWorkspace: (id: string) => void
-  onReorderWorkspaces: (orderedIds: string[]) => void
-  onCreateWorktree: (workspace: Workspace) => void
-  onSelectWorktree: (workspaceId: string, worktreePath: string) => void
-  onDeleteWorktree: (workspaceId: string, worktree: Worktree) => void
+  onAddRepository: () => void
+  onSelectRepository: (id: string) => void
+  onRemoveRepository: (id: string) => void
+  onReorderRepositories: (orderedIds: string[]) => void
+  onCreateWorktree: (repository: Repository) => void
+  onSelectWorktree: (repositoryId: string, worktreePath: string) => void
+  onDeleteWorktree: (repositoryId: string, worktree: Worktree) => void
 }
 
 function worktreeLabel(path: string): string {
@@ -140,37 +140,37 @@ function worktreeSubtitle(wt: Worktree): string | null {
   return null
 }
 
-interface SortableWorkspaceItemProps {
-  ws: Workspace
+interface SortableRepositoryItemProps {
+  ws: Repository
   worktrees: Worktree[]
   activeView: AppView
-  activeWorkspaceId: string | null
+  activeRepositoryId: string | null
   activeWorktreePath: string | null
   deletingWorktreePaths: ReadonlySet<string>
-  onSelectWorkspace: (id: string) => void
-  onCreateWorktree: (workspace: Workspace) => void
-  onRemoveWorkspace: (id: string) => void
-  onSelectWorktree: (workspaceId: string, worktreePath: string) => void
-  onDeleteWorktree: (workspaceId: string, worktree: Worktree) => void
+  onSelectRepository: (id: string) => void
+  onCreateWorktree: (repository: Repository) => void
+  onRemoveRepository: (id: string) => void
+  onSelectWorktree: (repositoryId: string, worktreePath: string) => void
+  onDeleteWorktree: (repositoryId: string, worktree: Worktree) => void
   onOpenTerminal: (wt: Worktree) => void
   onStartCopilotSession: (wt: Worktree, repository?: string) => void
 }
 
-function SortableWorkspaceItem({
+function SortableRepositoryItem({
   ws,
   worktrees,
   activeView,
-  activeWorkspaceId,
+  activeRepositoryId,
   activeWorktreePath,
   deletingWorktreePaths,
-  onSelectWorkspace,
+  onSelectRepository,
   onCreateWorktree,
-  onRemoveWorkspace,
+  onRemoveRepository,
   onSelectWorktree,
   onDeleteWorktree,
   onOpenTerminal,
   onStartCopilotSession
-}: SortableWorkspaceItemProps): React.JSX.Element {
+}: SortableRepositoryItemProps): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: ws.id
   })
@@ -179,7 +179,7 @@ function SortableWorkspaceItem({
     transition
   }
   const isWsRowActive =
-    activeView === 'workspace' && activeWorkspaceId === ws.id && !activeWorktreePath
+    activeView === 'repository' && activeRepositoryId === ws.id && !activeWorktreePath
 
   return (
     <SidebarMenuItem ref={setNodeRef} style={style} className={cn(isDragging && 'z-50 opacity-80')}>
@@ -189,7 +189,7 @@ function SortableWorkspaceItem({
           {...listeners}
           showOnHover
           title="Drag to reorder"
-          aria-label="Drag to reorder workspace"
+          aria-label="Drag to reorder repository"
           className="right-[3.25rem] cursor-grab touch-none active:cursor-grabbing group-data-[collapsible=icon]:hidden"
         >
           <GripVerticalIcon />
@@ -212,10 +212,10 @@ function SortableWorkspaceItem({
         <SidebarMenuButton
           tooltip={ws.path}
           isActive={isWsRowActive}
-          onClick={() => onSelectWorkspace(ws.id)}
+          onClick={() => onSelectRepository(ws.id)}
           className={cn(worktrees.length > 0 && 'pl-7 group-data-[collapsible=icon]:!pl-2')}
         >
-          {workspaceIcon(ws.remoteKind)}
+          {repositoryIcon(ws.remoteKind)}
           <span>{ws.name}</span>
         </SidebarMenuButton>
 
@@ -231,9 +231,9 @@ function SortableWorkspaceItem({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <SidebarMenuAction showOnHover title="Workspace actions">
+            <SidebarMenuAction showOnHover title="Repository actions">
               <MoreHorizontalIcon />
-              <span className="sr-only">Workspace actions</span>
+              <span className="sr-only">Repository actions</span>
             </SidebarMenuAction>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="right" align="start">
@@ -242,7 +242,7 @@ function SortableWorkspaceItem({
               <span>Create worktree</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onSelect={() => onRemoveWorkspace(ws.id)}>
+            <DropdownMenuItem variant="destructive" onSelect={() => onRemoveRepository(ws.id)}>
               <Trash2Icon />
               <span>Remove from list</span>
             </DropdownMenuItem>
@@ -254,8 +254,8 @@ function SortableWorkspaceItem({
             <SidebarMenuSub className="mr-0 pr-0">
               {worktrees.map((wt) => {
                 const isActive =
-                  activeView === 'workspace' &&
-                  activeWorkspaceId === ws.id &&
+                  activeView === 'repository' &&
+                  activeRepositoryId === ws.id &&
                   activeWorktreePath === wt.path
                 const isDeleting = deletingWorktreePaths.has(wt.path)
                 const subtitle = worktreeSubtitle(wt)
@@ -368,20 +368,20 @@ function SortableWorkspaceItem({
 export function AppSidebar({
   activeView,
   onSelectView,
-  workspaces,
-  activeWorkspaceId,
+  repositories,
+  activeRepositoryId,
   activeWorktreePath,
-  worktreesByWorkspaceId,
+  worktreesByRepositoryId,
   deletingWorktreePaths,
-  onAddWorkspace,
-  onSelectWorkspace,
-  onRemoveWorkspace,
-  onReorderWorkspaces,
+  onAddRepository,
+  onSelectRepository,
+  onRemoveRepository,
+  onReorderRepositories,
   onCreateWorktree,
   onSelectWorktree,
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
-  const [workspacesOpen, setWorkspacesOpen] = React.useState(true)
+  const [repositoriesOpen, setRepositoriesOpen] = React.useState(true)
   const [sessionsOpen, setSessionsOpen] = React.useState(true)
   const launchCopilot = useCopilotLauncher()
   const { terminalMode } = useTerminalMode()
@@ -430,25 +430,25 @@ export function AppSidebar({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  const handleWorkspaceDragEnd = React.useCallback(
+  const handleRepositoryDragEnd = React.useCallback(
     (event: DragEndEvent): void => {
       const { active, over } = event
       if (!over || active.id === over.id) return
-      const ids = workspaces.map((w) => w.id)
+      const ids = repositories.map((w) => w.id)
       const oldIndex = ids.indexOf(String(active.id))
       const newIndex = ids.indexOf(String(over.id))
       if (oldIndex < 0 || newIndex < 0) return
-      onReorderWorkspaces(arrayMove(ids, oldIndex, newIndex))
+      onReorderRepositories(arrayMove(ids, oldIndex, newIndex))
     },
-    [workspaces, onReorderWorkspaces]
+    [repositories, onReorderRepositories]
   )
 
   return (
     <Sidebar collapsible="icon" className="top-0 bottom-5 h-[calc(100svh-1.25rem)]">
       <SidebarContent className="overflow-x-hidden">
         <Collapsible
-          open={workspacesOpen}
-          onOpenChange={setWorkspacesOpen}
+          open={repositoriesOpen}
+          onOpenChange={setRepositoriesOpen}
           className="flex flex-col"
         >
           <SidebarGroup className="shrink-0">
@@ -458,43 +458,43 @@ export function AppSidebar({
             >
               <CollapsibleTrigger className="group/ws-label flex w-full items-center">
                 <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/ws-label:rotate-90 group-data-[collapsible=icon]:hidden" />
-                Workspaces
+                Repositories
               </CollapsibleTrigger>
             </SidebarGroupLabel>
-            <SidebarGroupAction title="Add workspace" onClick={onAddWorkspace}>
+            <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
               <PlusIcon />
-              <span className="sr-only">Add workspace</span>
+              <span className="sr-only">Add repository</span>
             </SidebarGroupAction>
           </SidebarGroup>
           <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
             <SidebarGroupContent>
-              {workspaces.length === 0 ? (
+              {repositories.length === 0 ? (
                 <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
-                  No workspaces yet. Click + to add a git repository.
+                  No repositories yet. Click + to add a git repository.
                 </p>
               ) : (
                 <SidebarMenu>
                   <DndContext
                     sensors={sensors}
                     collisionDetection={closestCenter}
-                    onDragEnd={handleWorkspaceDragEnd}
+                    onDragEnd={handleRepositoryDragEnd}
                   >
                     <SortableContext
-                      items={workspaces.map((w) => w.id)}
+                      items={repositories.map((w) => w.id)}
                       strategy={verticalListSortingStrategy}
                     >
-                      {workspaces.map((ws) => (
-                        <SortableWorkspaceItem
+                      {repositories.map((ws) => (
+                        <SortableRepositoryItem
                           key={ws.id}
                           ws={ws}
-                          worktrees={worktreesByWorkspaceId[ws.id] ?? []}
+                          worktrees={worktreesByRepositoryId[ws.id] ?? []}
                           activeView={activeView}
-                          activeWorkspaceId={activeWorkspaceId}
+                          activeRepositoryId={activeRepositoryId}
                           activeWorktreePath={activeWorktreePath}
                           deletingWorktreePaths={deletingWorktreePaths}
-                          onSelectWorkspace={onSelectWorkspace}
+                          onSelectRepository={onSelectRepository}
                           onCreateWorktree={onCreateWorktree}
-                          onRemoveWorkspace={onRemoveWorkspace}
+                          onRemoveRepository={onRemoveRepository}
                           onSelectWorktree={onSelectWorktree}
                           onDeleteWorktree={onDeleteWorktree}
                           onOpenTerminal={handleOpenTerminal}

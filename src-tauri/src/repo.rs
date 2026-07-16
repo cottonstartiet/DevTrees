@@ -449,45 +449,6 @@ impl DetectMergeStateResult {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct JourneySignal {
-    pub branch: Option<String>,
-    pub is_detached: bool,
-    pub is_default_branch: bool,
-    /// None when `git status` could not be read (unknown, not clean).
-    pub has_uncommitted: Option<bool>,
-    pub has_remote_branch: bool,
-    /// Commits on HEAD not on the default branch (origin/default preferred). None if unresolved.
-    pub ahead_of_default: Option<i64>,
-    pub behind_of_default: Option<i64>,
-    /// Commits on HEAD not on origin/<branch> (unpushed). None if no upstream or unresolved.
-    pub ahead_of_upstream: Option<i64>,
-    pub behind_of_upstream: Option<i64>,
-    /// "none" | "merge" | "rebase".
-    pub merge_operation: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct JourneySignalResult {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub signal: Option<JourneySignal>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-impl JourneySignalResult {
-    fn ok(signal: JourneySignal) -> Self {
-        Self {
-            ok: true,
-            signal: Some(signal),
-            error: None,
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct WorktreeOverviewRow {
     pub path: String,
     pub branch: Option<String>,
@@ -576,7 +537,7 @@ async fn try_git(args: Vec<String>, cwd: String) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-async fn has_remote_branch(workspace_path: &str, branch: &str) -> bool {
+async fn has_remote_branch(repository_path: &str, branch: &str) -> bool {
     run_git(
         vec![
             "show-ref".into(),
@@ -584,15 +545,15 @@ async fn has_remote_branch(workspace_path: &str, branch: &str) -> bool {
             "--quiet".into(),
             format!("refs/remotes/origin/{branch}"),
         ],
-        workspace_path.to_string(),
+        repository_path.to_string(),
     )
     .await
     .is_ok()
 }
 
-async fn get_repo_status(workspace_path: &str, branch: &str) -> RepoStatus {
+async fn get_repo_status(repository_path: &str, branch: &str) -> RepoStatus {
     let fetched_at = now_ms();
-    let has_remote = has_remote_branch(workspace_path, branch).await;
+    let has_remote = has_remote_branch(repository_path, branch).await;
     if !has_remote {
         return RepoStatus {
             branch: branch.to_string(),
@@ -610,7 +571,7 @@ async fn get_repo_status(workspace_path: &str, branch: &str) -> RepoStatus {
             "--quiet".into(),
             format!("refs/heads/{branch}"),
         ],
-        workspace_path.to_string(),
+        repository_path.to_string(),
     )
     .await
     .is_ok();
@@ -631,7 +592,7 @@ async fn get_repo_status(workspace_path: &str, branch: &str) -> RepoStatus {
             "--count".into(),
             format!("refs/remotes/origin/{branch}...refs/heads/{branch}"),
         ],
-        workspace_path.to_string(),
+        repository_path.to_string(),
     )
     .await;
     let (behind, ahead) = counts
@@ -735,7 +696,7 @@ fn paths_equal(a: &str, b: &str) -> bool {
     }
 }
 
-fn parse_worktree_porcelain_local(stdout: &str, workspace_path: &str) -> Vec<LocalWorktree> {
+fn parse_worktree_porcelain_local(stdout: &str, repository_path: &str) -> Vec<LocalWorktree> {
     let normalized = stdout.replace("\r\n", "\n");
     let mut worktrees = Vec::new();
     for block in normalized.split("\n\n") {
@@ -767,7 +728,7 @@ fn parse_worktree_porcelain_local(stdout: &str, workspace_path: &str) -> Vec<Loc
         };
         let path = normalize_path(&path);
         worktrees.push(LocalWorktree {
-            is_main: paths_equal(&path, workspace_path),
+            is_main: paths_equal(&path, repository_path),
             path,
             branch,
             is_detached,
@@ -777,14 +738,14 @@ fn parse_worktree_porcelain_local(stdout: &str, workspace_path: &str) -> Vec<Loc
     worktrees
 }
 
-async fn list_worktrees_local(workspace_path: &str) -> Vec<LocalWorktree> {
+async fn list_worktrees_local(repository_path: &str) -> Vec<LocalWorktree> {
     match run_git(
         vec!["worktree".into(), "list".into(), "--porcelain".into()],
-        workspace_path.to_string(),
+        repository_path.to_string(),
     )
     .await
     {
-        Ok(out) => parse_worktree_porcelain_local(&out.stdout, workspace_path),
+        Ok(out) => parse_worktree_porcelain_local(&out.stdout, repository_path),
         Err(_) => Vec::new(),
     }
 }
@@ -845,7 +806,7 @@ fn git_error_message(err: GitError) -> String {
 }
 
 #[tauri::command]
-pub async fn repo_default_branch(workspace_path: String) -> AppResult<Option<String>> {
+pub async fn repo_default_branch(repository_path: String) -> AppResult<Option<String>> {
     if let Some(symbolic) = try_git(
         vec![
             "symbolic-ref".into(),
@@ -853,7 +814,7 @@ pub async fn repo_default_branch(workspace_path: String) -> AppResult<Option<Str
             "--short".into(),
             "refs/remotes/origin/HEAD".into(),
         ],
-        workspace_path.clone(),
+        repository_path.clone(),
     )
     .await
     {
@@ -872,7 +833,7 @@ pub async fn repo_default_branch(workspace_path: String) -> AppResult<Option<Str
             "origin".into(),
             "HEAD".into(),
         ],
-        workspace_path.clone(),
+        repository_path.clone(),
     )
     .await
     {
@@ -894,7 +855,7 @@ pub async fn repo_default_branch(workspace_path: String) -> AppResult<Option<Str
                 "--quiet".into(),
                 format!("refs/heads/{candidate}"),
             ],
-            workspace_path.clone(),
+            repository_path.clone(),
         )
         .await
         .is_ok()
@@ -917,35 +878,35 @@ pub async fn repo_current_branch(folder_path: String) -> AppResult<Option<String
 }
 
 #[tauri::command]
-pub async fn repo_status(workspace_path: String, branch: String) -> AppResult<RepoStatusResult> {
+pub async fn repo_status(repository_path: String, branch: String) -> AppResult<RepoStatusResult> {
     Ok(RepoStatusResult::ok(
-        get_repo_status(&workspace_path, &branch).await,
+        get_repo_status(&repository_path, &branch).await,
     ))
 }
 
 #[tauri::command]
 pub async fn repo_fetch(
-    workspace_path: String,
+    repository_path: String,
     branch: Option<String>,
 ) -> AppResult<SimpleOkResult> {
     let mut args = vec!["fetch".to_string(), "origin".to_string()];
     if let Some(branch) = branch.filter(|b| !b.is_empty()) {
         args.push(branch);
     }
-    Ok(match run_git(args, workspace_path).await {
+    Ok(match run_git(args, repository_path).await {
         Ok(_) => SimpleOkResult::ok(),
         Err(err) => SimpleOkResult::err(git_error_message(err)),
     })
 }
 
 #[tauri::command]
-pub async fn repo_pull(workspace_path: String, branch: String) -> AppResult<PullResult> {
-    let current = repo_current_branch(workspace_path.clone()).await?;
+pub async fn repo_pull(repository_path: String, branch: String) -> AppResult<PullResult> {
+    let current = repo_current_branch(repository_path.clone()).await?;
     if current.as_deref() == Some(branch.as_str()) {
         return Ok(
             match run_git(
                 vec!["pull".into(), "--ff-only".into(), "origin".into(), branch],
-                workspace_path,
+                repository_path,
             )
             .await
             {
@@ -972,7 +933,7 @@ pub async fn repo_pull(workspace_path: String, branch: String) -> AppResult<Pull
                 "origin".into(),
                 format!("{branch}:{branch}"),
             ],
-            workspace_path,
+            repository_path,
         )
         .await
         {
@@ -1031,14 +992,14 @@ pub async fn repo_pull_current_branch(folder_path: String) -> AppResult<PullResu
 }
 
 #[tauri::command]
-pub async fn repo_user_alias(workspace_path: String) -> AppResult<String> {
-    Ok(resolve_user_alias(&workspace_path).await)
+pub async fn repo_user_alias(repository_path: String) -> AppResult<String> {
+    Ok(resolve_user_alias(&repository_path).await)
 }
 
-async fn resolve_user_alias(workspace_path: &str) -> String {
+async fn resolve_user_alias(repository_path: &str) -> String {
     if let Some(email) = try_git(
         vec!["config".into(), "--get".into(), "user.email".into()],
-        workspace_path.to_string(),
+        repository_path.to_string(),
     )
     .await
     {
@@ -1512,7 +1473,7 @@ pub async fn repo_recent_commits(
 #[tauri::command]
 pub async fn repo_rebase_on_default(
     folder_path: String,
-    workspace_path: Option<String>,
+    repository_path: Option<String>,
 ) -> AppResult<RebaseOnDefaultResult> {
     match is_working_tree_clean(&folder_path).await {
         Ok(true) => {}
@@ -1534,8 +1495,8 @@ pub async fn repo_rebase_on_default(
         None => return Ok(RebaseOnDefaultResult::err("no-default-branch", None)),
     };
 
-    if let Some(workspace_path) = workspace_path.filter(|path| path != &folder_path) {
-        let pulled = repo_pull(workspace_path, default_branch.clone()).await?;
+    if let Some(repository_path) = repository_path.filter(|path| path != &folder_path) {
+        let pulled = repo_pull(repository_path, default_branch.clone()).await?;
         if !pulled.ok {
             return Ok(RebaseOnDefaultResult::err("pull-failed", pulled.error));
         }
@@ -1855,8 +1816,8 @@ pub async fn repo_commit(
 }
 
 #[tauri::command]
-pub async fn repo_worktrees_overview(workspace_path: String) -> AppResult<WorktreesOverviewResult> {
-    let worktrees = list_worktrees_local(&workspace_path).await;
+pub async fn repo_worktrees_overview(repository_path: String) -> AppResult<WorktreesOverviewResult> {
+    let worktrees = list_worktrees_local(&repository_path).await;
     let mut rows = Vec::new();
     for worktree in worktrees {
         let is_dirty = try_git(
@@ -1927,8 +1888,8 @@ pub async fn repo_worktrees_overview(workspace_path: String) -> AppResult<Worktr
 }
 
 #[tauri::command]
-pub async fn repo_list_my_branches(workspace_path: String) -> AppResult<MyBranchesResult> {
-    let alias = resolve_user_alias(&workspace_path).await;
+pub async fn repo_list_my_branches(repository_path: String) -> AppResult<MyBranchesResult> {
+    let alias = resolve_user_alias(&repository_path).await;
     let prefix = format!("users/{alias}/");
 
     let format_arg = format!(
@@ -1946,7 +1907,7 @@ pub async fn repo_list_my_branches(workspace_path: String) -> AppResult<MyBranch
             format_arg.clone(),
             local_ref,
         ],
-        workspace_path.clone(),
+        repository_path.clone(),
     )
     .await
     {
@@ -1976,7 +1937,7 @@ pub async fn repo_list_my_branches(workspace_path: String) -> AppResult<MyBranch
     let remote_ref = format!("refs/remotes/origin/{prefix}");
     if let Some(output) = try_git(
         vec!["for-each-ref".into(), format_arg, remote_ref],
-        workspace_path.clone(),
+        repository_path.clone(),
     )
     .await
     {
@@ -2011,7 +1972,7 @@ pub async fn repo_list_my_branches(workspace_path: String) -> AppResult<MyBranch
     }
 
     // Mark branches that are checked out in a worktree.
-    for worktree in list_worktrees_local(&workspace_path).await {
+    for worktree in list_worktrees_local(&repository_path).await {
         if let Some(branch) = worktree.branch {
             if let Some(entry) = map.get_mut(&branch) {
                 entry.has_worktree = true;
@@ -2133,128 +2094,4 @@ fn read_file_trimmed(path: impl AsRef<Path>) -> Option<String> {
         .ok()
         .map(|contents| contents.trim().to_string())
         .filter(|contents| !contents.is_empty())
-}
-
-/// Counts commits on each side of a symmetric range `left...right` via
-/// `git rev-list --left-right --count`. Returns `(left_only, right_only)` where
-/// `left_only` are commits reachable from `left` but not `right` (i.e. "behind")
-/// and `right_only` are commits reachable from `right` but not `left` ("ahead").
-async fn count_left_right(folder_path: &str, left: &str, right: &str) -> Option<(i64, i64)> {
-    let out = try_git(
-        vec![
-            "rev-list".into(),
-            "--left-right".into(),
-            "--count".into(),
-            format!("{left}...{right}"),
-        ],
-        folder_path.to_string(),
-    )
-    .await?;
-    let mut parts = out.split_whitespace();
-    let left_only = parts.next()?.parse::<i64>().ok()?;
-    let right_only = parts.next()?.parse::<i64>().ok()?;
-    Some((left_only, right_only))
-}
-
-async fn ref_exists(folder_path: &str, full_ref: &str) -> bool {
-    run_git(
-        vec![
-            "show-ref".into(),
-            "--verify".into(),
-            "--quiet".into(),
-            full_ref.to_string(),
-        ],
-        folder_path.to_string(),
-    )
-    .await
-    .is_ok()
-}
-
-#[tauri::command]
-pub async fn repo_journey_signal(folder_path: String) -> AppResult<JourneySignalResult> {
-    let branch = repo_current_branch(folder_path.clone()).await?;
-    let is_detached = branch.is_none();
-
-    let default_branch = repo_default_branch(folder_path.clone()).await.ok().flatten();
-    let is_default_branch = match (&branch, &default_branch) {
-        (Some(b), Some(d)) => b == d,
-        _ => false,
-    };
-
-    // `try_git` filters empty stdout to None, which for `git status` means a clean
-    // tree (not a failure), so a clean repo maps to `false`.
-    let has_uncommitted = Some(
-        try_git(
-            vec![
-                "status".into(),
-                "--porcelain=v1".into(),
-                "--untracked-files=all".into(),
-            ],
-            folder_path.clone(),
-        )
-        .await
-        .map(|out| !out.trim().is_empty())
-        .unwrap_or(false),
-    );
-
-    // Ahead/behind vs default branch: prefer origin/<default>, fall back to local.
-    let (ahead_of_default, behind_of_default) = if let Some(default) = default_branch.as_deref() {
-        let base = if ref_exists(&folder_path, &format!("refs/remotes/origin/{default}")).await {
-            format!("refs/remotes/origin/{default}")
-        } else if ref_exists(&folder_path, &format!("refs/heads/{default}")).await {
-            format!("refs/heads/{default}")
-        } else {
-            String::new()
-        };
-        if base.is_empty() {
-            (None, None)
-        } else {
-            match count_left_right(&folder_path, &base, "HEAD").await {
-                Some((behind, ahead)) => (Some(ahead), Some(behind)),
-                None => (None, None),
-            }
-        }
-    } else {
-        (None, None)
-    };
-
-    // Ahead/behind vs upstream (origin/<branch>): only when the branch is pushed.
-    let has_remote_branch = match branch.as_deref() {
-        Some(b) => has_remote_branch(&folder_path, b).await,
-        None => false,
-    };
-    let (ahead_of_upstream, behind_of_upstream) = match branch.as_deref() {
-        Some(b) if has_remote_branch => {
-            match count_left_right(
-                &folder_path,
-                &format!("refs/remotes/origin/{b}"),
-                "HEAD",
-            )
-            .await
-            {
-                Some((behind, ahead)) => (Some(ahead), Some(behind)),
-                None => (None, None),
-            }
-        }
-        _ => (None, None),
-    };
-
-    let merge_operation = repo_detect_merge_state(folder_path.clone())
-        .await
-        .ok()
-        .and_then(|result| result.state)
-        .unwrap_or_else(|| "none".to_string());
-
-    Ok(JourneySignalResult::ok(JourneySignal {
-        branch,
-        is_detached,
-        is_default_branch,
-        has_uncommitted,
-        has_remote_branch,
-        ahead_of_default,
-        behind_of_default,
-        ahead_of_upstream,
-        behind_of_upstream,
-        merge_operation,
-    }))
 }

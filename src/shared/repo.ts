@@ -144,7 +144,7 @@ export type PushResult = { ok: true } | { ok: false; error: string }
 
 export type RebaseOnDefaultRequest = {
   folderPath: string
-  workspacePath?: string
+  repositoryPath?: string
 }
 
 export type RebaseOnDefaultErrorCode =
@@ -188,7 +188,7 @@ export type WorktreeOverviewRow = {
   lastCommitSubject: string | null
 }
 
-export type WorktreesOverviewRequest = { workspacePath: string }
+export type WorktreesOverviewRequest = { repositoryPath: string }
 
 export type WorktreesOverviewResult =
   | { ok: true; rows: WorktreeOverviewRow[] }
@@ -204,7 +204,7 @@ export type MyBranchRow = {
   worktreePath: string | null
 }
 
-export type MyBranchesRequest = { workspacePath: string }
+export type MyBranchesRequest = { repositoryPath: string }
 
 export type MyBranchesResult =
   | { ok: true; rows: MyBranchRow[] }
@@ -212,29 +212,6 @@ export type MyBranchesResult =
 
 export type BranchWebUrlRequest = { folderPath: string; branch: string }
 export type BranchWebUrlResult = { webUrl: string | null }
-
-export type JourneySignalRequest = { folderPath: string }
-
-export type JourneySignal = {
-  branch: string | null
-  isDetached: boolean
-  isDefaultBranch: boolean
-  /** null when `git status` could not be read. */
-  hasUncommitted: boolean | null
-  hasRemoteBranch: boolean
-  /** Commits on HEAD not on the default branch (origin/default preferred). null if unresolved. */
-  aheadOfDefault: number | null
-  behindOfDefault: number | null
-  /** Unpushed commits (HEAD vs origin/<branch>). null when no upstream or unresolved. */
-  aheadOfUpstream: number | null
-  behindOfUpstream: number | null
-  /** 'none' | 'merge' | 'rebase'. */
-  mergeOperation: MergeOperation
-}
-
-export type JourneySignalResult =
-  | { ok: true; signal: JourneySignal }
-  | { ok: false; error: string }
 
 export const RepoIpcChannels = {
   DefaultBranch: 'repo:default-branch',
@@ -260,6 +237,5 @@ export const RepoIpcChannels = {
   WorktreesOverview: 'repo:list-worktrees-overview',
   ListMyBranches: 'repo:list-my-branches',
   BranchWebUrl: 'repo:branch-web-url',
-  DetectMergeState: 'repo:detect-merge-state',
-  JourneySignal: 'repo:journey-signal'
+  DetectMergeState: 'repo:detect-merge-state'
 } as const

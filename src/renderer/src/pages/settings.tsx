@@ -167,7 +167,7 @@ export function SettingsPage(): React.JSX.Element {
         </div>
 
         <p className="text-muted-foreground max-w-xs text-sm leading-relaxed">
-          Manage your git worktrees and workspaces for fast, parallel development.
+          Manage your git worktrees and repositories for fast, parallel development.
         </p>
       </section>
 

@@ -14,7 +14,7 @@ use crate::git::run_git_blocking;
 
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct Workspace {
+pub struct Repository {
     pub id: String,
     pub path: String,
     pub name: String,
@@ -23,15 +23,15 @@ pub struct Workspace {
     pub remote_kind: String,
 }
 
-/// Discriminated-union result matching the Electron `AddWorkspaceResult`
-/// (`{ ok: true, workspace } | { ok: false, error, message? }`). Fields are omitted
+/// Discriminated-union result matching the Electron `AddRepositoryResult`
+/// (`{ ok: true, repository } | { ok: false, error, message? }`). Fields are omitted
 /// when absent so the JSON shape matches what the renderer expects.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AddWorkspaceResult {
+pub struct AddRepositoryResult {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace: Option<Workspace>,
+    pub repository: Option<Repository>,
     /// "cancelled" | "not-a-git-repo" | "already-added" | "unknown"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -39,11 +39,11 @@ pub struct AddWorkspaceResult {
     pub message: Option<String>,
 }
 
-impl AddWorkspaceResult {
-    fn ok(workspace: Workspace) -> Self {
+impl AddRepositoryResult {
+    fn ok(repository: Repository) -> Self {
         Self {
             ok: true,
-            workspace: Some(workspace),
+            repository: Some(repository),
             error: None,
             message: None,
         }
@@ -51,14 +51,14 @@ impl AddWorkspaceResult {
     fn err(code: &str, message: Option<String>) -> Self {
         Self {
             ok: false,
-            workspace: None,
+            repository: None,
             error: Some(code.to_string()),
             message,
         }
     }
 }
 
-struct BaseWorkspace {
+struct BaseRepository {
     id: String,
     path: String,
     name: String,
@@ -86,7 +86,7 @@ fn is_git_repo(folder: &str) -> bool {
 }
 
 /// Classify an origin remote URL as GitHub, Azure DevOps, or other. Ported from
-/// `classifyRemoteUrl` in `workspaces.ts`.
+/// `classifyRemoteUrl` in `repositories.ts`.
 pub fn classify_remote_url(url: &str) -> &'static str {
     let trimmed = url.trim();
     if trimmed.is_empty() {
@@ -134,9 +134,9 @@ fn detect_remote_kind(folder_path: &str) -> String {
     }
 }
 
-fn enrich(base: BaseWorkspace) -> Workspace {
+fn enrich(base: BaseRepository) -> Repository {
     let remote_kind = detect_remote_kind(&base.path);
-    Workspace {
+    Repository {
         id: base.id,
         path: base.path,
         name: base.name,
@@ -145,13 +145,13 @@ fn enrich(base: BaseWorkspace) -> Workspace {
     }
 }
 
-fn load_base_workspaces(conn: &Connection) -> AppResult<Vec<BaseWorkspace>> {
+fn load_base_repositories(conn: &Connection) -> AppResult<Vec<BaseRepository>> {
     let mut stmt = conn.prepare(
-        "SELECT id, path, name, added_at FROM workspaces ORDER BY sort_order ASC, added_at ASC",
+        "SELECT id, path, name, added_at FROM repositories ORDER BY sort_order ASC, added_at ASC",
     )?;
     let rows = stmt
         .query_map([], |row| {
-            Ok(BaseWorkspace {
+            Ok(BaseRepository {
                 id: row.get(0)?,
                 path: row.get(1)?,
                 name: row.get(2)?,
@@ -162,32 +162,32 @@ fn load_base_workspaces(conn: &Connection) -> AppResult<Vec<BaseWorkspace>> {
     Ok(rows)
 }
 
-fn load_workspaces(state: &State<'_, DbState>) -> AppResult<Vec<Workspace>> {
+fn load_repositories(state: &State<'_, DbState>) -> AppResult<Vec<Repository>> {
     let bases = {
         let conn = state
             .0
             .lock()
             .map_err(|_| AppError::msg("db mutex poisoned"))?;
-        load_base_workspaces(&conn)?
+        load_base_repositories(&conn)?
     };
     // git detection runs after the lock is released so it never serializes behind itself.
     Ok(bases.into_iter().map(enrich).collect())
 }
 
-fn add_workspace(state: &State<'_, DbState>, folder: &str) -> AddWorkspaceResult {
+fn add_repository(state: &State<'_, DbState>, folder: &str) -> AddRepositoryResult {
     let resolved = match absolute(folder) {
         Ok(p) => p.to_string_lossy().to_string(),
         Err(_) => folder.to_string(),
     };
 
     if !std::path::Path::new(&resolved).exists() {
-        return AddWorkspaceResult::err("unknown", Some("Folder does not exist.".into()));
+        return AddRepositoryResult::err("unknown", Some("Folder does not exist.".into()));
     }
     if !is_git_repo(&resolved) {
-        return AddWorkspaceResult::err("not-a-git-repo", None);
+        return AddRepositoryResult::err("not-a-git-repo", None);
     }
 
-    let base = BaseWorkspace {
+    let base = BaseRepository {
         id: uuid::Uuid::new_v4().to_string(),
         path: resolved.clone(),
         name: std::path::Path::new(&resolved)
@@ -201,18 +201,18 @@ fn add_workspace(state: &State<'_, DbState>, folder: &str) -> AddWorkspaceResult
     {
         let conn = match state.0.lock() {
             Ok(c) => c,
-            Err(_) => return AddWorkspaceResult::err("unknown", Some("db mutex poisoned".into())),
+            Err(_) => return AddRepositoryResult::err("unknown", Some("db mutex poisoned".into())),
         };
-        // New workspaces sort to the bottom of the custom order.
+        // New repositories sort to the bottom of the custom order.
         let next_sort_order: i64 = conn
             .query_row(
-                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM workspaces",
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM repositories",
                 [],
                 |r| r.get(0),
             )
             .unwrap_or(base.added_at);
         let result = conn.execute(
-            "INSERT INTO workspaces (id, path, name, added_at, path_key, sort_order)
+            "INSERT INTO repositories (id, path, name, added_at, path_key, sort_order)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 base.id,
@@ -225,14 +225,14 @@ fn add_workspace(state: &State<'_, DbState>, folder: &str) -> AddWorkspaceResult
         );
         if let Err(err) = result {
             if is_unique_violation(&err) {
-                return AddWorkspaceResult::err("already-added", None);
+                return AddRepositoryResult::err("already-added", None);
             }
-            eprintln!("[workspaces] insert failed: {err}");
-            return AddWorkspaceResult::err("unknown", Some(err.to_string()));
+            eprintln!("[repositories] insert failed: {err}");
+            return AddRepositoryResult::err("unknown", Some(err.to_string()));
         }
     }
 
-    AddWorkspaceResult::ok(enrich(base))
+    AddRepositoryResult::ok(enrich(base))
 }
 
 fn is_unique_violation(err: &rusqlite::Error) -> bool {
@@ -246,27 +246,27 @@ fn is_unique_violation(err: &rusqlite::Error) -> bool {
 // ----- Tauri commands -----
 
 #[tauri::command]
-pub async fn workspaces_list(state: State<'_, DbState>) -> AppResult<Vec<Workspace>> {
-    load_workspaces(&state)
+pub async fn repositories_list(state: State<'_, DbState>) -> AppResult<Vec<Repository>> {
+    load_repositories(&state)
 }
 
 #[tauri::command]
-pub async fn workspaces_remove(state: State<'_, DbState>, id: String) -> AppResult<Vec<Workspace>> {
+pub async fn repositories_remove(state: State<'_, DbState>, id: String) -> AppResult<Vec<Repository>> {
     {
         let conn = state
             .0
             .lock()
             .map_err(|_| AppError::msg("db mutex poisoned"))?;
-        conn.execute("DELETE FROM workspaces WHERE id = ?1", [id])?;
+        conn.execute("DELETE FROM repositories WHERE id = ?1", [id])?;
     }
-    load_workspaces(&state)
+    load_repositories(&state)
 }
 
 #[tauri::command]
-pub async fn workspaces_reorder(
+pub async fn repositories_reorder(
     state: State<'_, DbState>,
     ordered_ids: Vec<String>,
-) -> AppResult<Vec<Workspace>> {
+) -> AppResult<Vec<Repository>> {
     {
         let mut conn = state
             .0
@@ -280,7 +280,7 @@ pub async fn workspaces_reorder(
             // duplicated, or unknown ids so no row keeps a tying/stale sort_order.
             let mut existing: Vec<String> = {
                 let mut stmt =
-                    tx.prepare("SELECT id FROM workspaces ORDER BY sort_order ASC, added_at ASC")?;
+                    tx.prepare("SELECT id FROM repositories ORDER BY sort_order ASC, added_at ASC")?;
                 let ids = stmt
                     .query_map([], |r| r.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -297,34 +297,34 @@ pub async fn workspaces_reorder(
                     final_order.push(id);
                 }
             }
-            let mut stmt = tx.prepare("UPDATE workspaces SET sort_order = ?1 WHERE id = ?2")?;
+            let mut stmt = tx.prepare("UPDATE repositories SET sort_order = ?1 WHERE id = ?2")?;
             for (index, id) in final_order.iter().enumerate() {
                 stmt.execute(rusqlite::params![index as i64, id])?;
             }
         }
         tx.commit()?;
     }
-    load_workspaces(&state)
+    load_repositories(&state)
 }
 
 #[tauri::command]
-pub async fn workspaces_pick_and_add(
+pub async fn repositories_pick_and_add(
     app: AppHandle,
     state: State<'_, DbState>,
-) -> AppResult<AddWorkspaceResult> {
+) -> AppResult<AddRepositoryResult> {
     // The blocking folder picker dispatches the native dialog to the main thread and
     // waits; calling it from this async command thread (not the main thread) is safe.
     let picked = app
         .dialog()
         .file()
-        .set_title("Add workspace folder")
+        .set_title("Add repository folder")
         .blocking_pick_folder();
 
     let Some(folder) = picked else {
-        return Ok(AddWorkspaceResult::err("cancelled", None));
+        return Ok(AddRepositoryResult::err("cancelled", None));
     };
     let folder_path = folder
         .into_path()
         .map_err(|e| AppError::msg(e.to_string()))?;
-    Ok(add_workspace(&state, &folder_path.to_string_lossy()))
+    Ok(add_repository(&state, &folder_path.to_string_lossy()))
 }

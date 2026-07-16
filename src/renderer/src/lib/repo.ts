@@ -7,8 +7,6 @@ import type {
   CreateBranchResult,
   DetectMergeStateRequest,
   DetectMergeStateResult,
-  JourneySignalRequest,
-  JourneySignalResult,
   DiscardAllChangesRequest,
   DiscardAllChangesResult,
   FetchResult,
@@ -36,8 +34,8 @@ import type {
   MyBranchesResult
 } from '@shared/repo'
 
-export function getDefaultBranch(workspacePath: string): Promise<string | null> {
-  return window.api.repo.defaultBranch(workspacePath)
+export function getDefaultBranch(repositoryPath: string): Promise<string | null> {
+  return window.api.repo.defaultBranch(repositoryPath)
 }
 
 export function getCurrentBranch(folderPath: string): Promise<string | null> {
@@ -45,26 +43,26 @@ export function getCurrentBranch(folderPath: string): Promise<string | null> {
 }
 
 export function getRepoStatus(
-  workspacePath: string,
+  repositoryPath: string,
   branch: string
 ): Promise<RepoStatus | { error: string }> {
-  return window.api.repo.status(workspacePath, branch)
+  return window.api.repo.status(repositoryPath, branch)
 }
 
-export function fetchRepo(workspacePath: string, branch?: string): Promise<FetchResult> {
-  return window.api.repo.fetch(workspacePath, branch)
+export function fetchRepo(repositoryPath: string, branch?: string): Promise<FetchResult> {
+  return window.api.repo.fetch(repositoryPath, branch)
 }
 
-export function pullRepo(workspacePath: string, branch: string): Promise<PullResult> {
-  return window.api.repo.pull(workspacePath, branch)
+export function pullRepo(repositoryPath: string, branch: string): Promise<PullResult> {
+  return window.api.repo.pull(repositoryPath, branch)
 }
 
 export function pullCurrentBranch(folderPath: string): Promise<PullResult> {
   return window.api.repo.pullCurrentBranch(folderPath)
 }
 
-export function getUserAlias(workspacePath: string): Promise<string> {
-  return window.api.repo.userAlias(workspacePath)
+export function getUserAlias(repositoryPath: string): Promise<string> {
+  return window.api.repo.userAlias(repositoryPath)
 }
 
 export function createBranch(req: CreateBranchRequest): Promise<CreateBranchResult> {
@@ -131,8 +129,4 @@ export function getBranchWebUrl(req: BranchWebUrlRequest): Promise<BranchWebUrlR
 
 export function detectMergeState(req: DetectMergeStateRequest): Promise<DetectMergeStateResult> {
   return window.api.repo.detectMergeState(req)
-}
-
-export function getJourneySignal(req: JourneySignalRequest): Promise<JourneySignalResult> {
-  return window.api.repo.journeySignal(req)
 }

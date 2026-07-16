@@ -23,17 +23,13 @@ import {
 } from '@/components/detail/use-working-copy-controller'
 import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-panel'
 import { MyBranchesPanel } from '@/components/detail/my-branches-panel'
-import { JourneyRail, type JourneyRailActions } from '@/components/detail/journey-rail'
-import { deriveJourney } from '@/components/detail/journey-stage'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useJourneySignal } from '@/hooks/use-journey-signal'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { buildPrConflictsPrompt } from '@/lib/copilot-pr-conflicts-prompt'
-import { openInVSCode } from '@/lib/system'
 import type { ExistingPullRequest } from '@shared/repo'
-import type { Workspace } from '@shared/workspace'
+import type { Repository } from '@shared/repository'
 import type { Worktree } from '@shared/worktree'
 
 const IS_WINDOWS =
@@ -41,14 +37,14 @@ const IS_WINDOWS =
 
 export type DetailViewSelectionKind =
   | 'empty'
-  | 'workspace-default'
-  | 'workspace-feature'
+  | 'repository-default'
+  | 'repository-feature'
   | 'worktree-detached'
   | 'worktree-default'
   | 'worktree-feature'
 
 export interface DetailViewProps {
-  workspace: Workspace | null
+  repository: Repository | null
   worktree: Worktree | null
   folderPath: string | null
   branch: string | null
@@ -65,15 +61,15 @@ export interface DetailViewProps {
 }
 
 function deriveKind(props: DetailViewProps): DetailViewSelectionKind {
-  const { workspace, worktree, branch, defaultBranch, folderPath } = props
-  if (!workspace || !folderPath) return 'empty'
+  const { repository, worktree, branch, defaultBranch, folderPath } = props
+  if (!repository || !folderPath) return 'empty'
   if (worktree) {
     if (worktree.isDetached) return 'worktree-detached'
     if (branch && defaultBranch && branch === defaultBranch) return 'worktree-default'
     return 'worktree-feature'
   }
-  if (branch && defaultBranch && branch === defaultBranch) return 'workspace-default'
-  return 'workspace-feature'
+  if (branch && defaultBranch && branch === defaultBranch) return 'repository-default'
+  return 'repository-feature'
 }
 
 export function DetailView(props: DetailViewProps): React.JSX.Element {
@@ -88,7 +84,7 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
         <p className="text-muted-foreground text-sm">
-          Welcome to DevTrees. Add a workspace from the sidebar to get started.
+          Welcome to DevTrees. Add a repository from the sidebar to get started.
         </p>
       </div>
     )
@@ -98,7 +94,6 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
 
   return (
     <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-4 p-6">
-      <JourneyRailContainer {...props} ctrl={ctrl} folderPath={folderPath} />
       <Tabs
         key={folderPath}
         defaultValue="changes"
@@ -159,110 +154,6 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
       </Tabs>
     </div>
   )
-}
-
-interface JourneyRailContainerProps extends DetailViewProps {
-  ctrl: WorkingCopyController
-  folderPath: string
-}
-
-function JourneyRailContainer({
-  ctrl,
-  folderPath,
-  branch,
-  defaultBranch,
-  existingPullRequest,
-  isPullRequestStatusResolved = true,
-  isCreatingPullRequest = false,
-  onCreateBranch,
-  onCreatePullRequest,
-  onOpenPullRequest
-}: JourneyRailContainerProps): React.JSX.Element {
-  const journey = useJourneySignal(folderPath, folderPath !== null)
-  const launchCopilot = useCopilotLauncher()
-
-  const { refresh: refreshJourney } = journey
-  const entriesLength = ctrl.entries.length
-  const prId = existingPullRequest?.id ?? null
-
-  // Keep the topology signal fresh right after the user acts, rather than waiting for
-  // the poll — commit/push change working-copy scalars; create-branch/create-PR change
-  // the branch/PR identity.
-  React.useEffect(() => {
-    void refreshJourney()
-  }, [
-    refreshJourney,
-    entriesLength,
-    ctrl.stagedCount,
-    ctrl.unpushedCount,
-    ctrl.conflictedCount,
-    prId,
-    branch
-  ])
-
-  const view = deriveJourney({
-    signal: journey.data,
-    hasUncommitted: entriesLength > 0,
-    conflictedCount: ctrl.conflictedCount,
-    existingPullRequest,
-    isPullRequestStatusResolved,
-    isCommitting: ctrl.isCommitting,
-    isPushing: ctrl.isPushing,
-    isCreatingPullRequest,
-    canCreateBranch: !!onCreateBranch,
-    canCreatePr: !!onCreatePullRequest,
-    canOpenPr: !!onOpenPullRequest
-  })
-
-  const startImplement = async (): Promise<void> => {
-    if (IS_WINDOWS) {
-      const result = await launchCopilot({
-        folderPath,
-        label: branch || folderPath.split(/[\\/]/).pop() || 'Copilot',
-        branch: branch ?? undefined
-      })
-      if (result.ok) toast.success('Copilot session started.')
-      else toast.error(`Could not start Copilot session: ${result.error}`)
-      return
-    }
-    const result = await openInVSCode(folderPath)
-    if (!result.ok) toast.error(`Could not open VS Code: ${result.error}`)
-  }
-
-  const resolveConflicts = async (): Promise<void> => {
-    if (existingPullRequest && defaultBranch) {
-      const prompt = buildPrConflictsPrompt({
-        folderPath,
-        branch,
-        targetBranch: defaultBranch,
-        prId: existingPullRequest.id,
-        prTitle: existingPullRequest.title
-      })
-      const result = await launchCopilot({
-        folderPath,
-        prompt,
-        label: branch ? `Resolve PR conflicts: ${branch}` : 'Resolve PR conflicts',
-        branch: branch ?? undefined
-      })
-      if (result.ok) toast.success('Copilot session started.')
-      else toast.error(`Could not start Copilot session: ${result.error}`)
-      return
-    }
-    const result = await openInVSCode(folderPath)
-    if (!result.ok) toast.error(`Could not open VS Code: ${result.error}`)
-  }
-
-  const actions: JourneyRailActions = {
-    onCreateBranch: () => onCreateBranch?.(),
-    onStartImplement: () => void startImplement(),
-    onCommit: () => ctrl.setCommitMode('all'),
-    onPush: () => void ctrl.handlePush(),
-    onCreatePullRequest: () => onCreatePullRequest?.(),
-    onOpenPullRequest: () => onOpenPullRequest?.(),
-    onResolveConflicts: () => void resolveConflicts()
-  }
-
-  return <JourneyRail view={view} actions={actions} />
 }
 
 interface TabSectionProps extends DetailViewProps {
@@ -519,21 +410,21 @@ function ChangesTab({ ctrl, folderPath }: ChangesTabProps): React.JSX.Element {
 
 function BranchesTab({
   folderPath,
-  workspace,
+  repository,
   onSelectWorktreePath
 }: TabSectionProps): React.JSX.Element {
-  if (!workspace) {
+  if (!repository) {
     return (
       <PlaceholderCard
         title="Branches"
-        hint="Branch list is available at the workspace level."
+        hint="Branch list is available at the repository level."
       />
     )
   }
   return (
     <div className="grid grid-cols-1 gap-4">
       <MyBranchesPanel
-        workspacePath={workspace.path}
+        repositoryPath={repository.path}
         activeFolderPath={folderPath}
         onSelectWorktree={onSelectWorktreePath}
       />
@@ -546,21 +437,21 @@ function PullRequestTab({
   folderPath,
   branch,
   defaultBranch,
-  workspace,
+  repository,
   existingPullRequest,
   onCreateBranch,
   onSelectWorktreePath
 }: TabSectionProps): React.JSX.Element {
-  const isWorkspaceRoot = kind === 'workspace-default' || kind === 'workspace-feature'
-  const isFeature = kind === 'workspace-feature' || kind === 'worktree-feature'
+  const isRepositoryRoot = kind === 'repository-default' || kind === 'repository-feature'
+  const isFeature = kind === 'repository-feature' || kind === 'worktree-feature'
   const isWorktreeDetached = kind === 'worktree-detached'
 
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-      {isWorkspaceRoot && workspace ? (
+      {isRepositoryRoot && repository ? (
         <>
           <WorktreesOverviewPanel
-            workspacePath={workspace.path}
+            repositoryPath={repository.path}
             activeFolderPath={folderPath}
             onSelectWorktree={onSelectWorktreePath}
           />

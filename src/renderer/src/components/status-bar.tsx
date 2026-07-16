@@ -15,7 +15,7 @@ import { useSidebar } from '@/components/ui/sidebar'
 import { useTasks, type Task } from '@/contexts/tasks-context'
 import { cn } from '@/lib/utils'
 
-/** Live repo/branch/PR state for the active workspace or worktree. Null when the
+/** Live repo/branch/PR state for the active repository or worktree. Null when the
  * current view has no folder in focus (settings, history, sessions, empty home). */
 export interface StatusBarContext {
   folderLabel: string
@@ -92,7 +92,7 @@ function ContextSegments({ context }: { context: StatusBarContext }): React.JSX.
         <span className="truncate">{branchText}</span>
       </span>
 
-      {/* Ahead/behind is tracked for the workspace's default branch, not per-worktree. */}
+      {/* Ahead/behind is tracked for the repository's default branch, not per-worktree. */}
       {!isWorktree && (
         <>
           <Divider />

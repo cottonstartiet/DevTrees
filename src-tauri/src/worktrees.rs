@@ -140,7 +140,7 @@ fn paths_equal(a: &str, b: &str) -> bool {
     }
 }
 
-fn parse_worktree_porcelain(stdout: &str, workspace_path: &str) -> Vec<Worktree> {
+fn parse_worktree_porcelain(stdout: &str, repository_path: &str) -> Vec<Worktree> {
     let normalized = stdout.replace("\r\n", "\n");
     let mut out = Vec::new();
     for raw in normalized.split("\n\n") {
@@ -173,7 +173,7 @@ fn parse_worktree_porcelain(stdout: &str, workspace_path: &str) -> Vec<Worktree>
         }
         let Some(p) = path else { continue };
         let canonical = normalize(&p);
-        let is_main = paths_equal(&canonical, workspace_path);
+        let is_main = paths_equal(&canonical, repository_path);
         out.push(Worktree {
             path: canonical,
             branch,
@@ -186,33 +186,33 @@ fn parse_worktree_porcelain(stdout: &str, workspace_path: &str) -> Vec<Worktree>
     out
 }
 
-async fn list_worktrees(workspace_path: &str) -> Result<Vec<Worktree>, GitError> {
+async fn list_worktrees(repository_path: &str) -> Result<Vec<Worktree>, GitError> {
     let out = run_git(
         vec!["worktree".into(), "list".into(), "--porcelain".into()],
-        workspace_path.to_string(),
+        repository_path.to_string(),
     )
     .await?;
-    Ok(parse_worktree_porcelain(&out.stdout, workspace_path))
+    Ok(parse_worktree_porcelain(&out.stdout, repository_path))
 }
 
-fn compute_worktree_destination(workspace_path: &str, name: &str) -> PathBuf {
-    let ws = normalize(workspace_path);
+fn compute_worktree_destination(repository_path: &str, name: &str) -> PathBuf {
+    let ws = normalize(repository_path);
     let ws_path = Path::new(&ws);
     let parent = ws_path.parent().unwrap_or(Path::new("."));
     let ws_name = ws_path
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("workspace");
+        .unwrap_or("repository");
     parent.join(format!("{ws_name}.worktrees")).join(name)
 }
 
-async fn create_worktree(workspace_path: &str, name: &str) -> CreateWorktreeResult {
+async fn create_worktree(repository_path: &str, name: &str) -> CreateWorktreeResult {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_NAME_LENGTH || !valid_name(trimmed) {
         return CreateWorktreeResult::err("invalid-name", None);
     }
 
-    let dest = compute_worktree_destination(workspace_path, trimmed);
+    let dest = compute_worktree_destination(repository_path, trimmed);
     let dest_str = dest.to_string_lossy().to_string();
     if dest.exists() {
         return CreateWorktreeResult::err(
@@ -234,14 +234,14 @@ async fn create_worktree(workspace_path: &str, name: &str) -> CreateWorktreeResu
             "--detach".into(),
             dest_str.clone(),
         ],
-        workspace_path.to_string(),
+        repository_path.to_string(),
     )
     .await
     {
         return CreateWorktreeResult::err("git-failed", Some(err.message));
     }
 
-    let all = list_worktrees(workspace_path).await.unwrap_or_default();
+    let all = list_worktrees(repository_path).await.unwrap_or_default();
     match all.into_iter().find(|w| paths_equal(&w.path, &dest_str)) {
         Some(created) => CreateWorktreeResult::ok(created),
         None => CreateWorktreeResult::err(
@@ -313,24 +313,24 @@ async fn get_worktree_change_status(worktree_path: &str) -> WorktreeStatusResult
 }
 
 async fn delete_worktree(
-    workspace_path: &str,
+    repository_path: &str,
     worktree_path: &str,
     sessions: &SessionManager,
 ) -> DeleteWorktreeResult {
-    if paths_equal(worktree_path, workspace_path) {
+    if paths_equal(worktree_path, repository_path) {
         return DeleteWorktreeResult::err(
             "is-main",
-            Some("Cannot delete the main worktree of a workspace.".into()),
+            Some("Cannot delete the main worktree of a repository.".into()),
         );
     }
 
-    let all = list_worktrees(workspace_path).await.unwrap_or_default();
+    let all = list_worktrees(repository_path).await.unwrap_or_default();
     let found = all.iter().find(|w| paths_equal(&w.path, worktree_path));
     let Some(found) = found else {
         return DeleteWorktreeResult::err(
             "not-found",
             Some(format!(
-                "Worktree not registered with this workspace: {worktree_path}"
+                "Worktree not registered with this repository: {worktree_path}"
             )),
         );
     };
@@ -367,13 +367,13 @@ async fn delete_worktree(
     } else {
         if let Err(err) = run_git(
             vec!["worktree".into(), "prune".into()],
-            workspace_path.to_string(),
+            repository_path.to_string(),
         )
         .await
         {
             return DeleteWorktreeResult::err("git-failed", Some(err.message));
         }
-        let remaining = list_worktrees(workspace_path).await.unwrap_or_default();
+        let remaining = list_worktrees(repository_path).await.unwrap_or_default();
         if remaining
             .iter()
             .any(|w| paths_equal(&w.path, worktree_path))
@@ -398,7 +398,7 @@ async fn delete_worktree(
             "remove".into(),
             worktree_path.to_string(),
         ],
-        workspace_path.to_string(),
+        repository_path.to_string(),
     )
     .await
     {
@@ -422,25 +422,25 @@ async fn delete_worktree(
 // ----- Tauri commands -----
 
 #[tauri::command]
-pub async fn worktrees_list_for_workspace(workspace_path: String) -> AppResult<Vec<Worktree>> {
-    Ok(list_worktrees(&workspace_path).await.unwrap_or_default())
+pub async fn worktrees_list_for_repository(repository_path: String) -> AppResult<Vec<Worktree>> {
+    Ok(list_worktrees(&repository_path).await.unwrap_or_default())
 }
 
 #[tauri::command]
 pub async fn worktrees_create(
-    workspace_path: String,
+    repository_path: String,
     name: String,
 ) -> AppResult<CreateWorktreeResult> {
-    Ok(create_worktree(&workspace_path, &name).await)
+    Ok(create_worktree(&repository_path, &name).await)
 }
 
 #[tauri::command]
 pub async fn worktrees_delete(
     sessions: tauri::State<'_, SessionManager>,
-    workspace_path: String,
+    repository_path: String,
     worktree_path: String,
 ) -> AppResult<DeleteWorktreeResult> {
-    Ok(delete_worktree(&workspace_path, &worktree_path, &sessions).await)
+    Ok(delete_worktree(&repository_path, &worktree_path, &sessions).await)
 }
 
 #[tauri::command]

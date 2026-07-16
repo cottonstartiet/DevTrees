@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
 import type { MyBranchRow } from '@shared/repo'
 
 export interface MyBranchesPanelProps {
-  workspacePath: string
+  repositoryPath: string
   activeFolderPath: string | null
   onSelectWorktree?: (worktreePath: string) => void
 }
@@ -50,11 +50,11 @@ function matchesFilters(row: MyBranchRow, filters: Record<BranchFilterKey, boole
 }
 
 export function MyBranchesPanel({
-  workspacePath,
+  repositoryPath,
   activeFolderPath,
   onSelectWorktree
 }: MyBranchesPanelProps): React.JSX.Element {
-  const { data, error, isLoading, refresh } = useMyBranches(workspacePath, true)
+  const { data, error, isLoading, refresh } = useMyBranches(repositoryPath, true)
   const [filters, setFilters] = React.useState<Record<BranchFilterKey, boolean>>({
     local: false,
     remote: false,
