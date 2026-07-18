@@ -59,6 +59,6 @@ reflex: quick, precise, and confident, never chatty or hand-holdy.
 ## Accessibility & Inclusion
 
 Target WCAG 2.1 AA: body text ≥4.5:1 contrast, large/UI text ≥3:1, visible focus
-states across all three themes (light, dark, Xbox-green dark). Honor
+states across both themes (light, dark). Honor
 `prefers-reduced-motion` with crossfade/instant fallbacks for every animation.
 Theme-aware color tokens (OKLCH) keep contrast consistent across themes.

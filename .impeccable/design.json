@@ -19,21 +19,6 @@
           "oklch(0.97 0 0)"
         ]
       },
-      "xbox-green": {
-        "role": "primary",
-        "displayName": "Xbox Green",
-        "canonical": "oklch(0.68 0.2 145)",
-        "tonalRamp": [
-          "oklch(0.28 0.08 145)",
-          "oklch(0.38 0.11 145)",
-          "oklch(0.48 0.14 145)",
-          "oklch(0.58 0.17 145)",
-          "oklch(0.68 0.2 145)",
-          "oklch(0.76 0.16 145)",
-          "oklch(0.85 0.11 145)",
-          "oklch(0.93 0.06 145)"
-        ]
-      },
       "ink": {
         "role": "neutral",
         "displayName": "Ink",
@@ -123,35 +108,27 @@
       "description": "Single-line field; border-shift plus 3px ring on focus.",
       "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Branch name\" />",
       "css": ".ds-input { display: flex; width: 100%; height: 36px; padding: 4px 12px; font-size: 0.875rem; border: 1px solid var(--input, oklch(0.922 0 0)); border-radius: 8px; background: transparent; color: var(--foreground, oklch(0.145 0 0)); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); outline: none; transition: color 150ms, box-shadow 150ms; } .ds-input::placeholder { color: var(--muted-foreground, oklch(0.556 0 0)); } .ds-input:focus-visible { border-color: var(--ring, oklch(0.708 0 0)); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.708 0 0)) 50%, transparent); }"
-    },
-    {
-      "name": "Xbox Primary Button",
-      "kind": "button",
-      "refersTo": "button-primary",
-      "description": "Primary button in the signature .xbox theme; green fill on near-black.",
-      "html": "<button class=\"ds-btn-xbox\">Launch Copilot</button>",
-      "css": ".ds-btn-xbox { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; font-size: 0.875rem; font-weight: 500; border: none; border-radius: 8px; background: oklch(0.68 0.2 145); color: oklch(0.15 0.02 152); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); cursor: pointer; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-xbox:hover { background: color-mix(in oklab, oklch(0.68 0.2 145) 90%, transparent); } .ds-btn-xbox:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, oklch(0.68 0.2 145) 50%, transparent); }"
     }
   ],
   "narrative": {
     "northStar": "The Developer Cockpit",
-    "overview": "DevTrees is an instrument panel for parallel development. Every surface is a readout or a control: worktree lists, branch/PR status, session history, launch buttons. Information density is high but never chaotic; the developer scans it at a glance and reaches for the right control by reflex. Built on shadcn/ui (new-york, neutral) with three coordinated themes (light, dark, and a signature Xbox-green dark), color stays functional and depth comes from tonal layering rather than shadows.",
+    "overview": "DevTrees is an instrument panel for parallel development. Every surface is a readout or a control: worktree lists, branch/PR status, session history, launch buttons. Information density is high but never chaotic; the developer scans it at a glance and reaches for the right control by reflex. Built on shadcn/ui (new-york, neutral) with two coordinated themes (light and dark), color stays functional and depth comes from tonal layering rather than shadows.",
     "keyCharacteristics": [
       "Neutral grayscale foundation; color is functional, not decorative",
       "Compact scale: 36px controls, 0.875rem body text, tight 6-10px radii",
       "Flat surfaces with tonal layering for depth; no drop-shadow theater",
-      "Three coordinated themes sharing one token contract",
+      "Two coordinated themes sharing one token contract",
       "3px focus rings on every interactive element; keyboard-first"
     ],
     "rules": [
-      { "name": "The One Accent Rule", "body": "Only one saturated hue is live per theme (green in .xbox, otherwise near-black/white); red is reserved exclusively for destructive actions.", "section": "colors" },
+      { "name": "The One Accent Rule", "body": "Only one saturated hue is live per theme (near-black/white); red is reserved exclusively for destructive actions.", "section": "colors" },
       { "name": "The Weight-Not-Family Rule", "body": "Distinguish hierarchy with weight (400/500/600) and muted foreground, never a second font family.", "section": "typography" },
       { "name": "The Tonal-Depth Rule", "body": "Layer surfaces by lightness bordered with hairlines, never float on soft drop-shadows.", "section": "elevation" }
     ],
     "dos": [
       "Do keep controls compact: 36px height, text-sm, 6-10px radii.",
       "Do convey depth with tonal layering, bordered with hairlines.",
-      "Do reserve saturated color for state (green for primary/active in .xbox, red for destructive only).",
+      "Do reserve saturated color for state (red for destructive only).",
       "Do distinguish hierarchy with weight and muted foreground, never a second font family.",
       "Do give every interactive element a visible 3px focus ring.",
       "Do ensure body and placeholder text hit at least 4.5:1 across all three themes."

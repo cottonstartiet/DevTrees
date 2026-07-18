@@ -1,6 +1,5 @@
 import * as React from 'react'
 import {
-  Gamepad2 as GamepadIcon,
   Monitor as MonitorIcon,
   Moon as MoonIcon,
   Sun as SunIcon,
@@ -20,7 +19,6 @@ import type { AppInfo } from '@shared/system'
 const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; Icon: typeof SunIcon }> = [
   { value: 'light', label: 'Light', Icon: SunIcon },
   { value: 'dark', label: 'Dark', Icon: MoonIcon },
-  { value: 'xbox', label: 'Xbox', Icon: GamepadIcon },
   { value: 'system', label: 'System', Icon: MonitorIcon }
 ]
 

@@ -1,15 +1,15 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from 'react'
 
-export type Theme = 'light' | 'dark' | 'xbox' | 'system'
-export type ResolvedTheme = 'light' | 'dark' | 'xbox'
+export type Theme = 'light' | 'dark' | 'system'
+export type ResolvedTheme = 'light' | 'dark'
 
 export const THEME_STORAGE_KEY = 'devtrees-theme'
 
 const DARK_QUERY = '(prefers-color-scheme: dark)'
 
 function isTheme(value: unknown): value is Theme {
-  return value === 'light' || value === 'dark' || value === 'xbox' || value === 'system'
+  return value === 'light' || value === 'dark' || value === 'system'
 }
 
 export function getStoredTheme(): Theme {
@@ -44,11 +44,7 @@ export function resolveTheme(theme: Theme): ResolvedTheme {
 
 function applyTheme(resolved: ResolvedTheme): void {
   const root = document.documentElement
-  // The Xbox theme is dark-based: it keeps the `.dark` class active so existing
-  // `dark:` component variants apply, and layers `.xbox` on top to override the
-  // palette with Xbox green/black accents.
-  root.classList.toggle('dark', resolved === 'dark' || resolved === 'xbox')
-  root.classList.toggle('xbox', resolved === 'xbox')
+  root.classList.toggle('dark', resolved === 'dark')
 }
 
 /**

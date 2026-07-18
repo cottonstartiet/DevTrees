@@ -9,10 +9,8 @@ colors:
   muted-foreground: "oklch(0.556 0 0)"
   border: "oklch(0.922 0 0)"
   destructive: "oklch(0.577 0.245 27.325)"
-  xbox-green: "oklch(0.68 0.2 145)"
   dark-surface: "oklch(0.205 0 0)"
   dark-card: "oklch(0.255 0 0)"
-  xbox-surface: "oklch(0.16 0.012 152)"
 typography:
   title:
     fontFamily: "ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif"
@@ -82,11 +80,10 @@ developer scans it at a glance, reaches for the right control by reflex, and
 jumps back into flow. The aesthetic is precise, neutral, and quiet at rest, so
 the *data* (branch names, statuses, diffs) is the loudest thing on screen.
 
-The system is built on shadcn/ui (new-york, neutral base) with three themes:
-a clean light mode, a neutral dark mode, and a signature **Xbox-green** dark
-theme where a single vivid green (`oklch(0.68 0.2 145)`) becomes the primary
-accent against near-black. Color is used sparingly and functionally — green for
-primary/active, red for destructive, otherwise a disciplined grayscale. Depth is
+The system is built on shadcn/ui (new-york, neutral base) with two themes:
+a clean light mode and a neutral dark mode. Color is used sparingly and
+functionally — near-black/white for primary/active, red for destructive,
+otherwise a disciplined grayscale. Depth is
 conveyed through tonal layering (sidebar, cards, popovers sit at subtly
 different lightness), not shadows.
 
@@ -99,24 +96,21 @@ developer respects, not an app that entertains them.
 - Neutral grayscale foundation; color is functional, not decorative
 - Compact scale: 36px control height, 0.875rem body text, tight radii (6–10px)
 - Flat surfaces with tonal layering for depth; no drop-shadow theater
-- Three coordinated themes sharing one token contract
+- Two coordinated themes sharing one token contract
 - 3px focus rings on every interactive element — keyboard-first
 
 ## 2. Colors
 
-A disciplined neutral palette where a single accent carries state, tuned across three themes.
+A disciplined neutral palette where a single accent carries state, tuned across two themes.
 
 ### Primary
 - **Cockpit Ink** (`oklch(0.205 0 0)` light / `oklch(0.922 0 0)` dark): The
   primary action color — solid fill on default buttons, active nav, key
   toggles. In light mode it's near-black; in dark it inverts to near-white.
-- **Xbox Green** (`oklch(0.68 0.2 145)`): The primary accent in the `.xbox`
-  theme. Used for primary buttons, active states, focus rings, and chart series.
-  Its saturation is the one loud note in an otherwise restrained system.
 
 ### Neutral
 - **Ink** (`oklch(0.145 0 0)`): Primary body and heading text on light surfaces.
-- **Surface** (`oklch(1 0 0)` light / `oklch(0.205 0 0)` dark / `oklch(0.16 0.012 152)` xbox): The base background.
+- **Surface** (`oklch(1 0 0)` light / `oklch(0.205 0 0)` dark): The base background.
 - **Card / Popover** (`oklch(1 0 0)` light / `oklch(0.255 0 0)` dark): Raised tonal layer, one step off the base background.
 - **Muted Foreground** (`oklch(0.556 0 0)` light / `oklch(0.708 0 0)` dark): Secondary text, timestamps, metadata, placeholder text.
 - **Border** (`oklch(0.922 0 0)` light / `oklch(1 0 0 / 10%)` dark): Hairline dividers, input strokes, card edges.
@@ -125,8 +119,8 @@ A disciplined neutral palette where a single accent carries state, tuned across 
 - **Destructive** (`oklch(0.577 0.245 27.325)`): Delete worktree, discard, and other irreversible actions. The only red in the system.
 
 ### Named Rules
-**The One Accent Rule.** Only one saturated hue is live per theme (green in
-`.xbox`, otherwise near-black/white). Red is reserved exclusively for
+**The One Accent Rule.** Only one saturated hue is live per theme
+(near-black/white). Red is reserved exclusively for
 destructive actions. If a screen has more than one vivid color competing for
 attention, one of them is wrong.
 
@@ -200,10 +194,10 @@ A slim bottom bar surfacing repo/branch/PR state and background task progress �
 ### Do:
 - **Do** keep controls compact: 36px height, `text-sm`, 6–10px radii.
 - **Do** convey depth with tonal layering (step background lightness), bordered with hairlines.
-- **Do** reserve saturated color for state — green (`oklch(0.68 0.2 145)`) for primary/active in `.xbox`, red for destructive only.
+- **Do** reserve saturated color for state — red for destructive only.
 - **Do** distinguish hierarchy with weight (400/500/600) and muted foreground, never a second font family.
 - **Do** give every interactive element a visible 3px focus ring; the app is keyboard-first.
-- **Do** ensure body and placeholder text hit ≥4.5:1 across all three themes.
+- **Do** ensure body and placeholder text hit ≥4.5:1 across both themes.
 
 ### Don't:
 - **Don't** build heavy-enterprise density-without-clarity: no nested config panels, modal mazes, or Jira-style sprawl.

@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DevTrees",
   "version": "0.95.2",
-  "identifier": "com.xbox.devtrees",
+  "identifier": "com.ritekode.devtrees",
   "build": {
     "beforeDevCommand": "yarn dev:web",
     "devUrl": "http://localhost:1420",
