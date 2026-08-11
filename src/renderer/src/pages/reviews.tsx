@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Input } from '@/components/ui/input'
 import { useRepoOpenPrs } from '@/hooks/use-repo-open-prs'
 import { buildPrCodeReviewPrompt } from '@/lib/copilot-pr-review-prompt'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
@@ -55,6 +56,8 @@ export function ReviewsPage({
   activeRepositoryId
 }: ReviewsPageProps): React.JSX.Element {
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [query, setQuery] = React.useState('')
+  const [includeDrafts, setIncludeDrafts] = React.useState(false)
 
   // Resolve the effective selection: keep an explicit choice when still valid, otherwise default to
   // the active repository (when supported), then the first supported repository, then anything.
@@ -77,15 +80,45 @@ export function ReviewsPage({
   )
 
   const grouped = React.useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
     const buckets: Record<PrCategory, RepoPr[]> = { mine: [], assigned: [], other: [] }
-    for (const pr of prs ?? []) buckets[pr.category].push(pr)
+    for (const pr of prs ?? []) {
+      if (!includeDrafts && pr.isDraft) continue
+      if (normalizedQuery) {
+        const haystack = `${pr.description ?? ''} ${pr.author ?? ''} ${pr.id} ${pr.sourceRef ?? ''}`
+          .toLowerCase()
+          .trim()
+        if (!haystack.includes(normalizedQuery)) continue
+      }
+      buckets[pr.category].push(pr)
+    }
     return buckets
-  }, [prs])
+  }, [prs, query, includeDrafts])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b px-6 py-3">
         <RepoSwitcher repositories={repositories} selected={selected} onSelect={setSelectedId} />
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Filter by description, author, PR #, branch"
+          aria-label="Filter pull requests"
+          className="h-8 max-w-md text-xs"
+        />
+        <button
+          type="button"
+          onClick={() => setIncludeDrafts((prev) => !prev)}
+          aria-pressed={includeDrafts}
+          className={cn(
+            'flex h-8 items-center rounded-full border px-3 text-xs transition-colors',
+            includeDrafts
+              ? 'border-primary bg-primary/10 text-foreground'
+              : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+          )}
+        >
+          Include drafts
+        </button>
         <div className="flex-1" />
         <Tooltip>
           <TooltipTrigger asChild>

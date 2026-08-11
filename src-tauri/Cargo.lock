@@ -841,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "devtrees"
-version = "0.95.2"
+version = "0.96.0"
 dependencies = [
  "base64 0.22.1",
  "dirs 5.0.1",
