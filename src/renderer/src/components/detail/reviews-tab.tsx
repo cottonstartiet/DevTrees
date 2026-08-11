@@ -58,7 +58,7 @@ export function ReviewsTab({ repository }: ReviewsTabProps): React.JSX.Element {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b px-6 py-3">
+      <div className="flex shrink-0 items-center gap-2 py-3">
         <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -97,7 +97,7 @@ export function ReviewsTab({ repository }: ReviewsTabProps): React.JSX.Element {
         </Tooltip>
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto py-6">
         {!repository ? (
           <EmptyState title="No repository" hint="Add a repository to review its pull requests." />
         ) : isUnsupported ? (
