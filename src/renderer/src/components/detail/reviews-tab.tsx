@@ -1,7 +1,5 @@
 import * as React from 'react'
 import {
-  Check as CheckIcon,
-  ChevronsUpDown as ChevronsUpDownIcon,
   ExternalLink as ExternalLinkIcon,
   GitPullRequest as GitPullRequestIcon,
   Loader2 as Loader2Icon,
@@ -12,14 +10,6 @@ import { toast } from 'sonner'
 
 import { DashboardCard } from '@/components/detail/dashboard-card'
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
 import { useRepoOpenPrs } from '@/hooks/use-repo-open-prs'
@@ -28,11 +18,10 @@ import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { openExternal } from '@/lib/system'
 import { cn } from '@/lib/utils'
 import type { PrCategory, RepoPr } from '@shared/reviews'
-import type { Repository, RepositoryRemoteKind } from '@shared/repository'
+import type { Repository } from '@shared/repository'
 
-export interface ReviewsPageProps {
-  repositories: Repository[]
-  activeRepositoryId: string | null
+export interface ReviewsTabProps {
+  repository: Repository | null
 }
 
 const CATEGORY_ORDER: { key: PrCategory; title: string; empty: string }[] = [
@@ -41,41 +30,13 @@ const CATEGORY_ORDER: { key: PrCategory; title: string; empty: string }[] = [
   { key: 'other', title: 'Others', empty: 'No other open PRs.' }
 ]
 
-function isSupported(kind: RepositoryRemoteKind): boolean {
-  return kind === 'ado' || kind === 'github'
-}
-
-function providerLabel(kind: RepositoryRemoteKind): string {
-  if (kind === 'ado') return 'Azure DevOps'
-  if (kind === 'github') return 'GitHub'
-  return 'Unsupported remote'
-}
-
-export function ReviewsPage({
-  repositories,
-  activeRepositoryId
-}: ReviewsPageProps): React.JSX.Element {
-  const [selectedId, setSelectedId] = React.useState<string | null>(null)
+export function ReviewsTab({ repository }: ReviewsTabProps): React.JSX.Element {
   const [query, setQuery] = React.useState('')
   const [includeDrafts, setIncludeDrafts] = React.useState(false)
 
-  // Resolve the effective selection: keep an explicit choice when still valid, otherwise default to
-  // the active repository (when supported), then the first supported repository, then anything.
-  const effectiveId = React.useMemo(() => {
-    const known = new Set(repositories.map((w) => w.id))
-    if (selectedId && known.has(selectedId)) return selectedId
-    const active = repositories.find((w) => w.id === activeRepositoryId)
-    if (active && isSupported(active.remoteKind)) return active.id
-    const supported = repositories.find((w) => isSupported(w.remoteKind))
-    if (supported) return supported.id
-    return active?.id ?? repositories[0]?.id ?? null
-  }, [selectedId, repositories, activeRepositoryId])
-
-  const selected = repositories.find((w) => w.id === effectiveId) ?? null
-
   const { prs, error, isLoading, isUnsupported, refresh } = useRepoOpenPrs(
-    selected?.path ?? null,
-    selected?.remoteKind ?? null,
+    repository?.path ?? null,
+    repository?.remoteKind ?? null,
     true
   )
 
@@ -85,7 +46,7 @@ export function ReviewsPage({
     for (const pr of prs ?? []) {
       if (!includeDrafts && pr.isDraft) continue
       if (normalizedQuery) {
-        const haystack = `${pr.description ?? ''} ${pr.author ?? ''} ${pr.id} ${pr.sourceRef ?? ''}`
+        const haystack = `${pr.title} ${pr.author ?? ''} ${pr.id} ${pr.sourceRef ?? ''}`
           .toLowerCase()
           .trim()
         if (!haystack.includes(normalizedQuery)) continue
@@ -98,11 +59,10 @@ export function ReviewsPage({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 border-b px-6 py-3">
-        <RepoSwitcher repositories={repositories} selected={selected} onSelect={setSelectedId} />
         <Input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Filter by description, author, PR #, branch"
+          placeholder="Filter by title, author, PR #, branch"
           aria-label="Filter pull requests"
           className="h-8 max-w-md text-xs"
         />
@@ -127,7 +87,7 @@ export function ReviewsPage({
               size="icon"
               className="h-8 w-8"
               onClick={() => void refresh()}
-              disabled={isLoading || !selected || isUnsupported}
+              disabled={isLoading || !repository || isUnsupported}
               aria-label="Refresh pull requests"
             >
               <RefreshCwIcon className={cn('size-4', isLoading && 'animate-spin')} />
@@ -138,12 +98,12 @@ export function ReviewsPage({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
-        {!selected ? (
+        {!repository ? (
           <EmptyState title="No repository" hint="Add a repository to review its pull requests." />
         ) : isUnsupported ? (
           <EmptyState
             title="Unsupported remote"
-            hint={`Reviews supports Azure DevOps and GitHub repositories. "${selected.name}" uses an unsupported remote.`}
+            hint={`Reviews supports Azure DevOps and GitHub repositories. "${repository.name}" uses an unsupported remote.`}
           />
         ) : error ? (
           <EmptyState title="Could not load pull requests" hint={error} />
@@ -155,61 +115,12 @@ export function ReviewsPage({
               prs={grouped[key]}
               emptyHint={empty}
               isLoading={isLoading && prs === null}
-              folderPath={selected.path}
+              folderPath={repository.path}
             />
           ))
         )}
       </div>
     </div>
-  )
-}
-
-function RepoSwitcher({
-  repositories,
-  selected,
-  onSelect
-}: {
-  repositories: Repository[]
-  selected: Repository | null
-  onSelect: (id: string) => void
-}): React.JSX.Element {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="h-8 max-w-[18rem] gap-2">
-          <GitPullRequestIcon className="size-4 shrink-0" />
-          <span className="min-w-0 truncate">{selected ? selected.name : 'Select repository'}</span>
-          <ChevronsUpDownIcon className="text-muted-foreground size-3.5 shrink-0" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="w-64">
-        <DropdownMenuLabel>Repository</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {repositories.length === 0 ? (
-          <DropdownMenuItem disabled>No repositories</DropdownMenuItem>
-        ) : (
-          repositories.map((w) => (
-            <DropdownMenuItem
-              key={w.id}
-              onSelect={() => onSelect(w.id)}
-              disabled={!isSupported(w.remoteKind)}
-              className="gap-2"
-            >
-              <CheckIcon
-                className={cn(
-                  'size-4 shrink-0',
-                  selected?.id === w.id ? 'opacity-100' : 'opacity-0'
-                )}
-              />
-              <span className="min-w-0 flex-1 truncate">{w.name}</span>
-              <span className="text-muted-foreground shrink-0 text-[10px]">
-                {providerLabel(w.remoteKind)}
-              </span>
-            </DropdownMenuItem>
-          ))
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }
 

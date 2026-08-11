@@ -5,7 +5,6 @@ import {
   Folder as FolderIcon,
   GitBranch as GitBranchIcon,
   GitBranchPlus as GitBranchPlusIcon,
-  GitPullRequest as GitPullRequestIcon,
   GripVertical as GripVerticalIcon,
   History as HistoryIcon,
   Loader2 as Loader2Icon,
@@ -110,7 +109,7 @@ function repositoryIcon(remoteKind: RepositoryRemoteKind): React.JSX.Element {
   return <FolderIcon />
 }
 
-export type AppView = 'home' | 'settings' | 'repository' | 'history' | 'sessions' | 'reviews'
+export type AppView = 'home' | 'settings' | 'repository' | 'history' | 'sessions'
 
 interface AppSidebarProps {
   activeView: AppView
@@ -591,16 +590,6 @@ export function AppSidebar({
 
       <SidebarFooter>
         <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip="Reviews"
-              isActive={activeView === 'reviews'}
-              onClick={() => onSelectView('reviews')}
-            >
-              <GitPullRequestIcon />
-              <span>Reviews</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               tooltip="History"

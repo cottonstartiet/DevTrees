@@ -21,7 +21,6 @@ import { useAutoUpdate } from '@/hooks/use-auto-update'
 import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
 import { HistoryPage } from '@/pages/history'
-import { ReviewsPage } from '@/pages/reviews'
 import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
 import { loadViewMode, persistViewMode, type SessionViewMode } from '@/pages/sessions-view-mode'
@@ -195,15 +194,13 @@ function AppShell(): React.JSX.Element {
       ? 'Settings'
       : view === 'history'
         ? 'History'
-        : view === 'reviews'
-          ? 'Reviews'
-          : view === 'sessions'
-            ? 'Sessions'
-            : activeWorktree
-              ? worktreeLabel(activeWorktree.path)
-              : activeRepository
-                ? activeRepository.name
-                : 'DevTrees'
+        : view === 'sessions'
+          ? 'Sessions'
+          : activeWorktree
+            ? worktreeLabel(activeWorktree.path)
+            : activeRepository
+              ? activeRepository.name
+              : 'DevTrees'
 
   const repo = useRepoStatus(activeRepository?.path ?? null, view === 'repository')
 
@@ -526,8 +523,6 @@ function AppShell(): React.JSX.Element {
                   </div>
                 ) : view === 'history' ? (
                   <HistoryPage />
-                ) : view === 'reviews' ? (
-                  <ReviewsPage repositories={repositories} activeRepositoryId={activeRepositoryId} />
                 ) : view === 'sessions' ? (
                   <SessionsPage viewMode={sessionsViewMode} />
                 ) : (

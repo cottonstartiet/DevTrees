@@ -23,6 +23,7 @@ import {
 } from '@/components/detail/use-working-copy-controller'
 import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-panel'
 import { MyBranchesPanel } from '@/components/detail/my-branches-panel'
+import { ReviewsTab } from '@/components/detail/reviews-tab'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -107,6 +108,7 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
             <TabsTrigger value="changes">Changes</TabsTrigger>
             <TabsTrigger value="branches">Branches</TabsTrigger>
             <TabsTrigger value="pull-request">Pull Request</TabsTrigger>
+            <TabsTrigger value="reviews">Reviews</TabsTrigger>
           </TabsList>
           <div className="ml-auto flex items-center gap-1">
             <StartCopilotSessionAction
@@ -150,6 +152,13 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
           className="min-h-0 min-w-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
         >
           <PullRequestTab {...props} kind={kind} />
+        </TabsContent>
+
+        <TabsContent
+          value="reviews"
+          className="flex min-h-0 min-w-0 flex-1 data-[state=inactive]:hidden"
+        >
+          <ReviewsTab repository={props.repository} />
         </TabsContent>
       </Tabs>
     </div>
