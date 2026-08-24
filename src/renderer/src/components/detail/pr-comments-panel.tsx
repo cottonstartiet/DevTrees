@@ -17,10 +17,12 @@ import { buildPrCommentsPrompt } from '@/lib/copilot-pr-prompt'
 import { openExternal } from '@/lib/system'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { cn } from '@/lib/utils'
-import type { AdoPrThread, AdoPrThreadStatus } from '@shared/ado'
+import type { RepoPrThread, RepoPrThreadStatus } from '@shared/reviews'
+import type { RepositoryRemoteKind } from '@shared/repository'
 
 export interface PrCommentsPanelProps {
   folderPath: string
+  remoteKind: RepositoryRemoteKind
   pullRequestId: number
   prTitle?: string
   prWebUrl?: string
@@ -28,44 +30,56 @@ export interface PrCommentsPanelProps {
 
 export function PrCommentsPanel({
   folderPath,
+  remoteKind,
   pullRequestId,
   prTitle,
   prWebUrl
 }: PrCommentsPanelProps): React.JSX.Element {
-  const { data, error, isLoading, refresh } = usePrThreads(folderPath, pullRequestId, true)
+  const isSupported = remoteKind === 'ado' || remoteKind === 'github'
+  const { data, error, isLoading, refresh } = usePrThreads(
+    folderPath,
+    remoteKind,
+    pullRequestId,
+    isSupported
+  )
   const [isLaunching, setIsLaunching] = React.useState(false)
   const launchCopilot = useCopilotLauncher()
 
   const threads = data?.threads ?? []
   const activeCount = threads.reduce((acc, t) => (t.status === 'active' ? acc + 1 : acc), 0)
 
-  const description = data
-    ? threads.length === 0
-      ? 'No active comments.'
-      : activeCount === 0
-        ? `${threads.length} thread${threads.length === 1 ? '' : 's'} (none active).`
-        : `${activeCount} active thread${activeCount === 1 ? '' : 's'} of ${threads.length}.`
-    : isLoading
-      ? 'Loading comments…'
-      : 'Comments not loaded.'
-
-  const addressDisabled = isLoading || isLaunching || !!error || activeCount === 0
-  const addressTooltip = isLaunching
-    ? 'Starting Copilot session…'
-    : isLoading
-      ? 'Loading comments…'
-      : error
-        ? 'Comments failed to load'
+  const description = !isSupported
+    ? 'Unsupported remote.'
+    : data
+      ? threads.length === 0
+        ? 'No active comments.'
         : activeCount === 0
-          ? 'No active comments to address'
-          : `Address ${activeCount} active comment${activeCount === 1 ? '' : 's'} with Copilot CLI`
+          ? `${threads.length} thread${threads.length === 1 ? '' : 's'} (none active).`
+          : `${activeCount} active thread${activeCount === 1 ? '' : 's'} of ${threads.length}.`
+      : isLoading
+        ? 'Loading comments…'
+        : 'Comments not loaded.'
+
+  const addressDisabled = !isSupported || isLoading || isLaunching || !!error || activeCount === 0
+  const addressTooltip = !isSupported
+    ? 'Unsupported remote'
+    : isLaunching
+      ? 'Starting Copilot session…'
+      : isLoading
+        ? 'Loading comments…'
+        : error
+          ? 'Comments failed to load'
+          : activeCount === 0
+            ? 'No active comments to address'
+            : `Address ${activeCount} active comment${activeCount === 1 ? '' : 's'} with Copilot CLI`
 
   const handleAddressWithCopilot = async (): Promise<void> => {
-    if (addressDisabled) return
+    if (addressDisabled || !isSupported) return
     setIsLaunching(true)
     try {
       const prompt = buildPrCommentsPrompt({
         folderPath,
+        provider: remoteKind as 'ado' | 'github',
         pullRequestId,
         prTitle,
         prWebUrl
@@ -122,7 +136,7 @@ export function PrCommentsPanel({
                 size="icon"
                 className="h-7 w-7"
                 onClick={() => void refresh()}
-                disabled={isLoading}
+                disabled={!isSupported || isLoading}
                 aria-label="Refresh comments"
               >
                 <RefreshCwIcon className={cn('size-3.5', isLoading && 'animate-spin')} />
@@ -133,7 +147,11 @@ export function PrCommentsPanel({
         </>
       }
     >
-      {error ? (
+      {!isSupported ? (
+        <p className="text-muted-foreground text-xs italic">
+          Comments are only available for GitHub and Azure DevOps remotes.
+        </p>
+      ) : error ? (
         <p className="text-destructive text-xs">{error}</p>
       ) : !data ? (
         <p className="text-muted-foreground text-xs italic">Loading…</p>
@@ -150,7 +168,7 @@ export function PrCommentsPanel({
   )
 }
 
-function ThreadRow({ thread }: { thread: AdoPrThread }): React.JSX.Element {
+function ThreadRow({ thread }: { thread: RepoPrThread }): React.JSX.Element {
   const firstComment = thread.comments[0]
   const replyCount = Math.max(0, thread.comments.length - 1)
   const baseName = thread.filePath ? basename(thread.filePath) : null
@@ -167,7 +185,7 @@ function ThreadRow({ thread }: { thread: AdoPrThread }): React.JSX.Element {
         type="button"
         className="hover:bg-accent hover:text-accent-foreground flex w-full flex-col gap-1 rounded px-2 py-1.5 text-left"
         onClick={() => void openExternal(thread.webUrl)}
-        title={thread.filePath ?? 'Open thread in Azure DevOps'}
+        title={thread.filePath ?? 'Open thread in browser'}
       >
         <div className="flex min-w-0 items-center gap-2">
           <FileTextIcon className="text-muted-foreground size-3 shrink-0" />
@@ -203,7 +221,7 @@ function ThreadRow({ thread }: { thread: AdoPrThread }): React.JSX.Element {
   )
 }
 
-function ThreadStatusBadge({ status }: { status: AdoPrThreadStatus }): React.JSX.Element {
+function ThreadStatusBadge({ status }: { status: RepoPrThreadStatus }): React.JSX.Element {
   const { label, toneClass } = statusMeta(status)
   return (
     <span
@@ -217,7 +235,7 @@ function ThreadStatusBadge({ status }: { status: AdoPrThreadStatus }): React.JSX
   )
 }
 
-function statusMeta(status: AdoPrThreadStatus): { label: string; toneClass: string } {
+function statusMeta(status: RepoPrThreadStatus): { label: string; toneClass: string } {
   switch (status) {
     case 'active':
       return { label: 'Active', toneClass: 'bg-sky-500/15 text-sky-700 dark:text-sky-300' }

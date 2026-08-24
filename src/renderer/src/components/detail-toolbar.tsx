@@ -142,7 +142,7 @@ export function DetailToolbar({
                 type="button"
                 onClick={onOpenBranch}
                 className="text-muted-foreground hover:text-foreground truncate font-mono text-xs hover:underline"
-                title={`Open branch ${branchLabel} in Azure DevOps`}
+                title={`Open branch ${branchLabel} in browser`}
               >
                 {branchLabel}
               </button>

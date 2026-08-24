@@ -39,6 +39,10 @@ export type OpenPullRequestErrorCode =
   | 'az-extension-missing'
   | 'az-pr-exists'
   | 'az-failed'
+  | 'gh-not-installed'
+  | 'gh-not-logged-in'
+  | 'gh-pr-exists'
+  | 'gh-failed'
   | 'git-failed'
 
 export type OpenPullRequestResult =
@@ -57,6 +61,9 @@ export type FindPullRequestErrorCode =
   | 'az-extension-missing'
   | 'az-not-logged-in'
   | 'az-failed'
+  | 'gh-not-installed'
+  | 'gh-not-logged-in'
+  | 'gh-failed'
   | 'git-failed'
 
 export type ExistingPullRequest = {
@@ -64,7 +71,7 @@ export type ExistingPullRequest = {
   title: string
   webUrl: string
   status: string
-  /** Azure DevOps merge status: conflicts | succeeded | queued | rejectedByPolicy | notSet | failure. */
+  /** Merge status: conflicts | succeeded | queued | rejectedByPolicy | notSet | failure (ADO); conflicts | succeeded | notSet (GitHub). */
   mergeStatus: string
 }
 
@@ -129,7 +136,7 @@ export type RecentCommit = {
 export type RecentCommitsRequest = { folderPath: string; limit?: number }
 
 export type RecentCommitsResult =
-  | { ok: true; commits: RecentCommit[]; adoCommitUrlPrefix?: string }
+  | { ok: true; commits: RecentCommit[]; commitUrlPrefix?: string }
   | { ok: false; error: string }
 
 export type UnpushedCommitsRequest = { folderPath: string; branch: string }

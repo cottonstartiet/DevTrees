@@ -16,7 +16,7 @@ export interface UseRepoOpenPrsResult {
 /**
  * Fetches all open PRs for a repository, dispatching to the ADO or GitHub backend by `remoteKind`.
  * Snapshots are keyed by `folderPath` so a slow response for a no-longer-selected repo is discarded
- * (avoids repository-switch races). Mirrors `use-my-open-prs`.
+ * (avoids repository-switch races). Used by both the Reviews tab and the "My open PRs" panel.
  */
 export function useRepoOpenPrs(
   folderPath: string | null,

@@ -266,7 +266,7 @@ function AppShell(): React.JSX.Element {
           toast.error('This repo has no "origin" remote configured.')
           return
         case 'unsupported-remote':
-          toast.error('Only Azure DevOps Services cloud remotes are supported.')
+          toast.error('Only GitHub and Azure DevOps Services cloud remotes are supported.')
           return
         case 'no-default-branch':
           toast.error('Could not determine the default branch.')
@@ -289,6 +289,20 @@ function AppShell(): React.JSX.Element {
           return
         case 'az-failed':
           toast.error(`Azure CLI failed: ${fallback('az repos pr create failed.')}`)
+          return
+        case 'gh-not-installed':
+          toast.error(
+            'GitHub CLI (gh) is not installed or not on PATH. Install from https://cli.github.com.'
+          )
+          return
+        case 'gh-not-logged-in':
+          toast.error('You are not signed in to GitHub. Run: gh auth login')
+          return
+        case 'gh-pr-exists':
+          toast.error('A pull request already exists for this branch.')
+          return
+        case 'gh-failed':
+          toast.error(`GitHub CLI failed: ${fallback('gh pr create failed.')}`)
           return
         case 'git-failed':
         default:
@@ -373,7 +387,7 @@ function AppShell(): React.JSX.Element {
     if (!result.ok) toast.error(`Failed to open PR in browser: ${result.error}`)
   }, [existingPullRequest])
 
-  // Refetch the active PR (in place) so its mergeStatus reflects Azure DevOps' async
+  // Refetch the active PR (in place) so its mergeStatus reflects the remote's async
   // re-evaluation. Used when the Pull Request tab becomes active.
   const handleRefreshPullRequest = useCallback((): void => {
     if (!prCacheKey || !detailFolderPath) return

@@ -355,7 +355,7 @@ function PrTabActions({
               </Button>
             </span>
           </TooltipTrigger>
-          <TooltipContent>Open PR #{existingPullRequest!.id} in Azure DevOps</TooltipContent>
+          <TooltipContent>Open PR #{existingPullRequest!.id} in browser</TooltipContent>
         </Tooltip>
       ) : null}
       {showCreatePr ? (
@@ -390,10 +390,10 @@ function PrTabActions({
           </TooltipTrigger>
           <TooltipContent>
             {isCreatingPullRequest
-              ? 'Creating pull request in Azure DevOps…'
+              ? 'Creating pull request…'
               : !isPullRequestStatusResolved
                 ? 'Checking for an existing pull request…'
-                : 'Create pull request in Azure DevOps'}
+                : 'Create pull request'}
           </TooltipContent>
         </Tooltip>
       ) : null}
@@ -464,7 +464,9 @@ function PullRequestTab({
             activeFolderPath={folderPath}
             onSelectWorktree={onSelectWorktreePath}
           />
-          {folderPath ? <MyOpenPrsPanel folderPath={folderPath} /> : null}
+          {folderPath ? (
+            <MyOpenPrsPanel folderPath={folderPath} remoteKind={repository.remoteKind} />
+          ) : null}
         </>
       ) : null}
 
@@ -476,6 +478,7 @@ function PullRequestTab({
         existingPullRequest ? (
           <PrCommentsPanel
             folderPath={folderPath}
+            remoteKind={repository?.remoteKind ?? 'other'}
             pullRequestId={existingPullRequest.id}
             prTitle={existingPullRequest.title}
             prWebUrl={existingPullRequest.webUrl}

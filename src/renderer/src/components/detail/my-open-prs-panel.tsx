@@ -4,29 +4,41 @@ import { ExternalLink as ExternalLinkIcon, RefreshCw as RefreshCwIcon } from 'lu
 import { DashboardCard } from '@/components/detail/dashboard-card'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useMyOpenPrs } from '@/hooks/use-my-open-prs'
+import { useRepoOpenPrs } from '@/hooks/use-repo-open-prs'
 import { openExternal } from '@/lib/system'
 import { cn } from '@/lib/utils'
-import type { AdoMyOpenPr } from '@shared/ado'
+import type { RepoPr } from '@shared/reviews'
+import type { RepositoryRemoteKind } from '@shared/repository'
 
 export interface MyOpenPrsPanelProps {
   folderPath: string
+  remoteKind: RepositoryRemoteKind
 }
 
 function shortRef(ref: string): string {
   return ref.replace(/^refs\/heads\//, '')
 }
 
-export function MyOpenPrsPanel({ folderPath }: MyOpenPrsPanelProps): React.JSX.Element {
-  const { data, error, isLoading, refresh } = useMyOpenPrs(folderPath, true)
+export function MyOpenPrsPanel({
+  folderPath,
+  remoteKind
+}: MyOpenPrsPanelProps): React.JSX.Element {
+  const { prs, error, isLoading, isUnsupported, refresh } = useRepoOpenPrs(
+    folderPath,
+    remoteKind,
+    true
+  )
+  const myPrs = React.useMemo(() => (prs ?? []).filter((pr) => pr.category === 'mine'), [prs])
 
-  const description = data
-    ? data.prs.length === 0
-      ? 'No active PRs in this repo.'
-      : `${data.prs.length} active PR${data.prs.length === 1 ? '' : 's'}.`
-    : isLoading
-      ? 'Loading your PRs…'
-      : 'Your PRs not loaded.'
+  const description = isUnsupported
+    ? 'Unsupported remote.'
+    : prs
+      ? myPrs.length === 0
+        ? 'No active PRs in this repo.'
+        : `${myPrs.length} active PR${myPrs.length === 1 ? '' : 's'}.`
+      : isLoading
+        ? 'Loading your PRs…'
+        : 'Your PRs not loaded.'
 
   return (
     <DashboardCard
@@ -40,7 +52,7 @@ export function MyOpenPrsPanel({ folderPath }: MyOpenPrsPanelProps): React.JSX.E
               size="icon"
               className="h-7 w-7"
               onClick={() => void refresh()}
-              disabled={isLoading}
+              disabled={isUnsupported || isLoading}
               aria-label="Refresh my open PRs"
             >
               <RefreshCwIcon className={cn('size-3.5', isLoading && 'animate-spin')} />
@@ -50,15 +62,19 @@ export function MyOpenPrsPanel({ folderPath }: MyOpenPrsPanelProps): React.JSX.E
         </Tooltip>
       }
     >
-      {error ? (
+      {isUnsupported ? (
+        <p className="text-muted-foreground text-xs italic">
+          Open PRs are only available for GitHub and Azure DevOps remotes.
+        </p>
+      ) : error ? (
         <p className="text-destructive text-xs">{error}</p>
-      ) : !data ? (
+      ) : !prs ? (
         <p className="text-muted-foreground text-xs italic">Loading…</p>
-      ) : data.prs.length === 0 ? (
+      ) : myPrs.length === 0 ? (
         <p className="text-muted-foreground text-xs italic">Nothing here yet.</p>
       ) : (
         <ul className="flex flex-col gap-1.5">
-          {data.prs.map((pr) => (
+          {myPrs.map((pr) => (
             <PrRow key={pr.id} pr={pr} />
           ))}
         </ul>
@@ -67,7 +83,7 @@ export function MyOpenPrsPanel({ folderPath }: MyOpenPrsPanelProps): React.JSX.E
   )
 }
 
-function PrRow({ pr }: { pr: AdoMyOpenPr }): React.JSX.Element {
+function PrRow({ pr }: { pr: RepoPr }): React.JSX.Element {
   return (
     <li>
       <button

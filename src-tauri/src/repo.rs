@@ -10,12 +10,16 @@ use serde_json::Value;
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::ado::{
-    build_ado_branch_url, build_ado_commit_url, build_ado_pr_web_url, resolve_ado_remote,
-};
+use crate::ado::{build_ado_branch_url, build_ado_commit_url, build_ado_pr_web_url, parse_ado_remote, AdoRemote};
 use crate::az::{classify_az_generic_failure, run_az, AzError};
 use crate::error::AppResult;
+use crate::gh::{is_not_logged_in, run_gh, GhError};
 use crate::git::{run_git, GitError};
+use crate::github::{
+    build_github_branch_url, build_github_commit_url, build_github_pr_web_url,
+    parse_github_remote, GithubRemote,
+};
+use crate::repositories::classify_remote_url;
 
 const COMMIT_FIELD_SEPARATOR: char = '\x1f';
 const MAX_FULL_REF_LENGTH: usize = 200;
@@ -289,17 +293,17 @@ pub struct RecentCommitsResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commits: Option<Vec<RecentCommit>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub ado_commit_url_prefix: Option<String>,
+    pub commit_url_prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
 impl RecentCommitsResult {
-    fn ok(commits: Vec<RecentCommit>, ado_commit_url_prefix: Option<String>) -> Self {
+    fn ok(commits: Vec<RecentCommit>, commit_url_prefix: Option<String>) -> Self {
         Self {
             ok: true,
             commits: Some(commits),
-            ado_commit_url_prefix,
+            commit_url_prefix,
             error: None,
         }
     }
@@ -308,7 +312,7 @@ impl RecentCommitsResult {
         Self {
             ok: false,
             commits: None,
-            ado_commit_url_prefix: None,
+            commit_url_prefix: None,
             error: Some(error.into()),
         }
     }
@@ -765,6 +769,51 @@ fn az_failed_message(stdout: &str, stderr: &str, code: Option<i32>) -> String {
     }
 }
 
+fn gh_failed_message(stdout: &str, stderr: &str, code: Option<i32>) -> String {
+    let stderr = stderr.trim();
+    let stdout = stdout.trim();
+    if !stderr.is_empty() {
+        stderr.to_string()
+    } else if !stdout.is_empty() {
+        stdout.to_string()
+    } else {
+        format!(
+            "gh exited with code {}",
+            code.map_or("?".to_string(), |c| c.to_string())
+        )
+    }
+}
+
+/// A resolved `origin` remote, dispatched by provider so callers can build the right
+/// provider-specific web URL without re-parsing the remote themselves.
+enum ProviderRemote {
+    Ado(AdoRemote),
+    Github(GithubRemote),
+}
+
+/// Reads the `origin` remote for `folder_path` and parses it into a provider-specific
+/// remote descriptor. Returns `None` if there is no origin, or it isn't a recognized
+/// GitHub/Azure DevOps remote.
+async fn resolve_provider_remote(folder_path: &str) -> Option<ProviderRemote> {
+    let origin = run_git(
+        vec!["remote".into(), "get-url".into(), "origin".into()],
+        folder_path.to_string(),
+    )
+    .await
+    .ok()?
+    .stdout
+    .trim()
+    .to_string();
+    if origin.is_empty() {
+        return None;
+    }
+    match classify_remote_url(&origin) {
+        "ado" => parse_ado_remote(&origin).map(ProviderRemote::Ado),
+        "github" => parse_github_remote(&origin).map(ProviderRemote::Github),
+        _ => None,
+    }
+}
+
 fn parse_az_json(stdout: &str) -> Result<Value, serde_json::Error> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
@@ -1065,10 +1114,27 @@ pub async fn repo_open_pull_request(
     app: AppHandle,
     folder_path: String,
 ) -> AppResult<OpenPullRequestResult> {
-    let remote = match resolve_ado_remote(&folder_path).await {
-        Ok(remote) => remote,
-        Err((code, message)) => return Ok(OpenPullRequestResult::err(code, message)),
+    let origin = match run_git(
+        vec!["remote".into(), "get-url".into(), "origin".into()],
+        folder_path.clone(),
+    )
+    .await
+    {
+        Ok(out) => out.stdout.trim().to_string(),
+        Err(err) => return Ok(OpenPullRequestResult::err("no-origin", Some(err.message))),
     };
+    if origin.is_empty() {
+        return Ok(OpenPullRequestResult::err("no-origin", None));
+    }
+    let provider = classify_remote_url(&origin);
+    if provider != "ado" && provider != "github" {
+        return Ok(OpenPullRequestResult::err(
+            "unsupported-remote",
+            Some(format!(
+                "Origin is not a recognized GitHub or Azure DevOps remote: {origin}"
+            )),
+        ));
+    }
 
     let current_branch = match repo_current_branch(folder_path.clone()).await? {
         Some(branch) => branch,
@@ -1154,6 +1220,23 @@ pub async fn repo_open_pull_request(
         }
     }
 
+    if provider == "github" {
+        return open_pull_request_github(
+            &app,
+            &folder_path,
+            &origin,
+            &current_branch,
+            &default_branch,
+            &title,
+        )
+        .await;
+    }
+
+    let remote = match parse_ado_remote(&origin) {
+        Some(remote) => remote,
+        None => return Ok(OpenPullRequestResult::err("unsupported-remote", None)),
+    };
+
     let output = match run_az(vec![
         "repos".into(),
         "pr".into(),
@@ -1235,14 +1318,123 @@ pub async fn repo_open_pull_request(
     Ok(OpenPullRequestResult::ok(pull_request_id, web_url))
 }
 
+/// GitHub half of `repo_open_pull_request`: creates a draft PR via `gh pr create`. Unlike `az`,
+/// `gh pr create` has no `--json` output mode; it prints the created PR's URL to stdout, from which
+/// the PR number is parsed.
+async fn open_pull_request_github(
+    app: &AppHandle,
+    folder_path: &str,
+    origin: &str,
+    current_branch: &str,
+    default_branch: &str,
+    title: &str,
+) -> AppResult<OpenPullRequestResult> {
+    let remote = match parse_github_remote(origin) {
+        Some(remote) => remote,
+        None => return Ok(OpenPullRequestResult::err("unsupported-remote", None)),
+    };
+
+    let output = match run_gh(
+        vec![
+            "pr".into(),
+            "create".into(),
+            "--base".into(),
+            default_branch.to_string(),
+            "--head".into(),
+            current_branch.to_string(),
+            "--title".into(),
+            title.to_string(),
+            "--body".into(),
+            "".into(),
+            "--draft".into(),
+        ],
+        folder_path.to_string(),
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(GhError::NotInstalled) => {
+            return Ok(OpenPullRequestResult::err(
+                "gh-not-installed",
+                Some("GitHub CLI (gh) was not found on PATH.".to_string()),
+            ))
+        }
+        Err(GhError::Failed {
+            stdout,
+            stderr,
+            code,
+        }) => {
+            if is_not_logged_in(&stderr) {
+                return Ok(OpenPullRequestResult::err(
+                    "gh-not-logged-in",
+                    Some("Run: gh auth login".to_string()),
+                ));
+            }
+            static ALREADY_EXISTS: OnceLock<Regex> = OnceLock::new();
+            let re = ALREADY_EXISTS
+                .get_or_init(|| Regex::new(r"(?i)already exists").unwrap());
+            if re.is_match(&stderr) {
+                return Ok(OpenPullRequestResult::err(
+                    "gh-pr-exists",
+                    Some("A PR already exists for this source/target.".to_string()),
+                ));
+            }
+            return Ok(OpenPullRequestResult::err(
+                "gh-failed",
+                Some(gh_failed_message(&stdout, &stderr, code)),
+            ));
+        }
+    };
+
+    let url = output.stdout.trim().to_string();
+    static PR_NUMBER: OnceLock<Regex> = OnceLock::new();
+    let re = PR_NUMBER.get_or_init(|| Regex::new(r"/pull/(\d+)\s*$").unwrap());
+    let pull_request_id = re
+        .captures(&url)
+        .and_then(|caps| caps.get(1))
+        .and_then(|m| m.as_str().parse::<i64>().ok())
+        .unwrap_or(0);
+    if pull_request_id <= 0 {
+        return Ok(OpenPullRequestResult::err(
+            "gh-failed",
+            Some(format!("Could not parse PR number from gh output: {url}")),
+        ));
+    }
+
+    let web_url = if url.is_empty() {
+        build_github_pr_web_url(&remote, pull_request_id)
+    } else {
+        url
+    };
+    let _ = app.opener().open_url(web_url.as_str(), None::<&str>);
+    Ok(OpenPullRequestResult::ok(pull_request_id, web_url))
+}
+
 #[tauri::command]
 pub async fn repo_find_active_pull_request(
     folder_path: String,
 ) -> AppResult<FindPullRequestResult> {
-    let remote = match resolve_ado_remote(&folder_path).await {
-        Ok(remote) => remote,
-        Err((code, message)) => return Ok(FindPullRequestResult::err(code, message)),
+    let origin = match run_git(
+        vec!["remote".into(), "get-url".into(), "origin".into()],
+        folder_path.clone(),
+    )
+    .await
+    {
+        Ok(out) => out.stdout.trim().to_string(),
+        Err(err) => return Ok(FindPullRequestResult::err("no-origin", Some(err.message))),
     };
+    if origin.is_empty() {
+        return Ok(FindPullRequestResult::err("no-origin", None));
+    }
+    let provider = classify_remote_url(&origin);
+    if provider != "ado" && provider != "github" {
+        return Ok(FindPullRequestResult::err(
+            "unsupported-remote",
+            Some(format!(
+                "Origin is not a recognized GitHub or Azure DevOps remote: {origin}"
+            )),
+        ));
+    }
 
     let current_branch = match repo_current_branch(folder_path.clone()).await? {
         Some(branch) => branch,
@@ -1255,6 +1447,21 @@ pub async fn repo_find_active_pull_request(
     if current_branch == default_branch {
         return Ok(FindPullRequestResult::err("same-as-default", None));
     }
+
+    if provider == "github" {
+        return find_active_pull_request_github(
+            &folder_path,
+            &origin,
+            &current_branch,
+            &default_branch,
+        )
+        .await;
+    }
+
+    let remote = match parse_ado_remote(&origin) {
+        Some(remote) => remote,
+        None => return Ok(FindPullRequestResult::err("unsupported-remote", None)),
+    };
 
     let output = match run_az(vec![
         "repos".into(),
@@ -1342,6 +1549,109 @@ pub async fn repo_find_active_pull_request(
             .and_then(Value::as_str)
             .unwrap_or("notSet")
             .to_string(),
+    })))
+}
+
+/// GitHub half of `repo_find_active_pull_request`: looks up the open PR (if any) for
+/// `current_branch` → `default_branch` via `gh pr list`.
+async fn find_active_pull_request_github(
+    folder_path: &str,
+    origin: &str,
+    current_branch: &str,
+    default_branch: &str,
+) -> AppResult<FindPullRequestResult> {
+    let remote = match parse_github_remote(origin) {
+        Some(remote) => remote,
+        None => return Ok(FindPullRequestResult::err("unsupported-remote", None)),
+    };
+
+    let output = match run_gh(
+        vec![
+            "pr".into(),
+            "list".into(),
+            "--head".into(),
+            current_branch.to_string(),
+            "--base".into(),
+            default_branch.to_string(),
+            "--state".into(),
+            "open".into(),
+            "--limit".into(),
+            "1".into(),
+            "--json".into(),
+            "number,title,url,mergeable,mergeStateStatus".into(),
+        ],
+        folder_path.to_string(),
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(GhError::NotInstalled) => {
+            return Ok(FindPullRequestResult::err(
+                "gh-not-installed",
+                Some("GitHub CLI (gh) was not found on PATH.".to_string()),
+            ))
+        }
+        Err(GhError::Failed {
+            stdout,
+            stderr,
+            code,
+        }) => {
+            if is_not_logged_in(&stderr) {
+                return Ok(FindPullRequestResult::err(
+                    "gh-not-logged-in",
+                    Some("Run: gh auth login".to_string()),
+                ));
+            }
+            return Ok(FindPullRequestResult::err(
+                "gh-failed",
+                Some(gh_failed_message(&stdout, &stderr, code)),
+            ));
+        }
+    };
+
+    let parsed: Value = match serde_json::from_str(output.stdout.trim()) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            return Ok(FindPullRequestResult::err(
+                "gh-failed",
+                Some(format!("Could not parse gh output: {err}")),
+            ))
+        }
+    };
+    let Some(first) = parsed.as_array().and_then(|items| items.first()) else {
+        return Ok(FindPullRequestResult::ok(None));
+    };
+    let Some(first) = first.as_object() else {
+        return Ok(FindPullRequestResult::ok(None));
+    };
+
+    let id = first.get("number").and_then(Value::as_i64).unwrap_or(0);
+    if id <= 0 {
+        return Ok(FindPullRequestResult::ok(None));
+    }
+
+    // GitHub has no direct equivalent of ADO's richer mergeStatus vocabulary; map the two states the
+    // UI cares about (conflicts vs. not) and default everything else to "notSet".
+    let merge_status = match first.get("mergeable").and_then(Value::as_str) {
+        Some("CONFLICTING") => "conflicts",
+        Some("MERGEABLE") => "succeeded",
+        _ => "notSet",
+    };
+
+    Ok(FindPullRequestResult::ok(Some(ExistingPullRequest {
+        id,
+        title: first
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        web_url: first
+            .get("url")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| build_github_pr_web_url(&remote, id)),
+        status: "active".to_string(),
+        merge_status: merge_status.to_string(),
     })))
 }
 
@@ -1463,11 +1773,12 @@ pub async fn repo_recent_commits(
     };
 
     let commits = parse_commit_log(&output);
-    let ado_commit_url_prefix = resolve_ado_remote(&folder_path)
-        .await
-        .ok()
-        .map(|remote| build_ado_commit_url(&remote, ""));
-    Ok(RecentCommitsResult::ok(commits, ado_commit_url_prefix))
+    let commit_url_prefix = match resolve_provider_remote(&folder_path).await {
+        Some(ProviderRemote::Ado(remote)) => Some(build_ado_commit_url(&remote, "")),
+        Some(ProviderRemote::Github(remote)) => Some(build_github_commit_url(&remote, "")),
+        None => None,
+    };
+    Ok(RecentCommitsResult::ok(commits, commit_url_prefix))
 }
 
 #[tauri::command]
@@ -2025,10 +2336,11 @@ pub async fn repo_branch_web_url(
     folder_path: String,
     branch: String,
 ) -> AppResult<BranchWebUrlResult> {
-    let web_url = resolve_ado_remote(&folder_path)
-        .await
-        .ok()
-        .map(|remote| build_ado_branch_url(&remote, &branch));
+    let web_url = match resolve_provider_remote(&folder_path).await {
+        Some(ProviderRemote::Ado(remote)) => Some(build_ado_branch_url(&remote, &branch)),
+        Some(ProviderRemote::Github(remote)) => Some(build_github_branch_url(&remote, &branch)),
+        None => None,
+    };
     Ok(BranchWebUrlResult { web_url })
 }
 

@@ -60,7 +60,7 @@ export function RecentCommitsPanel({ folderPath }: RecentCommitsPanelProps): Rea
               subject={commit.subject}
               author={commit.author}
               isoTime={commit.isoTime}
-              adoCommitUrlPrefix={data.adoCommitUrlPrefix}
+              commitUrlPrefix={data.commitUrlPrefix}
             />
           ))}
         </ul>
@@ -74,17 +74,17 @@ function CommitRow({
   subject,
   author,
   isoTime,
-  adoCommitUrlPrefix
+  commitUrlPrefix
 }: {
   sha: string
   subject: string
   author: string
   isoTime: string
-  adoCommitUrlPrefix?: string
+  commitUrlPrefix?: string
 }): React.JSX.Element {
   const shortSha = sha.slice(0, 7)
   const relative = formatRelativeTime(isoTime)
-  const url = adoCommitUrlPrefix ? `${adoCommitUrlPrefix}${sha}` : null
+  const url = commitUrlPrefix ? `${commitUrlPrefix}${sha}` : null
 
   const inner = (
     <>

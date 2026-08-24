@@ -1,181 +1,21 @@
 use std::sync::OnceLock;
 
 use regex::Regex;
-use serde::Serialize;
 use serde_json::Value;
 
 use crate::az::{classify_az_generic_failure, run_az, AzError};
 use crate::error::AppResult;
 use crate::git::run_git;
-use crate::reviews::{categorize, ident_eq, short_ref, RepoOpenPrsResult, RepoPr};
+use crate::reviews::{
+    categorize, ident_eq, short_ref, RepoOpenPrsResult, RepoPr, RepoPrComment, RepoPrCommentAuthor,
+    RepoPrThread, RepoPrThreadStatus, RepoPrThreadsResult,
+};
 
 #[derive(Debug, Clone)]
 pub struct AdoRemote {
     pub org: String,
     pub project: String,
     pub repo: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoReviewer {
-    pub display_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unique_name: Option<String>,
-    pub vote: i32,
-    pub is_required: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoPrDetails {
-    pub id: i64,
-    pub title: String,
-    pub status: String,
-    pub is_draft: bool,
-    pub source_ref: String,
-    pub target_ref: String,
-    pub web_url: String,
-    pub reviewers: Vec<AdoReviewer>,
-    pub creation_date: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoPrDetailsResult {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<AdoPrDetails>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-impl AdoPrDetailsResult {
-    fn ok(details: AdoPrDetails) -> Self {
-        Self {
-            ok: true,
-            details: Some(details),
-            code: None,
-            message: None,
-        }
-    }
-
-    fn err(code: impl Into<String>, message: Option<String>) -> Self {
-        Self {
-            ok: false,
-            details: None,
-            code: Some(code.into()),
-            message,
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoPrCommentAuthor {
-    pub display_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unique_name: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoPrComment {
-    pub id: i64,
-    pub author: AdoPrCommentAuthor,
-    pub content: String,
-    pub published_date: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoPrThread {
-    pub id: i64,
-    pub status: String,
-    pub file_path: Option<String>,
-    pub line_number: Option<i64>,
-    pub comments: Vec<AdoPrComment>,
-    pub last_updated: Option<String>,
-    pub web_url: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoPrThreadsResult {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub threads: Option<Vec<AdoPrThread>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-impl AdoPrThreadsResult {
-    fn ok(threads: Vec<AdoPrThread>) -> Self {
-        Self {
-            ok: true,
-            threads: Some(threads),
-            code: None,
-            message: None,
-        }
-    }
-
-    fn err(code: impl Into<String>, message: Option<String>) -> Self {
-        Self {
-            ok: false,
-            threads: None,
-            code: Some(code.into()),
-            message,
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoMyOpenPr {
-    pub id: i64,
-    pub title: String,
-    pub source_ref: String,
-    pub target_ref: String,
-    pub web_url: String,
-    pub created_at: Option<String>,
-    pub status: String,
-    pub is_draft: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AdoMyOpenPrsResult {
-    pub ok: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prs: Option<Vec<AdoMyOpenPr>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub code: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
-}
-
-impl AdoMyOpenPrsResult {
-    fn ok(prs: Vec<AdoMyOpenPr>) -> Self {
-        Self {
-            ok: true,
-            prs: Some(prs),
-            code: None,
-            message: None,
-        }
-    }
-
-    fn err(code: impl Into<String>, message: Option<String>) -> Self {
-        Self {
-            ok: false,
-            prs: None,
-            code: Some(code.into()),
-            message,
-        }
-    }
 }
 
 pub fn parse_ado_remote(raw_url: &str) -> Option<AdoRemote> {
@@ -410,47 +250,31 @@ fn parse_json_from_az_output(stdout: &str) -> Result<Value, serde_json::Error> {
     serde_json::from_str(json_text)
 }
 
-fn normalise_vote(value: &Value) -> i32 {
-    let n = if let Some(v) = value.as_i64() {
-        v
-    } else if let Some(v) = value.as_u64() {
-        v as i64
-    } else if let Some(v) = value.as_str() {
-        v.parse::<i64>().unwrap_or(0)
-    } else {
-        0
-    };
-    match n {
-        10 | 5 | -5 | -10 => n as i32,
-        _ => 0,
-    }
-}
-
-fn normalise_thread_status(value: &Value) -> &'static str {
+fn normalise_thread_status(value: &Value) -> RepoPrThreadStatus {
     if let Some(s) = value.as_str() {
         match s.to_ascii_lowercase().as_str() {
-            "active" => return "active",
-            "pending" => return "pending",
-            "fixed" => return "fixed",
-            "wontfix" => return "wontFix",
-            "closed" => return "closed",
-            "bydesign" => return "byDesign",
-            "unknown" => return "unknown",
+            "active" => return RepoPrThreadStatus::Active,
+            "pending" => return RepoPrThreadStatus::Pending,
+            "fixed" => return RepoPrThreadStatus::Fixed,
+            "wontfix" => return RepoPrThreadStatus::WontFix,
+            "closed" => return RepoPrThreadStatus::Closed,
+            "bydesign" => return RepoPrThreadStatus::ByDesign,
+            "unknown" => return RepoPrThreadStatus::Unknown,
             _ => {}
         }
     }
     if let Some(n) = value.as_i64().or_else(|| value.as_u64().map(|v| v as i64)) {
         return match n {
-            1 => "active",
-            2 => "fixed",
-            3 => "wontFix",
-            4 => "closed",
-            5 => "byDesign",
-            6 => "pending",
-            _ => "unknown",
+            1 => RepoPrThreadStatus::Active,
+            2 => RepoPrThreadStatus::Fixed,
+            3 => RepoPrThreadStatus::WontFix,
+            4 => RepoPrThreadStatus::Closed,
+            5 => RepoPrThreadStatus::ByDesign,
+            6 => RepoPrThreadStatus::Pending,
+            _ => RepoPrThreadStatus::Unknown,
         };
     }
-    "unknown"
+    RepoPrThreadStatus::Unknown
 }
 
 fn normalise_comment_type(value: &Value) -> &'static str {
@@ -579,164 +403,18 @@ fn json_i64(value: &Value) -> Option<i64> {
 }
 
 #[tauri::command]
-pub async fn ado_pr_details(
-    folder_path: String,
-    pull_request_id: i64,
-) -> AppResult<AdoPrDetailsResult> {
-    if folder_path.trim().is_empty() {
-        return Ok(AdoPrDetailsResult::err(
-            "git-failed",
-            Some("folderPath is required".to_string()),
-        ));
-    }
-    if pull_request_id <= 0 {
-        return Ok(AdoPrDetailsResult::err(
-            "git-failed",
-            Some("pullRequestId is required".to_string()),
-        ));
-    }
-
-    let remote = match resolve_ado_remote(&folder_path).await {
-        Ok(remote) => remote,
-        Err((code, message)) => return Ok(AdoPrDetailsResult::err(code, message)),
-    };
-
-    let output = match run_az(vec![
-        "repos".into(),
-        "pr".into(),
-        "show".into(),
-        "--id".into(),
-        pull_request_id.to_string(),
-        "--organization".into(),
-        format!("https://dev.azure.com/{}", remote.org),
-        "--output".into(),
-        "json".into(),
-    ])
-    .await
-    {
-        Ok(output) => output,
-        Err(AzError::NotInstalled) => {
-            return Ok(AdoPrDetailsResult::err(
-                "az-not-installed",
-                Some("Azure CLI (az) was not found on PATH.".to_string()),
-            ))
-        }
-        Err(AzError::Failed {
-            stdout,
-            stderr,
-            code,
-        }) => {
-            if let Some((code, message)) = classify_az_generic_failure(&stderr) {
-                return Ok(AdoPrDetailsResult::err(code, Some(message)));
-            }
-            return Ok(AdoPrDetailsResult::err(
-                "az-failed",
-                Some(az_failed_message(&stdout, &stderr, code)),
-            ));
-        }
-    };
-
-    let parsed = match parse_json_from_az_output(&output.stdout) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            return Ok(AdoPrDetailsResult::err(
-                "az-failed",
-                Some(format!("Could not parse az output: {err}")),
-            ))
-        }
-    };
-    let Some(obj) = parsed.as_object() else {
-        return Ok(AdoPrDetailsResult::err(
-            "az-failed",
-            Some("az output was not an object.".to_string()),
-        ));
-    };
-
-    let id = json_i64(obj.get("pullRequestId").unwrap_or(&Value::Null))
-        .or_else(|| json_i64(obj.get("codeReviewId").unwrap_or(&Value::Null)))
-        .unwrap_or(pull_request_id);
-    let reviewers = obj
-        .get("reviewers")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_object)
-                .map(|reviewer| AdoReviewer {
-                    display_name: reviewer
-                        .get("displayName")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Reviewer")
-                        .to_string(),
-                    unique_name: reviewer
-                        .get("uniqueName")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    vote: reviewer.get("vote").map(normalise_vote).unwrap_or(0),
-                    is_required: reviewer
-                        .get("isRequired")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-
-    let web_url = obj
-        .get("_links")
-        .and_then(Value::as_object)
-        .and_then(|links| links.get("web"))
-        .and_then(Value::as_object)
-        .and_then(|web| web.get("href"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| build_ado_pr_web_url(&remote, id));
-
-    Ok(AdoPrDetailsResult::ok(AdoPrDetails {
-        id,
-        title: obj
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        status: obj
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_string(),
-        is_draft: obj.get("isDraft").and_then(Value::as_bool).unwrap_or(false),
-        source_ref: obj
-            .get("sourceRefName")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        target_ref: obj
-            .get("targetRefName")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string(),
-        web_url,
-        reviewers,
-        creation_date: obj
-            .get("creationDate")
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    }))
-}
-
-#[tauri::command]
 pub async fn ado_pr_threads(
     folder_path: String,
     pull_request_id: i64,
-) -> AppResult<AdoPrThreadsResult> {
+) -> AppResult<RepoPrThreadsResult> {
     if folder_path.trim().is_empty() {
-        return Ok(AdoPrThreadsResult::err(
+        return Ok(RepoPrThreadsResult::err(
             "git-failed",
             Some("folderPath is required".to_string()),
         ));
     }
     if pull_request_id <= 0 {
-        return Ok(AdoPrThreadsResult::err(
+        return Ok(RepoPrThreadsResult::err(
             "git-failed",
             Some("pullRequestId is required".to_string()),
         ));
@@ -744,7 +422,7 @@ pub async fn ado_pr_threads(
 
     let remote = match resolve_ado_remote(&folder_path).await {
         Ok(remote) => remote,
-        Err((code, message)) => return Ok(AdoPrThreadsResult::err(code, message)),
+        Err((code, message)) => return Ok(RepoPrThreadsResult::err(code, message)),
     };
 
     let output = match run_az(vec![
@@ -769,7 +447,7 @@ pub async fn ado_pr_threads(
     {
         Ok(output) => output,
         Err(AzError::NotInstalled) => {
-            return Ok(AdoPrThreadsResult::err(
+            return Ok(RepoPrThreadsResult::err(
                 "az-not-installed",
                 Some("Azure CLI (az) was not found on PATH.".to_string()),
             ))
@@ -780,9 +458,9 @@ pub async fn ado_pr_threads(
             code,
         }) => {
             if let Some((code, message)) = classify_az_generic_failure(&stderr) {
-                return Ok(AdoPrThreadsResult::err(code, Some(message)));
+                return Ok(RepoPrThreadsResult::err(code, Some(message)));
             }
-            return Ok(AdoPrThreadsResult::err(
+            return Ok(RepoPrThreadsResult::err(
                 "az-failed",
                 Some(az_failed_message(&stdout, &stderr, code)),
             ));
@@ -792,7 +470,7 @@ pub async fn ado_pr_threads(
     let parsed = match parse_json_from_az_output(&output.stdout) {
         Ok(parsed) => parsed,
         Err(err) => {
-            return Ok(AdoPrThreadsResult::err(
+            return Ok(RepoPrThreadsResult::err(
                 "az-failed",
                 Some(format!("Could not parse az output: {err}")),
             ))
@@ -820,7 +498,7 @@ pub async fn ado_pr_threads(
         }
 
         let status = normalise_thread_status(thread.get("status").unwrap_or(&Value::Null));
-        if status != "active" && status != "pending" {
+        if status != RepoPrThreadStatus::Active && status != RepoPrThreadStatus::Pending {
             continue;
         }
 
@@ -841,9 +519,9 @@ pub async fn ado_pr_threads(
             }
 
             let author = comment.get("author").and_then(Value::as_object);
-            comments.push(AdoPrComment {
+            comments.push(RepoPrComment {
                 id: json_i64(comment.get("id").unwrap_or(&Value::Null)).unwrap_or(0),
-                author: AdoPrCommentAuthor {
+                author: RepoPrCommentAuthor {
                     display_name: author
                         .and_then(|a| a.get("displayName"))
                         .and_then(Value::as_str)
@@ -907,9 +585,9 @@ pub async fn ado_pr_threads(
                     .map(str::to_string)
             });
 
-        threads.push(AdoPrThread {
+        threads.push(RepoPrThread {
             id,
-            status: status.to_string(),
+            status,
             file_path,
             line_number,
             comments,
@@ -927,142 +605,7 @@ pub async fn ado_pr_threads(
             .cmp(&parse_millis_for_sort(a.last_updated.as_deref()))
     });
 
-    Ok(AdoPrThreadsResult::ok(threads))
-}
-
-#[tauri::command]
-pub async fn ado_my_open_prs(folder_path: String) -> AppResult<AdoMyOpenPrsResult> {
-    if folder_path.trim().is_empty() {
-        return Ok(AdoMyOpenPrsResult::err(
-            "git-failed",
-            Some("folderPath is required".to_string()),
-        ));
-    }
-
-    let remote = match resolve_ado_remote(&folder_path).await {
-        Ok(remote) => remote,
-        Err((code, message)) => return Ok(AdoMyOpenPrsResult::err(code, message)),
-    };
-
-    let output = match run_az(vec![
-        "repos".into(),
-        "pr".into(),
-        "list".into(),
-        "--creator".into(),
-        "@me".into(),
-        "--status".into(),
-        "active".into(),
-        "--organization".into(),
-        format!("https://dev.azure.com/{}", remote.org),
-        "--project".into(),
-        remote.project.clone(),
-        "--repository".into(),
-        remote.repo.clone(),
-        "--output".into(),
-        "json".into(),
-    ])
-    .await
-    {
-        Ok(output) => output,
-        Err(AzError::NotInstalled) => {
-            return Ok(AdoMyOpenPrsResult::err(
-                "az-not-installed",
-                Some("Azure CLI (az) was not found on PATH.".to_string()),
-            ))
-        }
-        Err(AzError::Failed {
-            stdout,
-            stderr,
-            code,
-        }) => {
-            if let Some((code, message)) = classify_az_generic_failure(&stderr) {
-                return Ok(AdoMyOpenPrsResult::err(code, Some(message)));
-            }
-            return Ok(AdoMyOpenPrsResult::err(
-                "az-failed",
-                Some(az_failed_message(&stdout, &stderr, code)),
-            ));
-        }
-    };
-
-    let parsed = match parse_json_from_az_output(&output.stdout) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            return Ok(AdoMyOpenPrsResult::err(
-                "az-failed",
-                Some(format!("Could not parse az output: {err}")),
-            ))
-        }
-    };
-
-    let Some(items) = parsed.as_array() else {
-        return Ok(AdoMyOpenPrsResult::ok(Vec::new()));
-    };
-
-    let prs = items
-        .iter()
-        .filter_map(Value::as_object)
-        .map(|item| {
-            let id = json_i64(item.get("pullRequestId").unwrap_or(&Value::Null))
-                .or_else(|| json_i64(item.get("codeReviewId").unwrap_or(&Value::Null)))
-                .unwrap_or(0);
-            let web_url = item
-                .get("_links")
-                .and_then(Value::as_object)
-                .and_then(|links| links.get("web"))
-                .and_then(Value::as_object)
-                .and_then(|web| web.get("href"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_else(|| {
-                    if id > 0 {
-                        build_ado_pr_web_url(&remote, id)
-                    } else {
-                        format!(
-                            "https://dev.azure.com/{}/{}/_git/{}/pullrequests",
-                            encode_uri_component(&remote.org),
-                            encode_uri_component(&remote.project),
-                            encode_uri_component(&remote.repo)
-                        )
-                    }
-                });
-
-            AdoMyOpenPr {
-                id,
-                title: item
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                source_ref: item
-                    .get("sourceRefName")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                target_ref: item
-                    .get("targetRefName")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-                web_url,
-                created_at: item
-                    .get("creationDate")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                status: item
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or("active")
-                    .to_string(),
-                is_draft: item
-                    .get("isDraft")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            }
-        })
-        .collect();
-
-    Ok(AdoMyOpenPrsResult::ok(prs))
+    Ok(RepoPrThreadsResult::ok(threads))
 }
 
 /// Resolve the signed-in Azure account's identifier (UPN / `user.name`), lowercased, for categorizing

@@ -1,9 +1,10 @@
 import * as React from 'react'
 
-import type { AdoPrThreadsResult } from '@shared/ado'
-import { getAdoPrThreads } from '@/lib/ado'
+import type { RepoPrThreadsResult } from '@shared/reviews'
+import type { RepositoryRemoteKind } from '@shared/repository'
+import { getPrThreads } from '@/lib/reviews'
 
-type LoadedPrThreads = Extract<AdoPrThreadsResult, { ok: true }>
+type LoadedPrThreads = Extract<RepoPrThreadsResult, { ok: true }>
 
 export interface UsePrThreadsResult {
   data: LoadedPrThreads | null
@@ -14,10 +15,11 @@ export interface UsePrThreadsResult {
 
 export function usePrThreads(
   folderPath: string | null,
+  remoteKind: RepositoryRemoteKind | null,
   pullRequestId: number | null,
   enabled: boolean
 ): UsePrThreadsResult {
-  const key = folderPath && pullRequestId ? `${folderPath}::${pullRequestId}` : null
+  const key = folderPath && remoteKind && pullRequestId ? `${folderPath}::${pullRequestId}` : null
   const [snapshot, setSnapshot] = React.useState<{
     key: string | null
     data: LoadedPrThreads | null
@@ -31,10 +33,15 @@ export function usePrThreads(
   const error = isCurrent ? snapshot.error : null
 
   const runRefresh = React.useCallback(async (): Promise<void> => {
-    if (!folderPath || !pullRequestId || !key) return
+    if (!folderPath || !remoteKind || !pullRequestId || !key) return
+    const request = getPrThreads(remoteKind, { folderPath, pullRequestId })
+    if (!request) {
+      setSnapshot({ key, data: null, error: null })
+      return
+    }
     setIsLoading(true)
     try {
-      const result = await getAdoPrThreads({ folderPath, pullRequestId })
+      const result = await request
       if (activeKeyRef.current !== key) return
       if (result.ok) {
         setSnapshot({ key, data: result, error: null })
@@ -51,7 +58,7 @@ export function usePrThreads(
     } finally {
       setIsLoading(false)
     }
-  }, [folderPath, pullRequestId, key])
+  }, [folderPath, remoteKind, pullRequestId, key])
 
   React.useEffect(() => {
     activeKeyRef.current = key

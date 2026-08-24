@@ -79,3 +79,81 @@ pub fn short_ref(reference: &str) -> String {
 pub fn ident_eq(a: &str, b: &str) -> bool {
     !a.is_empty() && a.eq_ignore_ascii_case(b)
 }
+
+/// Provider-agnostic PR review-thread status. Mirrors `RepoPrThreadStatus` in
+/// `src/shared/reviews.ts`. GitHub only distinguishes resolved/unresolved (and outdated), so its
+/// threads map onto a subset of ADO's richer status vocabulary (see `github.rs`).
+#[derive(Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoPrThreadStatus {
+    Unknown,
+    Active,
+    Pending,
+    Fixed,
+    WontFix,
+    Closed,
+    ByDesign,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoPrCommentAuthor {
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unique_name: Option<String>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoPrComment {
+    pub id: i64,
+    pub author: RepoPrCommentAuthor,
+    pub content: String,
+    pub published_date: Option<String>,
+}
+
+/// Provider-agnostic pull-request review-comment thread. Mirrors `RepoPrThread` in
+/// `src/shared/reviews.ts`. Produced by both `ado::ado_pr_threads` and `github::github_pr_threads`.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoPrThread {
+    pub id: i64,
+    pub status: RepoPrThreadStatus,
+    pub file_path: Option<String>,
+    pub line_number: Option<i64>,
+    pub comments: Vec<RepoPrComment>,
+    pub last_updated: Option<String>,
+    pub web_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoPrThreadsResult {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threads: Option<Vec<RepoPrThread>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl RepoPrThreadsResult {
+    pub fn ok(threads: Vec<RepoPrThread>) -> Self {
+        Self {
+            ok: true,
+            threads: Some(threads),
+            code: None,
+            message: None,
+        }
+    }
+
+    pub fn err(code: impl Into<String>, message: Option<String>) -> Self {
+        Self {
+            ok: false,
+            threads: None,
+            code: Some(code.into()),
+            message,
+        }
+    }
+}

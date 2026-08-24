@@ -63,15 +63,7 @@ import type {
   WorktreesOverviewRequest,
   WorktreesOverviewResult
 } from '@shared/repo'
-import type {
-  AdoMyOpenPrsRequest,
-  AdoMyOpenPrsResult,
-  AdoPrDetailsRequest,
-  AdoPrDetailsResult,
-  AdoPrThreadsRequest,
-  AdoPrThreadsResult
-} from '@shared/ado'
-import type { RepoOpenPrsRequest, RepoOpenPrsResult } from '@shared/reviews'
+import type { RepoOpenPrsRequest, RepoOpenPrsResult, RepoPrThreadsRequest, RepoPrThreadsResult } from '@shared/reviews'
 import type {
   AppInfo,
   LaunchCopilotCliRequest,
@@ -240,39 +232,35 @@ const api = {
     detectMergeState: (req: DetectMergeStateRequest): Promise<DetectMergeStateResult> =>
       result('repo_detect_merge_state', { ...req }, (error) => ({ ok: false, error }))
   },
-  ado: {
-    prDetails: (req: AdoPrDetailsRequest): Promise<AdoPrDetailsResult> =>
-      result('ado_pr_details', { ...req }, (message) => ({
-        ok: false,
-        code: 'git-failed',
-        message
-      })),
-    prThreads: (req: AdoPrThreadsRequest): Promise<AdoPrThreadsResult> =>
-      result('ado_pr_threads', { ...req }, (message) => ({
-        ok: false,
-        code: 'git-failed',
-        message
-      })),
-    myOpenPrs: (req: AdoMyOpenPrsRequest): Promise<AdoMyOpenPrsResult> =>
-      result('ado_my_open_prs', { ...req }, (message) => ({
-        ok: false,
-        code: 'git-failed',
-        message
-      })),
-    repoOpenPrs: (req: RepoOpenPrsRequest): Promise<RepoOpenPrsResult> =>
-      result('ado_repo_open_prs', { ...req }, (message) => ({
-        ok: false,
-        code: 'git-failed',
-        message
-      }))
-  },
-  github: {
-    repoOpenPrs: (req: RepoOpenPrsRequest): Promise<RepoOpenPrsResult> =>
-      result('github_repo_open_prs', { ...req }, (message) => ({
-        ok: false,
-        code: 'gh-failed',
-        message
-      }))
+  reviews: {
+    openPrs: {
+      ado: (req: RepoOpenPrsRequest): Promise<RepoOpenPrsResult> =>
+        result('ado_repo_open_prs', { ...req }, (message) => ({
+          ok: false,
+          code: 'git-failed',
+          message
+        })),
+      github: (req: RepoOpenPrsRequest): Promise<RepoOpenPrsResult> =>
+        result('github_repo_open_prs', { ...req }, (message) => ({
+          ok: false,
+          code: 'gh-failed',
+          message
+        }))
+    },
+    prThreads: {
+      ado: (req: RepoPrThreadsRequest): Promise<RepoPrThreadsResult> =>
+        result('ado_pr_threads', { ...req }, (message) => ({
+          ok: false,
+          code: 'git-failed',
+          message
+        })),
+      github: (req: RepoPrThreadsRequest): Promise<RepoPrThreadsResult> =>
+        result('github_pr_threads', { ...req }, (message) => ({
+          ok: false,
+          code: 'gh-failed',
+          message
+        }))
+    }
   },
   system: {
     openInVSCode: (folderPath: string): Promise<LaunchResult> =>

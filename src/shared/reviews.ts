@@ -37,3 +37,41 @@ export type ReviewsErrorCode = AdoErrorCode | 'gh-not-installed' | 'gh-not-logge
 export type RepoOpenPrsResult =
   | { ok: true; prs: RepoPr[] }
   | { ok: false; code: ReviewsErrorCode; message?: string }
+
+export type RepoPrThreadStatus =
+  | 'unknown'
+  | 'active'
+  | 'pending'
+  | 'fixed'
+  | 'wontFix'
+  | 'closed'
+  | 'byDesign'
+
+export type RepoPrCommentAuthor = {
+  displayName: string
+  uniqueName?: string
+}
+
+export type RepoPrComment = {
+  id: number
+  author: RepoPrCommentAuthor
+  content: string
+  publishedDate: string | null
+}
+
+/** Provider-agnostic PR review-comment thread shared by the ADO and GitHub backends. */
+export type RepoPrThread = {
+  id: number
+  status: RepoPrThreadStatus
+  filePath: string | null
+  lineNumber: number | null
+  comments: RepoPrComment[]
+  lastUpdated: string | null
+  webUrl: string
+}
+
+export type RepoPrThreadsRequest = { folderPath: string; pullRequestId: number }
+
+export type RepoPrThreadsResult =
+  | { ok: true; threads: RepoPrThread[] }
+  | { ok: false; code: ReviewsErrorCode; message?: string }
