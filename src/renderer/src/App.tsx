@@ -11,6 +11,7 @@ import { StatusBar, type StatusBarContext } from '@/components/status-bar'
 import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
+import { PrReviewProvider } from '@/contexts/pr-review-context'
 import { TasksProvider } from '@/contexts/tasks-context'
 import { ThemeProvider } from '@/contexts/theme-context'
 import { TerminalModeProvider } from '@/contexts/terminal-mode-context'
@@ -618,7 +619,9 @@ function App(): React.JSX.Element {
   return (
     <ThemeProvider>
       <TasksProvider>
-        <AppShell />
+        <PrReviewProvider>
+          <AppShell />
+        </PrReviewProvider>
       </TasksProvider>
     </ThemeProvider>
   )

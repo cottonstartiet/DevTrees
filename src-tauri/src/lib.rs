@@ -7,6 +7,7 @@ mod gh;
 mod git;
 mod github;
 mod paths;
+mod pr_review;
 mod repo;
 mod reviews;
 mod sessions;
@@ -77,8 +78,24 @@ pub fn run() {
             system::system_get_app_info,
             ado::ado_pr_threads,
             ado::ado_repo_open_prs,
+            ado::ado_pr_detail,
+            ado::ado_pr_changed_files,
+            ado::ado_pr_file_diff,
+            ado::ado_pr_file_content,
+            ado::ado_pr_create_thread,
+            ado::ado_pr_reply,
+            ado::ado_pr_set_thread_status,
+            ado::ado_pr_set_vote,
             github::github_repo_open_prs,
             github::github_pr_threads,
+            github::github_pr_detail,
+            github::github_pr_changed_files,
+            github::github_pr_file_diff,
+            github::github_pr_file_content,
+            github::github_pr_create_thread,
+            github::github_pr_reply,
+            github::github_pr_set_thread_status,
+            github::github_pr_set_vote,
             repo::repo_default_branch,
             repo::repo_current_branch,
             repo::repo_status,

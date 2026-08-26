@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   ExternalLink as ExternalLinkIcon,
+  FileDiff as FileDiffIcon,
   FileText as FileTextIcon,
   Loader2 as Loader2Icon,
   MessageSquare as MessageSquareIcon,
@@ -13,6 +14,7 @@ import { DashboardCard } from '@/components/detail/dashboard-card'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { usePrThreads } from '@/hooks/use-pr-threads'
+import { usePrReviewWorkspace } from '@/contexts/pr-review-context'
 import { buildPrCommentsPrompt } from '@/lib/copilot-pr-prompt'
 import { openExternal } from '@/lib/system'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
@@ -44,6 +46,7 @@ export function PrCommentsPanel({
   )
   const [isLaunching, setIsLaunching] = React.useState(false)
   const launchCopilot = useCopilotLauncher()
+  const { openPrReview } = usePrReviewWorkspace()
 
   const threads = data?.threads ?? []
   const activeCount = threads.reduce((acc, t) => (t.status === 'active' ? acc + 1 : acc), 0)
@@ -109,6 +112,29 @@ export function PrCommentsPanel({
       description={description}
       actions={
         <>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() =>
+                  isSupported &&
+                  openPrReview({
+                    folderPath,
+                    remoteKind: remoteKind as 'ado' | 'github',
+                    pullRequestId,
+                    title: prTitle
+                  })
+                }
+                disabled={!isSupported}
+                aria-label="Review pull request in DevTrees"
+              >
+                <FileDiffIcon className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Review in app</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

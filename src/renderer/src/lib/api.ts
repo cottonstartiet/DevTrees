@@ -63,6 +63,21 @@ import type {
   WorktreesOverviewRequest,
   WorktreesOverviewResult
 } from '@shared/repo'
+import type {
+  PrChangedFilesRequest,
+  PrChangedFilesResult,
+  PrCreateThreadRequest,
+  PrFileContentRequest,
+  PrFileContentResult,
+  PrFileDiffRequest,
+  PrFileDiffResult,
+  PrMutationResult,
+  PrReplyRequest,
+  PrReviewDetailRequest,
+  PrReviewDetailResult,
+  PrSetThreadStatusRequest,
+  PrSetVoteRequest
+} from '@shared/pr-review'
 import type { RepoOpenPrsRequest, RepoOpenPrsResult, RepoPrThreadsRequest, RepoPrThreadsResult } from '@shared/reviews'
 import type {
   AppInfo,
@@ -121,6 +136,18 @@ async function result<T>(
     return onError(messageOf(err))
   }
 }
+
+/** Failure variants for the PR-review commands, whose results share one shape per provider. */
+const adoFail = (message: string): { ok: false; code: 'az-failed'; message: string } => ({
+  ok: false,
+  code: 'az-failed',
+  message
+})
+const ghFail = (message: string): { ok: false; code: 'gh-failed'; message: string } => ({
+  ok: false,
+  code: 'gh-failed',
+  message
+})
 
 const api = {
   repositories: {
@@ -260,6 +287,60 @@ const api = {
           code: 'gh-failed',
           message
         }))
+    }
+  },
+  /**
+   * In-app PR review workspace. Each entry pairs the Azure DevOps and GitHub commands for one
+   * operation; `lib/pr-review.ts` picks the pair matching the repository's remote.
+   */
+  prReview: {
+    detail: {
+      ado: (req: PrReviewDetailRequest): Promise<PrReviewDetailResult> =>
+        result('ado_pr_detail', { ...req }, (message) => adoFail(message)),
+      github: (req: PrReviewDetailRequest): Promise<PrReviewDetailResult> =>
+        result('github_pr_detail', { ...req }, (message) => ghFail(message))
+    },
+    changedFiles: {
+      ado: (req: PrChangedFilesRequest): Promise<PrChangedFilesResult> =>
+        result('ado_pr_changed_files', { ...req }, (message) => adoFail(message)),
+      github: (req: PrChangedFilesRequest): Promise<PrChangedFilesResult> =>
+        result('github_pr_changed_files', { ...req }, (message) => ghFail(message))
+    },
+    fileDiff: {
+      ado: (req: PrFileDiffRequest): Promise<PrFileDiffResult> =>
+        result('ado_pr_file_diff', { ...req }, (message) => adoFail(message)),
+      github: (req: PrFileDiffRequest): Promise<PrFileDiffResult> =>
+        result('github_pr_file_diff', { ...req }, (message) => ghFail(message))
+    },
+    fileContent: {
+      ado: (req: PrFileContentRequest): Promise<PrFileContentResult> =>
+        result('ado_pr_file_content', { ...req }, (message) => adoFail(message)),
+      github: (req: PrFileContentRequest): Promise<PrFileContentResult> =>
+        result('github_pr_file_content', { ...req }, (message) => ghFail(message))
+    },
+    createThread: {
+      ado: (req: PrCreateThreadRequest): Promise<PrMutationResult> =>
+        result('ado_pr_create_thread', { ...req }, (message) => adoFail(message)),
+      github: (req: PrCreateThreadRequest): Promise<PrMutationResult> =>
+        result('github_pr_create_thread', { ...req }, (message) => ghFail(message))
+    },
+    reply: {
+      ado: (req: PrReplyRequest): Promise<PrMutationResult> =>
+        result('ado_pr_reply', { ...req }, (message) => adoFail(message)),
+      github: (req: PrReplyRequest): Promise<PrMutationResult> =>
+        result('github_pr_reply', { ...req }, (message) => ghFail(message))
+    },
+    setThreadStatus: {
+      ado: (req: PrSetThreadStatusRequest): Promise<PrMutationResult> =>
+        result('ado_pr_set_thread_status', { ...req }, (message) => adoFail(message)),
+      github: (req: PrSetThreadStatusRequest): Promise<PrMutationResult> =>
+        result('github_pr_set_thread_status', { ...req }, (message) => ghFail(message))
+    },
+    setVote: {
+      ado: (req: PrSetVoteRequest): Promise<PrMutationResult> =>
+        result('ado_pr_set_vote', { ...req }, (message) => adoFail(message)),
+      github: (req: PrSetVoteRequest): Promise<PrMutationResult> =>
+        result('github_pr_set_vote', { ...req }, (message) => ghFail(message))
     }
   },
   system: {

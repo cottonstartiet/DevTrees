@@ -118,9 +118,15 @@ pub struct RepoPrComment {
 #[serde(rename_all = "camelCase")]
 pub struct RepoPrThread {
     pub id: i64,
+    /// Provider handle used for writes (replies, resolve/unresolve): the GraphQL node id on
+    /// GitHub, the numeric thread id as a string on Azure DevOps.
+    pub provider_thread_id: String,
     pub status: RepoPrThreadStatus,
     pub file_path: Option<String>,
     pub line_number: Option<i64>,
+    /// Last line of the thread's anchor range; equals `line_number` for single-line threads.
+    pub end_line_number: Option<i64>,
+    pub is_resolved: bool,
     pub comments: Vec<RepoPrComment>,
     pub last_updated: Option<String>,
     pub web_url: String,

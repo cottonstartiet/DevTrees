@@ -39,6 +39,43 @@ pub async fn run_gh(args: Vec<String>, cwd: String) -> Result<GhOutput, GhError>
         })?
 }
 
+/// Run `gh` with a request body supplied through a temp file.
+///
+/// `flag` is the option that takes the file path (`--input` for `gh api`, `--body-file` for
+/// `gh pr comment` / `gh pr review`). Routing bodies through a file keeps markdown with quotes and
+/// newlines intact, which inline arguments would not survive on the Windows `cmd /c` wrapper.
+pub async fn run_gh_with_body(
+    args: Vec<String>,
+    cwd: String,
+    flag: &'static str,
+    body: String,
+) -> Result<GhOutput, GhError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::env::temp_dir().join(format!("devtrees-gh-{}.json", uuid::Uuid::new_v4()));
+        if let Err(err) = std::fs::write(&path, body.as_bytes()) {
+            return Err(GhError::Failed {
+                stdout: String::new(),
+                stderr: format!("Could not write gh request body: {err}"),
+                code: None,
+            });
+        }
+
+        let mut full_args = args;
+        full_args.push(flag.to_string());
+        full_args.push(path.to_string_lossy().to_string());
+
+        let result = run_gh_blocking(&full_args, &cwd);
+        let _ = std::fs::remove_file(&path);
+        result
+    })
+    .await
+    .map_err(|e| GhError::Failed {
+        stdout: String::new(),
+        stderr: format!("gh task panicked: {e}"),
+        code: None,
+    })?
+}
+
 fn run_gh_blocking(args: &[String], cwd: &str) -> Result<GhOutput, GhError> {
     #[cfg(windows)]
     let mut cmd = {

@@ -3,9 +3,14 @@ use std::sync::OnceLock;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::az::{classify_az_generic_failure, run_az, AzError};
+use crate::az::{classify_az_generic_failure, run_az, run_az_with_body, AzError};
 use crate::error::AppResult;
 use crate::git::run_git;
+use crate::pr_review::{
+    clamp_text, diff_blobs, is_markdown_path, looks_binary, normalize_path, PrChangedFile,
+    PrChangedFilesResult, PrCommentAnchor, PrFileContent, PrFileContentResult, PrFileDiff,
+    PrFileDiffResult, PrMutationResult, PrReviewDetail, PrReviewDetailResult,
+};
 use crate::reviews::{
     categorize, ident_eq, short_ref, RepoOpenPrsResult, RepoPr, RepoPrComment, RepoPrCommentAuthor,
     RepoPrThread, RepoPrThreadStatus, RepoPrThreadsResult,
@@ -406,6 +411,7 @@ fn json_i64(value: &Value) -> Option<i64> {
 pub async fn ado_pr_threads(
     folder_path: String,
     pull_request_id: i64,
+    include_resolved: Option<bool>,
 ) -> AppResult<RepoPrThreadsResult> {
     if folder_path.trim().is_empty() {
         return Ok(RepoPrThreadsResult::err(
@@ -498,7 +504,11 @@ pub async fn ado_pr_threads(
         }
 
         let status = normalise_thread_status(thread.get("status").unwrap_or(&Value::Null));
-        if status != RepoPrThreadStatus::Active && status != RepoPrThreadStatus::Pending {
+        let is_resolved = !matches!(
+            status,
+            RepoPrThreadStatus::Active | RepoPrThreadStatus::Pending
+        );
+        if is_resolved && !include_resolved.unwrap_or(false) {
             continue;
         }
 
@@ -572,6 +582,15 @@ pub async fn ado_pr_threads(
                     })
             })
             .filter(|line| *line > 0);
+        let end_line_number = context
+            .and_then(|ctx| {
+                ctx.get("rightFileEnd")
+                    .and_then(Value::as_object)
+                    .and_then(|obj| obj.get("line"))
+                    .and_then(json_i64)
+            })
+            .filter(|line| *line > 0)
+            .or(line_number);
 
         let id = json_i64(thread.get("id").unwrap_or(&Value::Null)).unwrap_or(0);
         let last_updated = thread
@@ -587,9 +606,12 @@ pub async fn ado_pr_threads(
 
         threads.push(RepoPrThread {
             id,
+            provider_thread_id: id.to_string(),
             status,
             file_path,
             line_number,
+            end_line_number,
+            is_resolved,
             comments,
             last_updated,
             web_url: if id > 0 {
@@ -793,4 +815,700 @@ fn reviewers_contain(value: Option<&Value>, needle: &str) -> bool {
             })
         })
         .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// In-app PR review workspace (see `pr_review.rs` and `src/shared/pr-review.ts`)
+// ---------------------------------------------------------------------------
+
+/// `(code, message)` failure pair shared by the review helpers below.
+type AzFail = (String, Option<String>);
+
+fn map_az_error(err: AzError) -> AzFail {
+    match err {
+        AzError::NotInstalled => (
+            "az-not-installed".to_string(),
+            Some("Azure CLI (az) was not found on PATH.".to_string()),
+        ),
+        AzError::Failed {
+            stdout,
+            stderr,
+            code,
+        } => {
+            if let Some((code, message)) = classify_az_generic_failure(&stderr) {
+                (code, Some(message))
+            } else {
+                (
+                    "az-failed".to_string(),
+                    Some(az_failed_message(&stdout, &stderr, code)),
+                )
+            }
+        }
+    }
+}
+
+/// Build the `az devops invoke` argument list for one Git-area REST call.
+fn invoke_args(
+    remote: &AdoRemote,
+    resource: &str,
+    route_params: &[(&str, String)],
+    query_params: &[(&str, String)],
+    method: &str,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "devops".into(),
+        "invoke".into(),
+        "--area".into(),
+        "git".into(),
+        "--resource".into(),
+        resource.into(),
+        "--organization".into(),
+        format!("https://dev.azure.com/{}", remote.org),
+        "--api-version".into(),
+        "7.1".into(),
+        "--http-method".into(),
+        method.into(),
+    ];
+
+    args.push("--route-parameters".into());
+    args.push(format!("project={}", remote.project));
+    args.push(format!("repositoryId={}", remote.repo));
+    for (key, value) in route_params {
+        args.push(format!("{key}={value}"));
+    }
+
+    if !query_params.is_empty() {
+        args.push("--query-parameters".into());
+        for (key, value) in query_params {
+            args.push(format!("{key}={value}"));
+        }
+    }
+
+    args
+}
+
+async fn az_invoke(
+    remote: &AdoRemote,
+    resource: &str,
+    route_params: &[(&str, String)],
+    query_params: &[(&str, String)],
+    method: &str,
+) -> Result<Value, AzFail> {
+    let args = invoke_args(remote, resource, route_params, query_params, method);
+    let output = run_az(args).await.map_err(map_az_error)?;
+    parse_json_from_az_output(&output.stdout).map_err(|err| {
+        (
+            "az-failed".to_string(),
+            Some(format!("Could not parse az output: {err}")),
+        )
+    })
+}
+
+async fn az_invoke_with_body(
+    remote: &AdoRemote,
+    resource: &str,
+    route_params: &[(&str, String)],
+    method: &str,
+    body: Value,
+) -> Result<Value, AzFail> {
+    let args = invoke_args(remote, resource, route_params, &[], method);
+    let output = run_az_with_body(args, body.to_string())
+        .await
+        .map_err(map_az_error)?;
+    parse_json_from_az_output(&output.stdout).map_err(|err| {
+        (
+            "az-failed".to_string(),
+            Some(format!("Could not parse az output: {err}")),
+        )
+    })
+}
+
+fn map_ado_vote(vote: i64) -> &'static str {
+    match vote {
+        10 => "approved",
+        5 => "approvedWithSuggestions",
+        -5 => "waitingForAuthor",
+        -10 => "rejected",
+        _ => "none",
+    }
+}
+
+fn vote_to_az_flag(vote: &str) -> Option<&'static str> {
+    match vote {
+        "approved" => Some("approve"),
+        "approvedWithSuggestions" => Some("approve-with-suggestions"),
+        "waitingForAuthor" => Some("wait-for-author"),
+        "rejected" => Some("reject"),
+        "none" => Some("reset"),
+        _ => None,
+    }
+}
+
+fn map_ado_pr_state(status: &str) -> &'static str {
+    match status.to_ascii_lowercase().as_str() {
+        "active" => "open",
+        "completed" => "merged",
+        "abandoned" => "abandoned",
+        _ => "unknown",
+    }
+}
+
+fn map_ado_change_type(value: &Value) -> &'static str {
+    let raw = match value.as_str() {
+        Some(s) => s.to_ascii_lowercase(),
+        None => match json_i64(value) {
+            // VersionControlChangeType bit flags.
+            Some(1) => "add".to_string(),
+            Some(2) => "edit".to_string(),
+            Some(16) => "delete".to_string(),
+            Some(32) => "rename".to_string(),
+            _ => "edit".to_string(),
+        },
+    };
+    if raw.contains("rename") {
+        "rename"
+    } else if raw.contains("delete") {
+        "delete"
+    } else if raw.contains("add") {
+        "add"
+    } else {
+        "edit"
+    }
+}
+
+/// The commits a PR's diff is computed between: the merge base and the source tip of the latest
+/// iteration.
+async fn ado_pr_commits(
+    remote: &AdoRemote,
+    pull_request_id: i64,
+) -> Result<(String, String, i64), AzFail> {
+    let parsed = az_invoke(
+        remote,
+        "pullRequestIterations",
+        &[("pullRequestId", pull_request_id.to_string())],
+        &[],
+        "GET",
+    )
+    .await?;
+
+    let iterations = parsed
+        .get("value")
+        .and_then(Value::as_array)
+        .cloned()
+        .or_else(|| parsed.as_array().cloned())
+        .unwrap_or_default();
+
+    let Some(latest) = iterations.last() else {
+        return Err((
+            "az-failed".to_string(),
+            Some("Pull request has no iterations.".to_string()),
+        ));
+    };
+
+    let head = latest
+        .pointer("/sourceRefCommit/commitId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let base = latest
+        .pointer("/commonRefCommit/commitId")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            latest
+                .pointer("/targetRefCommit/commitId")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("")
+        .to_string();
+    let iteration_id = latest.get("id").and_then(json_i64).unwrap_or(1);
+
+    Ok((base, head, iteration_id))
+}
+
+/// Full text of `path` at `commit`, or `None` when the item does not exist on that side.
+async fn ado_file_text(
+    remote: &AdoRemote,
+    path: &str,
+    commit: &str,
+) -> Result<Option<(String, bool)>, AzFail> {
+    if commit.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed = az_invoke(
+        remote,
+        "items",
+        &[],
+        &[
+            ("path", format!("/{}", normalize_path(path))),
+            ("versionDescriptor.version", commit.to_string()),
+            ("versionDescriptor.versionType", "commit".to_string()),
+            ("includeContent", "true".to_string()),
+            ("$format", "json".to_string()),
+        ],
+        "GET",
+    )
+    .await;
+
+    match parsed {
+        Ok(value) => {
+            let Some(content) = value.get("content").and_then(Value::as_str) else {
+                return Ok(None);
+            };
+            if looks_binary(content.as_bytes()) {
+                return Ok(Some((String::new(), true)));
+            }
+            Ok(Some((content.to_string(), false)))
+        }
+        // A missing item on one side (added / deleted file) is expected, not an error.
+        Err((code, message)) => {
+            let text = message.clone().unwrap_or_default();
+            if text.contains("TF401174")
+                || text.to_ascii_lowercase().contains("could not be found")
+                || text.contains("404")
+            {
+                Ok(None)
+            } else {
+                Err((code, message))
+            }
+        }
+    }
+}
+
+/// Header detail for the review workspace.
+#[tauri::command]
+pub async fn ado_pr_detail(
+    folder_path: String,
+    pull_request_id: i64,
+) -> AppResult<PrReviewDetailResult> {
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(PrReviewDetailResult::err(code, message)),
+    };
+
+    let pr = match az_invoke(
+        &remote,
+        "pullRequests",
+        &[("pullRequestId", pull_request_id.to_string())],
+        &[],
+        "GET",
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err((code, message)) => return Ok(PrReviewDetailResult::err(code, message)),
+    };
+
+    let current_user = resolve_ado_current_user().await.unwrap_or_default();
+    let my_vote = pr
+        .get("reviewers")
+        .and_then(Value::as_array)
+        .and_then(|reviewers| {
+            reviewers.iter().find_map(|reviewer| {
+                let unique = reviewer.get("uniqueName").and_then(Value::as_str)?;
+                if !ident_eq(unique, &current_user) {
+                    return None;
+                }
+                reviewer.get("vote").and_then(json_i64)
+            })
+        })
+        .map(map_ado_vote)
+        .unwrap_or("none");
+
+    let (base_sha, head_sha) = match ado_pr_commits(&remote, pull_request_id).await {
+        Ok((base, head, _)) => (base, head),
+        Err(_) => (
+            pr.pointer("/lastMergeTargetCommit/commitId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            pr.pointer("/lastMergeSourceCommit/commitId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        ),
+    };
+
+    Ok(PrReviewDetailResult::ok(PrReviewDetail {
+        provider: "ado".to_string(),
+        id: pr
+            .get("pullRequestId")
+            .and_then(json_i64)
+            .unwrap_or(pull_request_id),
+        title: pr
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        description: pr
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        author: pr
+            .pointer("/createdBy/displayName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        source_ref: short_ref(
+            pr.get("sourceRefName")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        ),
+        target_ref: short_ref(
+            pr.get("targetRefName")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        ),
+        head_sha,
+        base_sha,
+        web_url: build_ado_pr_web_url(&remote, pull_request_id),
+        is_draft: pr
+            .get("isDraft")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        state: map_ado_pr_state(pr.get("status").and_then(Value::as_str).unwrap_or("")).to_string(),
+        my_vote: my_vote.to_string(),
+    }))
+}
+
+/// The changed-files sidebar contents, taken from the latest iteration's change entries.
+///
+/// Azure DevOps does not report per-file add/delete counts, so those stay at zero until the file's
+/// diff is loaded and the renderer fills them in.
+#[tauri::command]
+pub async fn ado_pr_changed_files(
+    folder_path: String,
+    pull_request_id: i64,
+) -> AppResult<PrChangedFilesResult> {
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(PrChangedFilesResult::err(code, message)),
+    };
+
+    let (_, _, iteration_id) = match ado_pr_commits(&remote, pull_request_id).await {
+        Ok(value) => value,
+        Err((code, message)) => return Ok(PrChangedFilesResult::err(code, message)),
+    };
+
+    let parsed = match az_invoke(
+        &remote,
+        "pullRequestIterationChanges",
+        &[
+            ("pullRequestId", pull_request_id.to_string()),
+            ("iterationId", iteration_id.to_string()),
+        ],
+        &[("$top", "2000".to_string())],
+        "GET",
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err((code, message)) => return Ok(PrChangedFilesResult::err(code, message)),
+    };
+
+    let entries = parsed
+        .get("changeEntries")
+        .and_then(Value::as_array)
+        .cloned()
+        .or_else(|| parsed.get("value").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+
+    let mut files = Vec::new();
+    for entry in entries.iter().filter_map(Value::as_object) {
+        let item = entry.get("item").and_then(Value::as_object);
+        let is_folder = item
+            .and_then(|i| i.get("isFolder"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if is_folder {
+            continue;
+        }
+        let Some(raw_path) = item.and_then(|i| i.get("path")).and_then(Value::as_str) else {
+            continue;
+        };
+        let path = normalize_path(raw_path);
+        if path.is_empty() {
+            continue;
+        }
+
+        files.push(PrChangedFile {
+            is_markdown: is_markdown_path(&path),
+            previous_path: entry
+                .get("sourceServerItem")
+                .and_then(Value::as_str)
+                .map(normalize_path),
+            change_type: map_ado_change_type(entry.get("changeType").unwrap_or(&Value::Null))
+                .to_string(),
+            additions: 0,
+            deletions: 0,
+            is_binary: false,
+            path,
+        });
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(PrChangedFilesResult::ok(files))
+}
+
+/// Unified diff for one file, computed from the base and head blobs since Azure DevOps exposes no
+/// patch endpoint.
+#[tauri::command]
+pub async fn ado_pr_file_diff(
+    folder_path: String,
+    pull_request_id: i64,
+    path: String,
+) -> AppResult<PrFileDiffResult> {
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(PrFileDiffResult::err(code, message)),
+    };
+
+    let (base_sha, head_sha, _) = match ado_pr_commits(&remote, pull_request_id).await {
+        Ok(value) => value,
+        Err((code, message)) => return Ok(PrFileDiffResult::err(code, message)),
+    };
+
+    let wanted = normalize_path(&path);
+    let base = match ado_file_text(&remote, &wanted, &base_sha).await {
+        Ok(value) => value,
+        Err((code, message)) => return Ok(PrFileDiffResult::err(code, message)),
+    };
+    let head = match ado_file_text(&remote, &wanted, &head_sha).await {
+        Ok(value) => value,
+        Err((code, message)) => return Ok(PrFileDiffResult::err(code, message)),
+    };
+
+    if base.as_ref().map(|(_, bin)| *bin).unwrap_or(false)
+        || head.as_ref().map(|(_, bin)| *bin).unwrap_or(false)
+    {
+        return Ok(PrFileDiffResult::ok(PrFileDiff {
+            path: wanted,
+            hunks: Vec::new(),
+            is_binary: true,
+            truncated: false,
+        }));
+    }
+
+    let (base_text, base_truncated) = clamp_text(&base.map(|(text, _)| text).unwrap_or_default());
+    let (head_text, head_truncated) = clamp_text(&head.map(|(text, _)| text).unwrap_or_default());
+
+    Ok(PrFileDiffResult::ok(PrFileDiff {
+        path: wanted,
+        hunks: diff_blobs(&base_text, &head_text),
+        is_binary: false,
+        truncated: base_truncated || head_truncated,
+    }))
+}
+
+/// Full text of one side of a file, backing the markdown preview and raw views.
+#[tauri::command]
+pub async fn ado_pr_file_content(
+    folder_path: String,
+    pull_request_id: i64,
+    path: String,
+    side: String,
+) -> AppResult<PrFileContentResult> {
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(PrFileContentResult::err(code, message)),
+    };
+
+    let (base_sha, head_sha, _) = match ado_pr_commits(&remote, pull_request_id).await {
+        Ok(value) => value,
+        Err((code, message)) => return Ok(PrFileContentResult::err(code, message)),
+    };
+    let commit = if side == "base" { base_sha } else { head_sha };
+
+    let wanted = normalize_path(&path);
+    let fetched = match ado_file_text(&remote, &wanted, &commit).await {
+        Ok(value) => value,
+        Err((code, message)) => return Ok(PrFileContentResult::err(code, message)),
+    };
+
+    let Some((text, is_binary)) = fetched else {
+        return Ok(PrFileContentResult::err(
+            "az-failed",
+            Some(format!("{wanted} does not exist on the {side} side.")),
+        ));
+    };
+
+    let (text, truncated) = clamp_text(&text);
+    Ok(PrFileContentResult::ok(PrFileContent {
+        path: wanted,
+        side,
+        text,
+        is_binary,
+        truncated,
+    }))
+}
+
+/// Create a review comment thread. Azure DevOps accepts an anchor on any line of the file, so
+/// markdown preview ranges are posted verbatim.
+#[tauri::command]
+pub async fn ado_pr_create_thread(
+    folder_path: String,
+    pull_request_id: i64,
+    anchor: Option<PrCommentAnchor>,
+    content: String,
+) -> AppResult<PrMutationResult> {
+    if content.trim().is_empty() {
+        return Ok(PrMutationResult::err(
+            "az-failed",
+            Some("Comment body is required.".to_string()),
+        ));
+    }
+
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(PrMutationResult::err(code, message)),
+    };
+
+    let mut body = serde_json::json!({
+        "comments": [{ "parentCommentId": 0, "content": content, "commentType": 1 }],
+        "status": 1,
+    });
+
+    if let Some(anchor) = anchor {
+        let (start, end) = anchor.range();
+        let side_start = if anchor.is_right() {
+            "rightFileStart"
+        } else {
+            "leftFileStart"
+        };
+        let side_end = if anchor.is_right() {
+            "rightFileEnd"
+        } else {
+            "leftFileEnd"
+        };
+        body["threadContext"] = serde_json::json!({
+            "filePath": format!("/{}", normalize_path(&anchor.file_path)),
+            side_start: { "line": start, "offset": 1 },
+            side_end: { "line": end, "offset": 1 },
+        });
+    }
+
+    match az_invoke_with_body(
+        &remote,
+        "pullRequestThreads",
+        &[("pullRequestId", pull_request_id.to_string())],
+        "POST",
+        body,
+    )
+    .await
+    {
+        Ok(_) => Ok(PrMutationResult::ok(None)),
+        Err((code, message)) => Ok(PrMutationResult::err(code, message)),
+    }
+}
+
+/// Reply to an existing thread.
+#[tauri::command]
+pub async fn ado_pr_reply(
+    folder_path: String,
+    pull_request_id: i64,
+    thread_id: String,
+    content: String,
+) -> AppResult<PrMutationResult> {
+    if content.trim().is_empty() {
+        return Ok(PrMutationResult::err(
+            "az-failed",
+            Some("Reply body is required.".to_string()),
+        ));
+    }
+
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(PrMutationResult::err(code, message)),
+    };
+
+    let body = serde_json::json!({ "parentCommentId": 1, "content": content, "commentType": 1 });
+
+    match az_invoke_with_body(
+        &remote,
+        "pullRequestThreadComments",
+        &[
+            ("pullRequestId", pull_request_id.to_string()),
+            ("threadId", thread_id.clone()),
+        ],
+        "POST",
+        body,
+    )
+    .await
+    {
+        Ok(_) => Ok(PrMutationResult::ok(None)),
+        Err((code, message)) => Ok(PrMutationResult::err(code, message)),
+    }
+}
+
+/// Resolve (`fixed`) or reopen (`active`) a thread.
+#[tauri::command]
+pub async fn ado_pr_set_thread_status(
+    folder_path: String,
+    pull_request_id: i64,
+    thread_id: String,
+    resolved: bool,
+) -> AppResult<PrMutationResult> {
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(PrMutationResult::err(code, message)),
+    };
+
+    let body = serde_json::json!({ "status": if resolved { "fixed" } else { "active" } });
+
+    match az_invoke_with_body(
+        &remote,
+        "pullRequestThreads",
+        &[
+            ("pullRequestId", pull_request_id.to_string()),
+            ("threadId", thread_id.clone()),
+        ],
+        "PATCH",
+        body,
+    )
+    .await
+    {
+        Ok(_) => Ok(PrMutationResult::ok(None)),
+        Err((code, message)) => Ok(PrMutationResult::err(code, message)),
+    }
+}
+
+/// Submit the current user's vote on the pull request.
+#[tauri::command]
+pub async fn ado_pr_set_vote(
+    folder_path: String,
+    pull_request_id: i64,
+    vote: String,
+) -> AppResult<PrMutationResult> {
+    let remote = match resolve_ado_remote(&folder_path).await {
+        Ok(remote) => remote,
+        Err((code, message)) => return Ok(PrMutationResult::err(code, message)),
+    };
+
+    let Some(flag) = vote_to_az_flag(&vote) else {
+        return Ok(PrMutationResult::err(
+            "az-failed",
+            Some(format!("Unsupported vote: {vote}")),
+        ));
+    };
+
+    match run_az(vec![
+        "repos".into(),
+        "pr".into(),
+        "set-vote".into(),
+        "--id".into(),
+        pull_request_id.to_string(),
+        "--vote".into(),
+        flag.into(),
+        "--organization".into(),
+        format!("https://dev.azure.com/{}", remote.org),
+    ])
+    .await
+    {
+        Ok(_) => Ok(PrMutationResult::ok(None)),
+        Err(err) => {
+            let (code, message) = map_az_error(err);
+            Ok(PrMutationResult::err(code, message))
+        }
+    }
 }

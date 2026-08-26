@@ -17,9 +17,13 @@ export function usePrThreads(
   folderPath: string | null,
   remoteKind: RepositoryRemoteKind | null,
   pullRequestId: number | null,
-  enabled: boolean
+  enabled: boolean,
+  includeResolved = false
 ): UsePrThreadsResult {
-  const key = folderPath && remoteKind && pullRequestId ? `${folderPath}::${pullRequestId}` : null
+  const key =
+    folderPath && remoteKind && pullRequestId
+      ? `${folderPath}::${pullRequestId}::${includeResolved ? 'all' : 'open'}`
+      : null
   const [snapshot, setSnapshot] = React.useState<{
     key: string | null
     data: LoadedPrThreads | null
@@ -34,7 +38,7 @@ export function usePrThreads(
 
   const runRefresh = React.useCallback(async (): Promise<void> => {
     if (!folderPath || !remoteKind || !pullRequestId || !key) return
-    const request = getPrThreads(remoteKind, { folderPath, pullRequestId })
+    const request = getPrThreads(remoteKind, { folderPath, pullRequestId, includeResolved })
     if (!request) {
       setSnapshot({ key, data: null, error: null })
       return
@@ -58,7 +62,7 @@ export function usePrThreads(
     } finally {
       setIsLoading(false)
     }
-  }, [folderPath, remoteKind, pullRequestId, key])
+  }, [folderPath, remoteKind, pullRequestId, key, includeResolved])
 
   React.useEffect(() => {
     activeKeyRef.current = key

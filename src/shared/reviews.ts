@@ -62,15 +62,28 @@ export type RepoPrComment = {
 /** Provider-agnostic PR review-comment thread shared by the ADO and GitHub backends. */
 export type RepoPrThread = {
   id: number
+  /**
+   * Provider handle used for writes (replies, resolve/unresolve): the GraphQL node id on GitHub,
+   * the numeric thread id as a string on Azure DevOps.
+   */
+  providerThreadId: string
   status: RepoPrThreadStatus
   filePath: string | null
   lineNumber: number | null
+  /** Last line of the thread's anchor range; equals `lineNumber` for single-line threads. */
+  endLineNumber: number | null
+  isResolved: boolean
   comments: RepoPrComment[]
   lastUpdated: string | null
   webUrl: string
 }
 
-export type RepoPrThreadsRequest = { folderPath: string; pullRequestId: number }
+export type RepoPrThreadsRequest = {
+  folderPath: string
+  pullRequestId: number
+  /** Include resolved/closed threads. Defaults to false (only threads needing attention). */
+  includeResolved?: boolean
+}
 
 export type RepoPrThreadsResult =
   | { ok: true; threads: RepoPrThread[] }

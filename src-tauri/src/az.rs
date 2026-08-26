@@ -37,6 +37,38 @@ pub async fn run_az(args: Vec<String>) -> Result<AzOutput, AzError> {
         })?
 }
 
+/// Run `az` with a JSON request body.
+///
+/// `az devops invoke` only accepts a body via `--in-file`, and passing JSON inline would be
+/// mangled by the `cmd /c` wrapper on Windows anyway, so the body is written to a temp file that
+/// is removed once the command returns.
+pub async fn run_az_with_body(args: Vec<String>, body: String) -> Result<AzOutput, AzError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::env::temp_dir().join(format!("devtrees-az-{}.json", uuid::Uuid::new_v4()));
+        if let Err(err) = std::fs::write(&path, body.as_bytes()) {
+            return Err(AzError::Failed {
+                stdout: String::new(),
+                stderr: format!("Could not write az request body: {err}"),
+                code: None,
+            });
+        }
+
+        let mut full_args = args;
+        full_args.push("--in-file".into());
+        full_args.push(path.to_string_lossy().to_string());
+
+        let result = run_az_blocking(&full_args);
+        let _ = std::fs::remove_file(&path);
+        result
+    })
+    .await
+    .map_err(|e| AzError::Failed {
+        stdout: String::new(),
+        stderr: format!("az task panicked: {e}"),
+        code: None,
+    })?
+}
+
 fn run_az_blocking(args: &[String]) -> Result<AzOutput, AzError> {
     #[cfg(windows)]
     let mut cmd = {

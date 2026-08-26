@@ -28,6 +28,7 @@ dirs = "5"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 base64 = "0.22"
+similar = "2"
 time = { version = "0.3", features = ["formatting", "macros"] }
 portable-pty = "0.9"
 

@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   ExternalLink as ExternalLinkIcon,
+  FileDiff as FileDiffIcon,
   GitPullRequest as GitPullRequestIcon,
   Loader2 as Loader2Icon,
   RefreshCw as RefreshCwIcon,
@@ -12,6 +13,7 @@ import { DashboardCard } from '@/components/detail/dashboard-card'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Input } from '@/components/ui/input'
+import { usePrReviewWorkspace } from '@/contexts/pr-review-context'
 import { useRepoOpenPrs } from '@/hooks/use-repo-open-prs'
 import { buildPrCodeReviewPrompt } from '@/lib/copilot-pr-review-prompt'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
@@ -161,6 +163,16 @@ function CategorySection({
 function PrRow({ pr, folderPath }: { pr: RepoPr; folderPath: string }): React.JSX.Element {
   const [isLaunching, setIsLaunching] = React.useState(false)
   const launchCopilot = useCopilotLauncher()
+  const { openPrReview } = usePrReviewWorkspace()
+
+  const openInApp = (): void => {
+    openPrReview({
+      folderPath,
+      remoteKind: pr.provider,
+      pullRequestId: pr.id,
+      title: pr.title
+    })
+  }
 
   const handleReview = async (): Promise<void> => {
     if (isLaunching) return
@@ -199,19 +211,36 @@ function PrRow({ pr, folderPath }: { pr: RepoPr; folderPath: string }): React.JS
       <span className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]">
         #{pr.id}
       </span>
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-xs" title={pr.title}>
-          {pr.title}
-        </span>
+      <button
+        type="button"
+        onClick={openInApp}
+        className="flex min-w-0 flex-1 cursor-pointer flex-col text-left"
+        title={`Review PR #${pr.id} in DevTrees`}
+      >
+        <span className="truncate text-xs">{pr.title}</span>
         <span className="text-muted-foreground truncate text-[10px]" title={pr.author}>
           {pr.author || 'Unknown'} · {pr.sourceRef} → {pr.targetRef}
         </span>
-      </div>
+      </button>
       {pr.isDraft ? (
         <span className="bg-muted text-muted-foreground shrink-0 rounded-full px-1.5 py-0.5 text-[10px]">
           Draft
         </span>
       ) : null}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={openInApp}
+            aria-label={`Review PR #${pr.id} in DevTrees`}
+          >
+            <FileDiffIcon className="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Review in app</TooltipContent>
+      </Tooltip>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
