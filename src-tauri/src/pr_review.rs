@@ -258,7 +258,8 @@ pub fn parse_unified_patch(patch: &str) -> Vec<PrDiffHunk> {
         let line = line.strip_suffix('\r').unwrap_or(line);
 
         if line.starts_with("@@") {
-            if let Some((base_start, base_lines, head_start, head_lines)) = parse_hunk_header(line) {
+            if let Some((base_start, base_lines, head_start, head_lines)) = parse_hunk_header(line)
+            {
                 base_cursor = base_start;
                 head_cursor = head_start;
                 hunks.push(PrDiffHunk {
@@ -442,11 +443,7 @@ pub fn commentable_head_lines(hunks: &[PrDiffHunk]) -> Vec<i64> {
 ///
 /// Returns `None` when the range shares no line with the diff at all, in which case the caller
 /// falls back to a file-level comment that quotes the range.
-pub fn clamp_anchor_to_diff(
-    commentable: &[i64],
-    start: i64,
-    end: i64,
-) -> Option<(i64, i64)> {
+pub fn clamp_anchor_to_diff(commentable: &[i64], start: i64, end: i64) -> Option<(i64, i64)> {
     if commentable.is_empty() {
         return None;
     }

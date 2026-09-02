@@ -251,7 +251,10 @@ pub async fn repositories_list(state: State<'_, DbState>) -> AppResult<Vec<Repos
 }
 
 #[tauri::command]
-pub async fn repositories_remove(state: State<'_, DbState>, id: String) -> AppResult<Vec<Repository>> {
+pub async fn repositories_remove(
+    state: State<'_, DbState>,
+    id: String,
+) -> AppResult<Vec<Repository>> {
     {
         let conn = state
             .0
@@ -279,8 +282,8 @@ pub async fn repositories_reorder(
             // their current order. This makes the result robust to stale, partial,
             // duplicated, or unknown ids so no row keeps a tying/stale sort_order.
             let mut existing: Vec<String> = {
-                let mut stmt =
-                    tx.prepare("SELECT id FROM repositories ORDER BY sort_order ASC, added_at ASC")?;
+                let mut stmt = tx
+                    .prepare("SELECT id FROM repositories ORDER BY sort_order ASC, added_at ASC")?;
                 let ids = stmt
                     .query_map([], |r| r.get::<_, String>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?;

@@ -1,6 +1,6 @@
 import { useCallback } from 'react'
 
-import { useSessions } from '@/contexts/sessions-context'
+import { useAgentSessions } from '@/contexts/agent-sessions-context'
 import { useTerminalMode } from '@/contexts/terminal-mode-context'
 import { launchCopilotCli, launchCopilotResume } from '@/lib/system'
 
@@ -32,7 +32,7 @@ function basename(path: string): string {
  */
 export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<CopilotLaunchResult> {
   const { terminalMode } = useTerminalMode()
-  const { createSession } = useSessions()
+  const { createSession } = useAgentSessions()
 
   return useCallback(
     async (opts: CopilotLaunchOptions): Promise<CopilotLaunchResult> => {
@@ -40,9 +40,10 @@ export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<Co
 
       if (terminalMode === 'embedded') {
         const result = await createSession({
+          purpose: 'interactive',
           folderPath,
           prompt,
-          resumeSessionId,
+          resumeSdkSessionId: resumeSessionId,
           label: label || basename(folderPath) || 'Copilot',
           branch,
           repository

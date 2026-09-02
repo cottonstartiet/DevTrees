@@ -68,8 +68,7 @@ import {
 import { cn } from '@/lib/utils'
 import { openInWindowsTerminal } from '@/lib/system'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
-import { useSessions } from '@/contexts/sessions-context'
-import { sessionPrimaryLabel, sessionRepoLabel } from '@/lib/session-label'
+import { useAgentSessions } from '@/contexts/agent-sessions-context'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -379,7 +378,7 @@ export function AppSidebar({
   const [repositoriesOpen, setRepositoriesOpen] = React.useState(true)
   const [sessionsOpen, setSessionsOpen] = React.useState(true)
   const launchCopilot = useCopilotLauncher()
-  const { sessions, activeSessionId, selectSession, requestCloseSession } = useSessions()
+  const { sessions, activeSessionId, selectSession, close } = useAgentSessions()
 
   const handleStartCopilotSession = React.useCallback(
     async (wt: Worktree, repository?: string): Promise<void> => {
@@ -529,8 +528,8 @@ export function AppSidebar({
                 ) : (
                   <SidebarMenu>
                     {sessions.map((session) => {
-                      const primary = sessionPrimaryLabel(session)
-                      const repoLabel = sessionRepoLabel(session)
+                      const primary = session.branch || session.label
+                      const repoLabel = session.repository
                       return (
                         <SidebarMenuItem key={session.id}>
                           <SidebarMenuButton
@@ -545,8 +544,8 @@ export function AppSidebar({
                             <CircleDotIcon
                               className={cn(
                                 'size-3.5 shrink-0',
-                                session.status === 'running'
-                                  ? 'text-emerald-500'
+                                session.lifecycle === 'failed'
+                                  ? 'text-destructive'
                                   : 'text-muted-foreground'
                               )}
                             />
@@ -562,7 +561,7 @@ export function AppSidebar({
                           <SidebarMenuAction
                             showOnHover
                             title="Close session"
-                            onClick={() => requestCloseSession(session.id)}
+                            onClick={() => void close(session.id)}
                           >
                             <XIcon />
                             <span className="sr-only">Close session</span>

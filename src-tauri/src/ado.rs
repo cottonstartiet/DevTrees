@@ -1163,10 +1163,7 @@ pub async fn ado_pr_detail(
         head_sha,
         base_sha,
         web_url: build_ado_pr_web_url(&remote, pull_request_id),
-        is_draft: pr
-            .get("isDraft")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+        is_draft: pr.get("isDraft").and_then(Value::as_bool).unwrap_or(false),
         state: map_ado_pr_state(pr.get("status").and_then(Value::as_str).unwrap_or("")).to_string(),
         my_vote: my_vote.to_string(),
     }))

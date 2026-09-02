@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -103,6 +104,74 @@ fn migrations() -> Vec<Migration> {
                    ON chat_messages(conversation_id, created_at ASC);",
             )
         },
+        // 0007 -> user_version 7: durable Copilot SDK harness sessions and events.
+        |db| {
+            db.execute_batch(
+                "CREATE TABLE agent_sessions (
+                   id               TEXT PRIMARY KEY,
+                   sdk_session_id   TEXT UNIQUE,
+                   purpose          TEXT NOT NULL
+                     CHECK (purpose IN ('pr_review', 'interactive')),
+                   label            TEXT NOT NULL,
+                   folder_path      TEXT NOT NULL,
+                   branch           TEXT,
+                   repository       TEXT,
+                   provider         TEXT,
+                   pr_id            TEXT,
+                   pr_title         TEXT,
+                   lifecycle        TEXT NOT NULL
+                     CHECK (lifecycle IN (
+                       'initializing', 'active', 'idle', 'waiting_for_user',
+                       'waiting_for_permission', 'failed', 'stopped'
+                     )),
+                   activity         TEXT NOT NULL
+                     CHECK (activity IN (
+                       'none', 'intent', 'reasoning', 'streaming_message', 'running_tool'
+                     )),
+                   current_intent   TEXT,
+                   last_error       TEXT,
+                   created_at       INTEGER NOT NULL,
+                   updated_at       INTEGER NOT NULL,
+                   completed_at     INTEGER,
+                   last_seq         INTEGER NOT NULL DEFAULT 0
+                 );
+                 CREATE INDEX idx_agent_sessions_updated_at
+                   ON agent_sessions(updated_at DESC);
+                 CREATE INDEX idx_agent_sessions_pr
+                   ON agent_sessions(provider, repository, pr_id);
+
+                 CREATE TABLE agent_session_events (
+                   event_id         TEXT PRIMARY KEY,
+                   session_id       TEXT NOT NULL
+                     REFERENCES agent_sessions(id) ON DELETE CASCADE,
+                   seq              INTEGER NOT NULL,
+                   event_type       TEXT NOT NULL,
+                   parent_id        TEXT,
+                   agent_id         TEXT,
+                   ephemeral        INTEGER NOT NULL DEFAULT 0,
+                   data_json        TEXT NOT NULL,
+                   timestamp        TEXT NOT NULL,
+                   created_at       INTEGER NOT NULL,
+                   UNIQUE(session_id, seq)
+                 );
+                 CREATE INDEX idx_agent_session_events_session
+                   ON agent_session_events(session_id, seq ASC);
+
+                 CREATE TABLE agent_pending_interactions (
+                   id               TEXT PRIMARY KEY,
+                   session_id       TEXT NOT NULL
+                     REFERENCES agent_sessions(id) ON DELETE CASCADE,
+                   kind             TEXT NOT NULL
+                     CHECK (kind IN ('permission', 'user_input')),
+                   request_id       TEXT NOT NULL,
+                   payload_json     TEXT NOT NULL,
+                   created_at       INTEGER NOT NULL,
+                   UNIQUE(session_id, request_id)
+                 );
+                 CREATE INDEX idx_agent_pending_interactions_session
+                   ON agent_pending_interactions(session_id, created_at ASC);",
+            )
+        },
     ]
 }
 
@@ -129,6 +198,40 @@ fn recover_interrupted_chat_messages(db: &Connection) -> AppResult<()> {
          WHERE status = 'streaming'",
         [],
     )?;
+    Ok(())
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn recover_interrupted_agent_sessions(db: &Connection) -> AppResult<()> {
+    let recovered_at = now_ms();
+    db.execute(
+        "UPDATE agent_sessions
+         SET lifecycle = 'idle', activity = 'none', current_intent = NULL,
+             updated_at = ?1
+         WHERE purpose = 'interactive'
+           AND lifecycle IN (
+             'initializing', 'active', 'waiting_for_user', 'waiting_for_permission'
+           )",
+        [recovered_at],
+    )?;
+    db.execute(
+        "UPDATE agent_sessions
+         SET lifecycle = 'failed', activity = 'none', current_intent = NULL,
+             last_error = 'Review was interrupted when DevTrees closed.',
+             updated_at = ?1, completed_at = ?1
+         WHERE purpose = 'pr_review'
+           AND lifecycle IN (
+             'initializing', 'active', 'waiting_for_user', 'waiting_for_permission'
+           )",
+        [recovered_at],
+    )?;
+    db.execute("DELETE FROM agent_pending_interactions", [])?;
     Ok(())
 }
 
@@ -210,6 +313,7 @@ pub fn init() -> AppResult<Connection> {
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
     run_migrations(&conn)?;
     recover_interrupted_chat_messages(&conn)?;
+    recover_interrupted_agent_sessions(&conn)?;
     import_legacy_json(&conn)?;
     Ok(conn)
 }
@@ -227,7 +331,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         conn.execute(
             "INSERT INTO chat_conversations
@@ -254,5 +358,57 @@ mod tests {
             .unwrap();
         assert_eq!(status, "error");
         assert_eq!(error, "Response was interrupted when DevTrees closed.");
+
+        conn.execute(
+            "INSERT INTO agent_sessions
+               (id, purpose, label, folder_path, lifecycle, activity, created_at, updated_at)
+             VALUES ('agent', 'interactive', 'Agent', 'C:\\repo', 'active', 'running_tool', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_sessions
+               (id, purpose, label, folder_path, lifecycle, activity, created_at, updated_at)
+             VALUES ('review', 'pr_review', 'Review', 'C:\\repo', 'active', 'running_tool', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_pending_interactions
+               (id, session_id, kind, request_id, payload_json, created_at)
+             VALUES ('interaction', 'agent', 'permission', 'request', '{}', 1)",
+            [],
+        )
+        .unwrap();
+
+        recover_interrupted_agent_sessions(&conn).unwrap();
+        let (lifecycle, activity): (String, String) = conn
+            .query_row(
+                "SELECT lifecycle, activity FROM agent_sessions WHERE id = 'agent'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(lifecycle, "idle");
+        assert_eq!(activity, "none");
+        let (lifecycle, error, completed_at): (String, String, i64) = conn
+            .query_row(
+                "SELECT lifecycle, last_error, completed_at
+                 FROM agent_sessions WHERE id = 'review'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(lifecycle, "failed");
+        assert_eq!(error, "Review was interrupted when DevTrees closed.");
+        assert!(completed_at > 1);
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM agent_pending_interactions",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 0);
     }
 }

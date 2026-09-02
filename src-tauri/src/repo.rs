@@ -1,5 +1,5 @@
-use std::fs;
 use std::collections::HashMap;
+use std::fs;
 use std::path::{absolute, Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,14 +10,16 @@ use serde_json::Value;
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::ado::{build_ado_branch_url, build_ado_commit_url, build_ado_pr_web_url, parse_ado_remote, AdoRemote};
+use crate::ado::{
+    build_ado_branch_url, build_ado_commit_url, build_ado_pr_web_url, parse_ado_remote, AdoRemote,
+};
 use crate::az::{classify_az_generic_failure, run_az, AzError};
 use crate::error::AppResult;
 use crate::gh::{is_not_logged_in, run_gh, GhError};
 use crate::git::{run_git, GitError};
 use crate::github::{
-    build_github_branch_url, build_github_commit_url, build_github_pr_web_url,
-    parse_github_remote, GithubRemote,
+    build_github_branch_url, build_github_commit_url, build_github_pr_web_url, parse_github_remote,
+    GithubRemote,
 };
 use crate::repositories::classify_remote_url;
 
@@ -1371,8 +1373,7 @@ async fn open_pull_request_github(
                 ));
             }
             static ALREADY_EXISTS: OnceLock<Regex> = OnceLock::new();
-            let re = ALREADY_EXISTS
-                .get_or_init(|| Regex::new(r"(?i)already exists").unwrap());
+            let re = ALREADY_EXISTS.get_or_init(|| Regex::new(r"(?i)already exists").unwrap());
             if re.is_match(&stderr) {
                 return Ok(OpenPullRequestResult::err(
                     "gh-pr-exists",
@@ -2127,7 +2128,9 @@ pub async fn repo_commit(
 }
 
 #[tauri::command]
-pub async fn repo_worktrees_overview(repository_path: String) -> AppResult<WorktreesOverviewResult> {
+pub async fn repo_worktrees_overview(
+    repository_path: String,
+) -> AppResult<WorktreesOverviewResult> {
     let worktrees = list_worktrees_local(&repository_path).await;
     let mut rows = Vec::new();
     for worktree in worktrees {
@@ -2213,11 +2216,7 @@ pub async fn repo_list_my_branches(repository_path: String) -> AppResult<MyBranc
 
     let local_ref = format!("refs/heads/{prefix}");
     if let Some(output) = try_git(
-        vec![
-            "for-each-ref".into(),
-            format_arg.clone(),
-            local_ref,
-        ],
+        vec!["for-each-ref".into(), format_arg.clone(), local_ref],
         repository_path.clone(),
     )
     .await

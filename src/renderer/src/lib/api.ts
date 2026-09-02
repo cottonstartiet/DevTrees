@@ -109,6 +109,17 @@ import type {
   ChatMessage
 } from '@shared/chat'
 import { ChatEvents } from '@shared/chat'
+import type {
+  AgentPendingInteraction,
+  AgentSession,
+  AgentSessionSnapshot,
+  AgentSessionUpdate,
+  AnswerAgentUserInputRequest,
+  CreateAgentSessionRequest,
+  CreateAgentSessionResult,
+  ResolveAgentPermissionRequest
+} from '@shared/agent-session'
+import { AgentSessionEvents } from '@shared/agent-session'
 
 type Args = Record<string, unknown>
 
@@ -408,6 +419,33 @@ const api = {
       return () => {
         void unlisten.then((un) => un())
       }
+    }
+  },
+  agentSessions: {
+    create: (req: CreateAgentSessionRequest): Promise<CreateAgentSessionResult> =>
+      result('agent_sessions_create', { req }, (error) => ({ ok: false, error })),
+    list: (): Promise<AgentSession[]> => invoke('agent_sessions_list'),
+    snapshot: (id: string): Promise<AgentSessionSnapshot> =>
+      invoke('agent_sessions_snapshot', { id }),
+    send: (id: string, prompt: string): Promise<void> =>
+      invoke('agent_sessions_send', { id, prompt }),
+    abort: (id: string): Promise<void> => invoke('agent_sessions_abort', { id }),
+    close: (id: string): Promise<void> => invoke('agent_sessions_close', { id }),
+    resolvePermission: (req: ResolveAgentPermissionRequest): Promise<void> =>
+      invoke('agent_sessions_resolve_permission', { req }),
+    answerUserInput: (req: AnswerAgentUserInputRequest): Promise<void> =>
+      invoke('agent_sessions_answer_user_input', { req }),
+    onUpdate: (cb: (update: AgentSessionUpdate) => void): (() => void) => {
+      const unlisten = listen<AgentSessionUpdate>(AgentSessionEvents.Update, (event) =>
+        cb(event.payload)
+      )
+      return () => void unlisten.then((un) => un())
+    },
+    onInteraction: (cb: (interaction: AgentPendingInteraction) => void): (() => void) => {
+      const unlisten = listen<AgentPendingInteraction>(AgentSessionEvents.Interaction, (event) =>
+        cb(event.payload)
+      )
+      return () => void unlisten.then((un) => un())
     }
   },
   chat: {

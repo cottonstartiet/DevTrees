@@ -61,9 +61,8 @@ pub fn parse_github_remote(raw_url: &str) -> Option<GithubRemote> {
         });
     }
 
-    let scp = SCP.get_or_init(|| {
-        Regex::new(r"(?i)^[^@\s]+@github\.com:([^/]+)/(.+?)(?:\.git)?$").unwrap()
-    });
+    let scp = SCP
+        .get_or_init(|| Regex::new(r"(?i)^[^@\s]+@github\.com:([^/]+)/(.+?)(?:\.git)?$").unwrap());
     if let Some(caps) = scp.captures(url) {
         return Some(GithubRemote {
             owner: caps.get(1)?.as_str().to_string(),
@@ -96,7 +95,11 @@ pub fn build_github_branch_url(remote: &GithubRemote, branch: &str) -> String {
 }
 
 /// URL for a specific PR review comment/thread, anchored to its first comment's database id.
-pub fn build_github_pr_thread_url(remote: &GithubRemote, pr_number: i64, comment_id: i64) -> String {
+pub fn build_github_pr_thread_url(
+    remote: &GithubRemote,
+    pr_number: i64,
+    comment_id: i64,
+) -> String {
     format!(
         "{}#discussion_r{comment_id}",
         build_github_pr_web_url(remote, pr_number)
@@ -132,7 +135,9 @@ pub async fn resolve_github_remote(
         Some(remote) => Ok(remote),
         None => Err((
             "unsupported-remote".to_string(),
-            Some(format!("Origin is not a recognized GitHub remote: {origin}")),
+            Some(format!(
+                "Origin is not a recognized GitHub remote: {origin}"
+            )),
         )),
     }
 }
@@ -727,9 +732,20 @@ pub async fn github_pr_detail(
 
     Ok(PrReviewDetailResult::ok(PrReviewDetail {
         provider: "github".to_string(),
-        id: pr.get("number").and_then(Value::as_i64).unwrap_or(pull_request_id),
-        title: pr.get("title").and_then(Value::as_str).unwrap_or("").to_string(),
-        description: pr.get("body").and_then(Value::as_str).unwrap_or("").to_string(),
+        id: pr
+            .get("number")
+            .and_then(Value::as_i64)
+            .unwrap_or(pull_request_id),
+        title: pr
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        description: pr
+            .get("body")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
         author,
         source_ref: pr
             .get("headRefName")
@@ -783,7 +799,10 @@ pub async fn github_pr_changed_files(
         .filter_map(Value::as_object)
         .map(|file| {
             let path = normalize_path(file.get("filename").and_then(Value::as_str).unwrap_or(""));
-            let status = file.get("status").and_then(Value::as_str).unwrap_or("modified");
+            let status = file
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("modified");
             let changes = file.get("changes").and_then(Value::as_i64).unwrap_or(0);
             let has_patch = file.get("patch").and_then(Value::as_str).is_some();
             PrChangedFile {
@@ -867,7 +886,11 @@ pub async fn github_pr_file_content(
         Err((code, message)) => return Ok(PrFileContentResult::err(code, message)),
     };
 
-    let field = if side == "base" { "baseRefOid" } else { "headRefOid" };
+    let field = if side == "base" {
+        "baseRefOid"
+    } else {
+        "headRefOid"
+    };
     let sha = match gh_text(
         vec![
             "pr".into(),
@@ -967,11 +990,7 @@ pub async fn github_pr_create_thread(
     let Some(anchor) = anchor else {
         return Ok(post_result(
             gh_text_with_body(
-                vec![
-                    "pr".into(),
-                    "comment".into(),
-                    pull_request_id.to_string(),
-                ],
+                vec!["pr".into(), "comment".into(), pull_request_id.to_string()],
                 &folder_path,
                 "--body-file",
                 content,
@@ -1219,5 +1238,3 @@ fn post_result(outcome: Result<String, GhFail>) -> PrMutationResult {
         Err((code, message)) => PrMutationResult::err(code, message),
     }
 }
-
-

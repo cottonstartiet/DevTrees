@@ -1,7 +1,9 @@
 mod ado;
+mod agent_sessions;
 mod az;
 mod chat;
 mod copilot_history;
+mod copilot_runtime;
 mod db;
 mod error;
 mod gh;
@@ -20,7 +22,9 @@ use std::sync::Mutex;
 
 use tauri::Manager;
 
+use agent_sessions::AgentSessionManager;
 use chat::ChatManager;
+use copilot_runtime::CopilotRuntime;
 use db::DbState;
 use sessions::SessionManager;
 
@@ -59,6 +63,8 @@ pub fn run() {
             app.manage(DbState(Mutex::new(conn)));
             app.manage(SessionManager::default());
             app.manage(ChatManager::default());
+            app.manage(CopilotRuntime::default());
+            app.manage(AgentSessionManager::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -78,6 +84,14 @@ pub fn run() {
             chat::chat_list_messages,
             chat::chat_send,
             chat::chat_abort,
+            agent_sessions::agent_sessions_create,
+            agent_sessions::agent_sessions_list,
+            agent_sessions::agent_sessions_snapshot,
+            agent_sessions::agent_sessions_send,
+            agent_sessions::agent_sessions_abort,
+            agent_sessions::agent_sessions_close,
+            agent_sessions::agent_sessions_resolve_permission,
+            agent_sessions::agent_sessions_answer_user_input,
             system::system_open_in_vscode,
             system::system_open_in_vscode_scm,
             system::system_open_in_windows_terminal,
@@ -148,6 +162,12 @@ pub fn run() {
                 }
                 if let Some(manager) = app.try_state::<ChatManager>() {
                     tauri::async_runtime::block_on(manager.shutdown());
+                }
+                if let Some(manager) = app.try_state::<AgentSessionManager>() {
+                    tauri::async_runtime::block_on(manager.shutdown());
+                }
+                if let Some(runtime) = app.try_state::<CopilotRuntime>() {
+                    tauri::async_runtime::block_on(runtime.shutdown());
                 }
             }
         });

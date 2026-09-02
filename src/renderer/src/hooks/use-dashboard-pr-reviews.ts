@@ -1,15 +1,13 @@
 import * as React from 'react'
 
-import { useSessions } from '@/contexts/sessions-context'
+import { useAgentSessions } from '@/contexts/agent-sessions-context'
 import { buildPrCodeReviewPrompt } from '@/lib/copilot-pr-review-prompt'
 import { getRepoOpenPrs } from '@/lib/reviews'
-import { cleanTerminalOutput } from '@/lib/terminal-output'
+import type { AgentSession, AgentSessionEvent, JsonValue } from '@shared/agent-session'
 import type { RepoPr } from '@shared/reviews'
 import type { Repository } from '@shared/repository'
 
-const STORAGE_KEY = 'devtrees.dashboard-pr-reviews.v1'
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000
-const MAX_REVIEW_OUTPUT_CHARS = 20_000
 
 export type DashboardReviewState = 'queued' | 'running' | 'completed' | 'error'
 
@@ -41,61 +39,64 @@ function reviewKey(repository: Repository, pr: RepoPr): string {
   return `${repository.path.toLowerCase()}::${pr.provider}::${pr.id}`
 }
 
-function loadReviewRecords(): Record<string, DashboardReviewRecord> {
-  try {
-    const value = window.localStorage.getItem(STORAGE_KEY)
-    if (!value) return {}
-    const parsed: unknown = JSON.parse(value)
-    return parsed && typeof parsed === 'object'
-      ? (parsed as Record<string, DashboardReviewRecord>)
-      : {}
-  } catch (error) {
-    console.warn('[dashboard] could not load PR review state:', error)
-    return {}
-  }
+function sessionReviewKey(session: AgentSession): string | null {
+  if (session.purpose !== 'pr_review' || !session.provider || !session.prId) return null
+  return `${session.folderPath.toLowerCase()}::${session.provider}::${session.prId}`
 }
 
-function persistReviewRecords(records: Record<string, DashboardReviewRecord>): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records))
-  } catch (error) {
-    console.warn('[dashboard] could not persist PR review state:', error)
-  }
+function stringField(value: JsonValue, field: string): string | undefined {
+  if (!value || Array.isArray(value) || typeof value !== 'object') return undefined
+  const candidate = value[field]
+  return typeof candidate === 'string' ? candidate : undefined
 }
 
-function tail(text: string, length: number): string {
-  return text.length > length ? text.slice(text.length - length) : text
+function reviewOutput(events: AgentSessionEvent[]): string | undefined {
+  const messages = events
+    .filter((event) => event.type === 'assistant.message' && !event.agentId)
+    .map((event) => stringField(event.data, 'content')?.trim())
+    .filter((value): value is string => !!value)
+  return messages.at(-1)
+}
+
+function reviewRecord(
+  key: string,
+  session: AgentSession,
+  events: AgentSessionEvent[]
+): DashboardReviewRecord {
+  const output = reviewOutput(events)
+  const completed = events.some((event) => event.type === 'session.idle')
+  const state: DashboardReviewState =
+    session.lifecycle === 'failed' || (session.lifecycle === 'stopped' && !completed)
+      ? 'error'
+      : session.lifecycle === 'idle' || completed
+        ? 'completed'
+        : session.lifecycle === 'initializing'
+          ? 'queued'
+          : 'running'
+  return {
+    key,
+    state,
+    sessionId: session.id,
+    triggeredAt: session.createdAt,
+    completedAt: session.completedAt,
+    output,
+    error:
+      session.lastError ??
+      (session.lifecycle === 'stopped' && !completed
+        ? 'Review stopped before Copilot reported completion.'
+        : undefined)
+  }
 }
 
 export function useDashboardPrReviews(repositories: Repository[]): DashboardPrReviews {
-  const { sessions, activityBySessionId, createSession, snapshot } = useSessions()
+  const { reviewSessions, eventsBySessionId, createSession } = useAgentSessions()
   const [assigned, setAssigned] = React.useState<
     Array<{ key: string; repository: Repository; pr: RepoPr }>
   >([])
-  const [records, setRecords] =
-    React.useState<Record<string, DashboardReviewRecord>>(loadReviewRecords)
   const [errors, setErrors] = React.useState<string[]>([])
   const [isLoading, setIsLoading] = React.useState(false)
-  const recordsRef = React.useRef(records)
   const refreshSequenceRef = React.useRef(0)
   const launchingRef = React.useRef(new Set<string>())
-  const completingRef = React.useRef(new Set<string>())
-
-  const commitRecords = React.useCallback(
-    (
-      update: (
-        current: Record<string, DashboardReviewRecord>
-      ) => Record<string, DashboardReviewRecord>
-    ): void => {
-      setRecords((current) => {
-        const next = update(current)
-        recordsRef.current = next
-        persistReviewRecords(next)
-        return next
-      })
-    },
-    []
-  )
 
   const supportedRepositories = React.useMemo(
     () => repositories.filter((repository) => repository.remoteKind !== 'other'),
@@ -164,17 +165,19 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
     }
   }, [repositoryKey, refresh])
 
+  const sessionsByKey = React.useMemo(() => {
+    const result = new Map<string, AgentSession>()
+    for (const session of reviewSessions) {
+      const key = sessionReviewKey(session)
+      if (key) result.set(key, session)
+    }
+    return result
+  }, [reviewSessions])
+
   const startReview = React.useCallback(
     async (item: { key: string; repository: Repository; pr: RepoPr }): Promise<void> => {
-      if (recordsRef.current[item.key] || launchingRef.current.has(item.key)) return
+      if (sessionsByKey.has(item.key) || launchingRef.current.has(item.key)) return
       launchingRef.current.add(item.key)
-      const queued: DashboardReviewRecord = {
-        key: item.key,
-        state: 'queued',
-        triggeredAt: Date.now()
-      }
-      commitRecords((current) => ({ ...current, [item.key]: queued }))
-
       const prompt = buildPrCodeReviewPrompt({
         folderPath: item.repository.path,
         provider: item.pr.provider,
@@ -185,43 +188,31 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
         targetRef: item.pr.targetRef
       })
       try {
-        const result = await createSession(
+        await createSession(
           {
+            purpose: 'pr_review',
             folderPath: item.repository.path,
             prompt,
             label: `Review PR #${item.pr.id}`,
             branch: item.pr.sourceRef,
-            repository: item.repository.name
+            repository: item.repository.name,
+            provider: item.pr.provider,
+            prId: String(item.pr.id),
+            prTitle: item.pr.title
           },
           { activate: false }
         )
-        commitRecords((current) => ({
-          ...current,
-          [item.key]: result.ok
-            ? { ...queued, state: 'running', sessionId: result.session.id }
-            : { ...queued, state: 'error', error: result.error, completedAt: Date.now() }
-        }))
-      } catch (error) {
-        commitRecords((current) => ({
-          ...current,
-          [item.key]: {
-            ...queued,
-            state: 'error',
-            error: error instanceof Error ? error.message : 'Could not start Copilot review',
-            completedAt: Date.now()
-          }
-        }))
       } finally {
         launchingRef.current.delete(item.key)
       }
     },
-    [commitRecords, createSession]
+    [createSession, sessionsByKey]
   )
 
   React.useEffect(() => {
     let cancelled = false
     const pending = assigned.filter(
-      (item) => !recordsRef.current[item.key] && !launchingRef.current.has(item.key)
+      (item) => !sessionsByKey.has(item.key) && !launchingRef.current.has(item.key)
     )
     queueMicrotask(async () => {
       for (const item of pending) {
@@ -232,91 +223,27 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
     return () => {
       cancelled = true
     }
-  }, [assigned, startReview])
-
-  React.useEffect(() => {
-    for (const record of Object.values(records)) {
-      if (record.state !== 'running' || !record.sessionId) continue
-      const session = sessions.find((candidate) => candidate.id === record.sessionId)
-      const completed =
-        session?.status === 'exited' ||
-        activityBySessionId[record.sessionId]?.attentionKind === 'command'
-      if (!session || !completed || completingRef.current.has(record.key)) continue
-
-      completingRef.current.add(record.key)
-      void snapshot(record.sessionId)
-        .then((sessionSnapshot) => {
-          const raw = sessionSnapshot
-            ? new TextDecoder('utf-8', { fatal: false }).decode(sessionSnapshot.buffer)
-            : ''
-          const output = tail(cleanTerminalOutput(raw).trim(), MAX_REVIEW_OUTPUT_CHARS)
-          commitRecords((current) => ({
-            ...current,
-            [record.key]: {
-              ...record,
-              state:
-                session.status === 'exited' && (session.exitCode ?? 0) !== 0
-                  ? 'error'
-                  : 'completed',
-              completedAt: Date.now(),
-              output,
-              error:
-                session.status === 'exited' && (session.exitCode ?? 0) !== 0
-                  ? `Copilot exited with code ${session.exitCode ?? 0}.`
-                  : undefined
-            }
-          }))
-        })
-        .catch((error) => {
-          commitRecords((current) => ({
-            ...current,
-            [record.key]: {
-              ...record,
-              state: 'error',
-              completedAt: Date.now(),
-              error:
-                error instanceof Error ? error.message : 'Could not read the review session output.'
-            }
-          }))
-        })
-        .finally(() => completingRef.current.delete(record.key))
-    }
-  }, [activityBySessionId, commitRecords, records, sessions, snapshot])
-
-  React.useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      const sessionIds = new Set(sessions.map((session) => session.id))
-      commitRecords((current) => {
-        let changed = false
-        const next = { ...current }
-        for (const [key, record] of Object.entries(current)) {
-          if (record.state === 'running' && record.sessionId && !sessionIds.has(record.sessionId)) {
-            next[key] = {
-              ...record,
-              state: 'error',
-              completedAt: Date.now(),
-              error: 'The Copilot review session is no longer available.'
-            }
-            changed = true
-          }
-        }
-        return changed ? next : current
-      })
-    }, 3_000)
-    return () => window.clearTimeout(timeout)
-  }, [commitRecords, sessions])
+  }, [assigned, sessionsByKey, startReview])
 
   const items = React.useMemo(
     () =>
       assigned
-        .map((item) => ({ ...item, review: records[item.key] }))
+        .map((item) => {
+          const session = sessionsByKey.get(item.key)
+          return {
+            ...item,
+            review: session
+              ? reviewRecord(item.key, session, eventsBySessionId[session.id] ?? [])
+              : undefined
+          }
+        })
         .sort((left, right) => {
           const leftRank = left.review ? 1 : 0
           const rightRank = right.review ? 1 : 0
           if (leftRank !== rightRank) return leftRank - rightRank
           return (right.pr.createdAt ?? '').localeCompare(left.pr.createdAt ?? '')
         }),
-    [assigned, records]
+    [assigned, eventsBySessionId, sessionsByKey]
   )
 
   return { items, errors, isLoading, refresh }

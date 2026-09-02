@@ -7,14 +7,13 @@ import {
   CircleDotIcon,
   GitPullRequestIcon,
   Loader2Icon,
-  RefreshCwIcon,
-  TerminalIcon
+  RefreshCwIcon
 } from 'lucide-react'
 
 import { DashboardCard } from '@/components/detail/dashboard-card'
 import { Button } from '@/components/ui/button'
 import { useDashboard } from '@/contexts/dashboard-context'
-import { useSessions } from '@/contexts/sessions-context'
+import { useAgentSessions } from '@/contexts/agent-sessions-context'
 import {
   type DashboardAssignedPr,
   type DashboardReviewState
@@ -121,11 +120,11 @@ export function DashboardPage({
   repositories: Repository[]
   onNavigateToSessions: () => void
 }): React.JSX.Element {
-  const { sessions, activityBySessionId, selectSession } = useSessions()
+  const { sessions, selectSession } = useAgentSessions()
   const { items, errors, isLoading, refresh } = useDashboard()
   const waitingSessions = sessions.filter(
     (session) =>
-      session.status === 'running' && activityBySessionId[session.id]?.waitingForInput === true
+      session.lifecycle === 'waiting_for_user' || session.lifecycle === 'waiting_for_permission'
   )
 
   const openSession = React.useCallback(
@@ -171,10 +170,13 @@ export function DashboardPage({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-xs font-medium">{session.label}</p>
                       <p className="text-muted-foreground truncate font-mono text-[10px]">
-                        {activityBySessionId[session.id]?.lastLine || session.folderPath}
+                        {session.currentIntent ||
+                          (session.lifecycle === 'waiting_for_permission'
+                            ? 'Permission required'
+                            : 'Response required')}
                       </p>
                     </div>
-                    <TerminalIcon className="text-muted-foreground size-3.5 shrink-0" />
+                    <BotIcon className="text-muted-foreground size-3.5 shrink-0" />
                     <ChevronRightIcon className="text-muted-foreground size-3.5 shrink-0" />
                   </button>
                 </li>

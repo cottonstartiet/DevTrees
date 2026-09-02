@@ -17,9 +17,9 @@ import { PrReviewProvider } from '@/contexts/pr-review-context'
 import { TasksProvider } from '@/contexts/tasks-context'
 import { ThemeProvider } from '@/contexts/theme-context'
 import { TerminalModeProvider } from '@/contexts/terminal-mode-context'
-import { SessionsProvider } from '@/contexts/sessions-context'
 import { ChatProvider } from '@/contexts/chat-context'
 import { DashboardProvider } from '@/contexts/dashboard-context'
+import { AgentSessionsProvider } from '@/contexts/agent-sessions-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useRepositories } from '@/hooks/use-repositories'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
@@ -492,7 +492,7 @@ function AppShell(): React.JSX.Element {
 
   return (
     <TerminalModeProvider>
-      <SessionsProvider onNavigateToSessions={handleNavigateToSessions}>
+      <AgentSessionsProvider onNavigateToSessions={handleNavigateToSessions}>
         <DashboardProvider repositories={repositories}>
           <SidebarProvider className="flex h-svh flex-col">
             <div className="flex min-h-0 w-full flex-1">
@@ -640,7 +640,7 @@ function AppShell(): React.JSX.Element {
             <Toaster richColors closeButton position="bottom-right" />
           </SidebarProvider>
         </DashboardProvider>
-      </SessionsProvider>
+      </AgentSessionsProvider>
     </TerminalModeProvider>
   )
 }

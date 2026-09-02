@@ -6,12 +6,12 @@ use github_copilot_sdk::session::Session;
 use github_copilot_sdk::types::{
     MessageOptions, ResumeSessionConfig, SessionConfig, SessionId, SystemMessageConfig,
 };
-use github_copilot_sdk::{Client, ClientOptions};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
+use crate::copilot_runtime::CopilotRuntime;
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 
@@ -163,7 +163,6 @@ fn system_message(context: Option<&ChatContext>) -> SystemMessageConfig {
 
 #[derive(Default)]
 pub struct ChatManager {
-    client: AsyncMutex<Option<Client>>,
     sessions: AsyncMutex<HashMap<String, Arc<Session>>>,
     in_flight: Mutex<HashSet<String>>,
 }
@@ -186,28 +185,17 @@ impl ChatManager {
         }
     }
 
-    async fn client(&self) -> AppResult<Client> {
-        let mut client = self.client.lock().await;
-        if let Some(existing) = client.as_ref() {
-            return Ok(existing.clone());
-        }
-        let started = Client::start(ClientOptions::default())
-            .await
-            .map_err(map_sdk_error)?;
-        *client = Some(started.clone());
-        Ok(started)
-    }
-
     async fn session_for(
         &self,
         conversation: &ChatConversation,
         db: &DbState,
+        runtime: &CopilotRuntime,
     ) -> AppResult<Arc<Session>> {
         if let Some(session) = self.sessions.lock().await.get(&conversation.id).cloned() {
             return Ok(session);
         }
 
-        let client = self.client().await?;
+        let client = runtime.client().await?;
         let context_path = conversation
             .context
             .as_ref()
@@ -271,6 +259,7 @@ impl ChatManager {
         &self,
         app: &AppHandle,
         db: &DbState,
+        runtime: &CopilotRuntime,
         conversation_id: &str,
         prompt: &str,
     ) -> AppResult<ChatMessage> {
@@ -319,7 +308,7 @@ impl ChatManager {
             }
             tx.commit()?;
         }
-        let session = match self.session_for(&conversation, db).await {
+        let session = match self.session_for(&conversation, db, runtime).await {
             Ok(session) => session,
             Err(error) => {
                 return self
@@ -484,6 +473,7 @@ impl ChatManager {
         &self,
         app: &AppHandle,
         db: &DbState,
+        runtime: &CopilotRuntime,
         conversation_id: &str,
         prompt: &str,
     ) -> AppResult<ChatMessage> {
@@ -498,7 +488,7 @@ impl ChatManager {
             "This conversation already has an operation in progress.",
         )?;
         let result = self
-            .send_inner(app, db, conversation_id, prompt.trim())
+            .send_inner(app, db, runtime, conversation_id, prompt.trim())
             .await;
         self.release_conversation(conversation_id);
         result
@@ -508,9 +498,6 @@ impl ChatManager {
         let sessions = std::mem::take(&mut *self.sessions.lock().await);
         for session in sessions.into_values() {
             let _ = session.disconnect().await;
-        }
-        if let Some(client) = self.client.lock().await.take() {
-            let _ = client.stop().await;
         }
     }
 }
@@ -618,6 +605,7 @@ pub async fn chat_delete_conversation(
     conversation_id: String,
     state: State<'_, DbState>,
     manager: State<'_, ChatManager>,
+    runtime: State<'_, CopilotRuntime>,
 ) -> AppResult<()> {
     manager.reserve_conversation(
         &conversation_id,
@@ -634,7 +622,7 @@ pub async fn chat_delete_conversation(
             conversation.sdk_session_id
         };
         if let Some(id) = sdk_session_id {
-            let client = manager.client().await?;
+            let client = runtime.client().await?;
             client
                 .delete_session(&SessionId::new(id))
                 .await
@@ -710,8 +698,11 @@ pub async fn chat_send(
     app: AppHandle,
     state: State<'_, DbState>,
     manager: State<'_, ChatManager>,
+    runtime: State<'_, CopilotRuntime>,
 ) -> AppResult<ChatMessage> {
-    manager.send(&app, &state, &conversation_id, &prompt).await
+    manager
+        .send(&app, &state, &runtime, &conversation_id, &prompt)
+        .await
 }
 
 #[tauri::command]

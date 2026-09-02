@@ -36,8 +36,8 @@ const TERMINAL_MODE_OPTIONS: ReadonlyArray<{
   },
   {
     value: 'embedded',
-    label: 'Embedded',
-    description: 'Run Copilot in a terminal inside DevTrees with the Sessions view.',
+    label: 'DevTrees SDK',
+    description: 'Run Copilot through the structured SDK session harness.',
     Icon: TerminalSquareIcon
   }
 ]
@@ -88,12 +88,12 @@ function TerminalSettings(): React.JSX.Element {
   return (
     <section className="bg-card text-card-foreground flex w-full max-w-sm flex-col gap-3 rounded-2xl border px-6 py-5 shadow-sm">
       <div className="flex flex-col gap-1">
-        <h2 className="text-sm font-semibold tracking-tight">Terminal</h2>
+        <h2 className="text-sm font-semibold tracking-tight">Copilot session mode</h2>
         <p className="text-muted-foreground text-xs">
           Choose where Copilot sessions run when you launch them.
         </p>
       </div>
-      <div role="radiogroup" aria-label="Terminal mode" className="flex flex-col gap-2">
+      <div role="radiogroup" aria-label="Copilot session mode" className="flex flex-col gap-2">
         {TERMINAL_MODE_OPTIONS.map(({ value, label, description, Icon }) => {
           const isActive = terminalMode === value
           return (

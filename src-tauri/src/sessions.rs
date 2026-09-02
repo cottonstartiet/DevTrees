@@ -275,7 +275,9 @@ impl SessionManager {
         req: CreateSessionRequest,
     ) -> Result<CopilotSession, AppError> {
         if !cfg!(windows) {
-            return Err(AppError::msg("Copilot sessions are currently Windows-only."));
+            return Err(AppError::msg(
+                "Copilot sessions are currently Windows-only.",
+            ));
         }
 
         let folder_path = req.folder_path.trim().to_string();
@@ -408,7 +410,10 @@ impl SessionManager {
             closing: AtomicBool::new(false),
         });
 
-        self.sessions.lock().unwrap().insert(id.clone(), inner.clone());
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), inner.clone());
 
         spawn_reader(app.clone(), inner, reader);
 
