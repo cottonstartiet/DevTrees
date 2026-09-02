@@ -10,36 +10,8 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { sessionPrimaryLabel, sessionRepoLabel } from '@/lib/session-label'
+import { capTerminalTail, lastVisibleTerminalLine } from '@/lib/terminal-output'
 import { cn } from '@/lib/utils'
-
-const TAIL_CHARS = 16_384
-
-// Strip the common ANSI/VT escape sequences (CSI, OSC, charset selects) and remaining bare control
-// characters (excluding tab) so a preview line shows readable text rather than raw control codes.
-/* eslint-disable no-control-regex */
-const ANSI_PATTERN =
-  /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][AB0]|\x1b[=>]/g
-const CONTROL_PATTERN = /[\x00-\x08\x0b-\x1f\x7f]/g
-/* eslint-enable no-control-regex */
-
-function capTail(text: string): string {
-  return text.length > TAIL_CHARS ? text.slice(text.length - TAIL_CHARS) : text
-}
-
-/** Best-effort "last visible line" from raw terminal output for a lightweight preview. */
-function lastVisibleLine(buffer: string): string {
-  const normalized = buffer.replace(ANSI_PATTERN, '').replace(/\r\n/g, '\n')
-  const lines = normalized.split('\n')
-  for (let i = lines.length - 1; i >= 0; i--) {
-    let line = lines[i]
-    // A bare carriage return rewrites the line (progress bars, spinners) — keep the latest segment.
-    const cr = line.lastIndexOf('\r')
-    if (cr >= 0) line = line.slice(cr + 1)
-    const cleaned = line.replace(CONTROL_PATTERN, '').replace(/\t/g, ' ').trim()
-    if (cleaned.length > 0) return cleaned
-  }
-  return ''
-}
 
 interface SessionTileProps {
   session: CopilotSession
@@ -61,12 +33,12 @@ export function SessionTile({ session, isActive }: SessionTileProps): React.JSX.
     // A streaming decoder so multibyte characters split across chunks aren't corrupted.
     const decoder = new TextDecoder('utf-8', { fatal: false })
     const recompute = (): void => {
-      if (!disposed) setLastLine(lastVisibleLine(tail))
+      if (!disposed) setLastLine(lastVisibleTerminalLine(tail))
     }
 
     const unsubscribe = subscribeData(sessionId, (event) => {
       if (disposed) return
-      tail = capTail(tail + decoder.decode(event.data, { stream: true }))
+      tail = capTerminalTail(tail + decoder.decode(event.data, { stream: true }))
       recompute()
     })
 
@@ -74,7 +46,7 @@ export function SessionTile({ session, isActive }: SessionTileProps): React.JSX.
       if (disposed || !snap) return
       // Only seed from the snapshot if live output hasn't already populated the tail.
       if (tail === '') {
-        tail = capTail(new TextDecoder('utf-8', { fatal: false }).decode(snap.buffer))
+        tail = capTerminalTail(new TextDecoder('utf-8', { fatal: false }).decode(snap.buffer))
         recompute()
       }
     })
@@ -125,10 +97,7 @@ export function SessionTile({ session, isActive }: SessionTileProps): React.JSX.
             className="min-w-28"
             onClick={(e) => e.stopPropagation()}
           >
-            <DropdownMenuItem
-              variant="destructive"
-              onSelect={() => requestCloseSession(sessionId)}
-            >
+            <DropdownMenuItem variant="destructive" onSelect={() => requestCloseSession(sessionId)}>
               Close
             </DropdownMenuItem>
           </DropdownMenuContent>

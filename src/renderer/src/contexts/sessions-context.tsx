@@ -3,17 +3,38 @@ import * as React from 'react'
 
 import type { CopilotSession, CreateSessionRequest, CreateSessionResult } from '@shared/sessions'
 import type { DecodedSessionSnapshot, SessionData } from '@/lib/api'
+import {
+  capTerminalTail,
+  lastVisibleTerminalLine,
+  terminalAttentionKind,
+  terminalIsWaitingForInput
+} from '@/lib/terminal-output'
 
 type DataListener = (event: { seq: number; data: Uint8Array }) => void
 
+export type SessionActivity = {
+  lastLine: string
+  waitingForInput: boolean
+  attentionKind: 'command' | 'confirmation' | null
+  updatedAt: number
+}
+
+export type CreateSessionOptions = {
+  activate?: boolean
+}
+
 export interface SessionsContextValue {
   sessions: CopilotSession[]
+  activityBySessionId: Readonly<Record<string, SessionActivity>>
   runningCount: number
   activeSessionId: string | null
   selectSession: (id: string) => void
   /** Cycle the active session by `delta` (+1 next, -1 previous), wrapping around. */
   cycleSession: (delta: number) => void
-  createSession: (req: CreateSessionRequest) => Promise<CreateSessionResult>
+  createSession: (
+    req: CreateSessionRequest,
+    options?: CreateSessionOptions
+  ) => Promise<CreateSessionResult>
   killSession: (id: string) => void
   /**
    * Close a session immediately (stops it if still running). Prefer this over `killSession` for
@@ -40,10 +61,31 @@ export function SessionsProvider({
 }: SessionsProviderProps): React.JSX.Element {
   const [sessions, setSessions] = React.useState<CopilotSession[]>([])
   const [activeSessionId, setActiveSessionId] = React.useState<string | null>(null)
+  const [activityBySessionId, setActivityBySessionId] = React.useState<
+    Record<string, SessionActivity>
+  >({})
+  const outputTailRef = React.useRef<Record<string, string>>({})
+  const decoderRef = React.useRef<Record<string, TextDecoder>>({})
+  const pendingExitRef = React.useRef<
+    Record<string, { id: string; exitCode: number; exitedAt: number }>
+  >({})
 
   // Per-session live-output listeners. The Rust backend is the authoritative buffer (replayed via
   // snapshot on mount); the provider only routes live events to the currently mounted terminal.
   const listenersRef = React.useRef<Map<string, Set<DataListener>>>(new Map())
+
+  const updateActivity = React.useCallback((id: string, tail: string): void => {
+    outputTailRef.current[id] = tail
+    setActivityBySessionId((current) => ({
+      ...current,
+      [id]: {
+        lastLine: lastVisibleTerminalLine(tail),
+        waitingForInput: terminalIsWaitingForInput(tail),
+        attentionKind: terminalAttentionKind(tail),
+        updatedAt: Date.now()
+      }
+    }))
+  }, [])
 
   React.useEffect(() => {
     let cancelled = false
@@ -52,12 +94,20 @@ export function SessionsProvider({
     })
 
     const offData = window.api.sessions.onData((event: SessionData) => {
+      const decoder =
+        decoderRef.current[event.id] ??
+        (decoderRef.current[event.id] = new TextDecoder('utf-8', { fatal: false }))
+      const tail = capTerminalTail(
+        (outputTailRef.current[event.id] ?? '') + decoder.decode(event.data, { stream: true })
+      )
+      updateActivity(event.id, tail)
       const set = listenersRef.current.get(event.id)
       if (!set) return
       for (const listener of set) listener({ seq: event.seq, data: event.data })
     })
 
     const offExit = window.api.sessions.onExit((event) => {
+      pendingExitRef.current[event.id] = { ...event, exitedAt: Date.now() }
       setSessions((prev) =>
         prev.map((s) =>
           s.id === event.id
@@ -65,6 +115,14 @@ export function SessionsProvider({
             : s
         )
       )
+      setActivityBySessionId((current) => {
+        const existing = current[event.id]
+        if (!existing) return current
+        return {
+          ...current,
+          [event.id]: { ...existing, waitingForInput: false, updatedAt: Date.now() }
+        }
+      })
     })
 
     return () => {
@@ -72,7 +130,22 @@ export function SessionsProvider({
       offData()
       offExit()
     }
-  }, [])
+  }, [updateActivity])
+
+  React.useEffect(() => {
+    let cancelled = false
+    for (const session of sessions) {
+      if (outputTailRef.current[session.id] !== undefined) continue
+      void window.api.sessions.snapshot(session.id).then((snap) => {
+        if (cancelled || !snap || outputTailRef.current[session.id] !== undefined) return
+        const tail = capTerminalTail(new TextDecoder('utf-8', { fatal: false }).decode(snap.buffer))
+        updateActivity(session.id, tail)
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [sessions, updateActivity])
 
   const selectSession = React.useCallback((id: string): void => {
     setActiveSessionId(id)
@@ -85,32 +158,43 @@ export function SessionsProvider({
     return sessions.length ? sessions[sessions.length - 1].id : null
   }, [sessions, activeSessionId])
 
-  const cycleSession = React.useCallback(
-    (delta: number): void => {
-      setSessions((prev) => {
-        if (prev.length <= 1) return prev
-        setActiveSessionId((currentActive) => {
-          const current =
-            currentActive && prev.some((s) => s.id === currentActive)
-              ? currentActive
-              : prev[prev.length - 1].id
-          const idx = prev.findIndex((s) => s.id === current)
-          const nextIdx = (idx + delta + prev.length) % prev.length
-          return prev[nextIdx].id
-        })
-        return prev
+  const cycleSession = React.useCallback((delta: number): void => {
+    setSessions((prev) => {
+      if (prev.length <= 1) return prev
+      setActiveSessionId((currentActive) => {
+        const current =
+          currentActive && prev.some((s) => s.id === currentActive)
+            ? currentActive
+            : prev[prev.length - 1].id
+        const idx = prev.findIndex((s) => s.id === current)
+        const nextIdx = (idx + delta + prev.length) % prev.length
+        return prev[nextIdx].id
       })
-    },
-    []
-  )
+      return prev
+    })
+  }, [])
 
   const createSession = React.useCallback(
-    async (req: CreateSessionRequest): Promise<CreateSessionResult> => {
+    async (
+      req: CreateSessionRequest,
+      options?: CreateSessionOptions
+    ): Promise<CreateSessionResult> => {
       const result = await window.api.sessions.create(req)
       if (result.ok) {
-        setSessions((prev) => [...prev.filter((s) => s.id !== result.session.id), result.session])
-        setActiveSessionId(result.session.id)
-        onNavigateToSessions?.()
+        const pendingExit = pendingExitRef.current[result.session.id]
+        const session = pendingExit
+          ? {
+              ...result.session,
+              status: 'exited' as const,
+              exitedAt: pendingExit.exitedAt,
+              exitCode: pendingExit.exitCode
+            }
+          : result.session
+        setSessions((prev) => [...prev.filter((s) => s.id !== session.id), session])
+        if (options?.activate !== false) {
+          setActiveSessionId(session.id)
+          onNavigateToSessions?.()
+        }
       }
       return result
     },
@@ -131,6 +215,14 @@ export function SessionsProvider({
 
   const sendInput = React.useCallback((id: string, data: string): void => {
     void window.api.sessions.sendInput(id, data)
+    setActivityBySessionId((current) => {
+      const existing = current[id]
+      if (!existing) return current
+      return {
+        ...current,
+        [id]: { ...existing, waitingForInput: false, updatedAt: Date.now() }
+      }
+    })
   }, [])
 
   const resize = React.useCallback((id: string, cols: number, rows: number): void => {
@@ -161,6 +253,7 @@ export function SessionsProvider({
     const runningCount = sessions.filter((s) => s.status === 'running').length
     return {
       sessions,
+      activityBySessionId,
       runningCount,
       activeSessionId: effectiveActiveId,
       selectSession,
@@ -175,6 +268,7 @@ export function SessionsProvider({
     }
   }, [
     sessions,
+    activityBySessionId,
     effectiveActiveId,
     selectSession,
     cycleSession,
@@ -187,9 +281,7 @@ export function SessionsProvider({
     subscribeData
   ])
 
-  return (
-    <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>
-  )
+  return <SessionsContext.Provider value={value}>{children}</SessionsContext.Provider>
 }
 
 export function useSessions(): SessionsContextValue {
