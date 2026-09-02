@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { AppSidebar, type AppView } from '@/components/app-sidebar'
+import { ActivityRail } from '@/components/activity-rail'
+import { ChatSidebar } from '@/components/chat-sidebar'
 import { CreateBranchDialog } from '@/components/create-branch-dialog'
 import { CreateWorktreeDialog } from '@/components/create-worktree-dialog'
 import { DeleteWorktreeDialog } from '@/components/delete-worktree-dialog'
@@ -16,11 +18,14 @@ import { TasksProvider } from '@/contexts/tasks-context'
 import { ThemeProvider } from '@/contexts/theme-context'
 import { TerminalModeProvider } from '@/contexts/terminal-mode-context'
 import { SessionsProvider } from '@/contexts/sessions-context'
+import { ChatProvider } from '@/contexts/chat-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useRepositories } from '@/hooks/use-repositories'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
 import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
+import { ChatPage } from '@/pages/chat'
+import { DashboardPage } from '@/pages/dashboard'
 import { HistoryPage } from '@/pages/history'
 import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
@@ -36,7 +41,7 @@ function worktreeLabel(path: string): string {
 
 function AppShell(): React.JSX.Element {
   useAutoUpdate()
-  const [view, setView] = useState<AppView>('home')
+  const [view, setView] = useState<AppView>('dashboard')
   const [sessionsViewMode, setSessionsViewMode] = useState<SessionViewMode>(() => loadViewMode())
   const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null)
   const [dialogRepository, setDialogRepository] = useState<Repository | null>(null)
@@ -72,7 +77,7 @@ function AppShell(): React.JSX.Element {
     (id: string): void => {
       selectRepository(id)
       setActiveWorktreePath(null)
-      setView('repository')
+      setView('repositories')
     },
     [selectRepository]
   )
@@ -81,7 +86,7 @@ function AppShell(): React.JSX.Element {
     (repositoryId: string, worktreePath: string): void => {
       selectRepository(repositoryId)
       setActiveWorktreePath(worktreePath)
-      setView('repository')
+      setView('repositories')
     },
     [selectRepository]
   )
@@ -148,7 +153,7 @@ function AppShell(): React.JSX.Element {
   }, [])
 
   const activeRepository =
-    view === 'repository' && activeRepositoryId
+    view === 'repositories' && activeRepositoryId
       ? (repositories.find((w) => w.id === activeRepositoryId) ?? null)
       : null
 
@@ -191,19 +196,25 @@ function AppShell(): React.JSX.Element {
   }, [])
 
   const headerTitle =
-    view === 'settings'
-      ? 'Settings'
-      : view === 'history'
-        ? 'History'
-        : view === 'sessions'
-          ? 'Sessions'
-          : activeWorktree
-            ? worktreeLabel(activeWorktree.path)
-            : activeRepository
-              ? activeRepository.name
-              : 'DevTrees'
+    view === 'dashboard'
+      ? 'Dashboard'
+      : view === 'chat'
+        ? 'Chat'
+        : view === 'settings'
+          ? 'Settings'
+          : view === 'history'
+            ? 'History'
+            : view === 'sessions'
+              ? 'Sessions'
+              : activeWorktree
+                ? worktreeLabel(activeWorktree.path)
+                : activeRepository
+                  ? activeRepository.name
+                  : view === 'repositories'
+                    ? 'Repositories'
+                    : 'DevTrees'
 
-  const repo = useRepoStatus(activeRepository?.path ?? null, view === 'repository')
+  const repo = useRepoStatus(activeRepository?.path ?? null, view === 'repositories')
 
   const [prCache, setPrCache] = useState<Map<string, ExistingPullRequest | null>>(new Map())
   const prGenRef = useRef(0)
@@ -331,7 +342,7 @@ function AppShell(): React.JSX.Element {
     : detailBranch
       ? 'branch'
       : undefined
-  const showDetailToolbar = view === 'repository' && !!activeRepository && !!detailFolderPath
+  const showDetailToolbar = view === 'repositories' && !!activeRepository && !!detailFolderPath
 
   const prCacheKey = useMemo(() => {
     if (
@@ -450,7 +461,7 @@ function AppShell(): React.JSX.Element {
   }, [branchWebUrl])
 
   const statusContext = useMemo<StatusBarContext | null>(() => {
-    if (view !== 'repository' || !activeRepository || !detailFolderPath) return null
+    if (view !== 'repositories' || !activeRepository || !detailFolderPath) return null
     return {
       folderLabel: activeWorktree ? worktreeLabel(activeWorktree.path) : activeRepository.name,
       folderPath: detailFolderPath,
@@ -483,25 +494,27 @@ function AppShell(): React.JSX.Element {
       <SessionsProvider onNavigateToSessions={handleNavigateToSessions}>
         <SidebarProvider className="flex h-svh flex-col">
           <div className="flex min-h-0 w-full flex-1">
-            <AppSidebar
-              activeView={view}
-              onSelectView={(v) => {
-                setView(v)
-                setActiveWorktreePath(null)
-              }}
-              repositories={repositories}
-              activeRepositoryId={activeRepositoryId}
-              activeWorktreePath={activeWorktreePath}
-              worktreesByRepositoryId={worktreesByRepositoryId}
-              deletingWorktreePaths={deletingWorktreePaths}
-              onAddRepository={handleAddRepository}
-              onSelectRepository={handleSelectRepository}
-              onRemoveRepository={handleRemoveRepository}
-              onReorderRepositories={reorderRepositories}
-              onCreateWorktree={handleCreateWorktreeClick}
-              onSelectWorktree={handleSelectWorktree}
-              onDeleteWorktree={handleDeleteWorktreeClick}
-            />
+            <ActivityRail activeView={view} onSelect={setView} />
+            {view === 'chat' ? (
+              <ChatSidebar />
+            ) : view === 'repositories' || view === 'sessions' ? (
+              <AppSidebar
+                activeView={view}
+                onSelectView={setView}
+                repositories={repositories}
+                activeRepositoryId={activeRepositoryId}
+                activeWorktreePath={activeWorktreePath}
+                worktreesByRepositoryId={worktreesByRepositoryId}
+                deletingWorktreePaths={deletingWorktreePaths}
+                onAddRepository={handleAddRepository}
+                onSelectRepository={handleSelectRepository}
+                onRemoveRepository={handleRemoveRepository}
+                onReorderRepositories={reorderRepositories}
+                onCreateWorktree={handleCreateWorktreeClick}
+                onSelectWorktree={handleSelectWorktree}
+                onDeleteWorktree={handleDeleteWorktreeClick}
+              />
+            ) : null}
             <SidebarInset className="min-w-0 overflow-hidden">
               {showDetailToolbar && detailFolderPath ? (
                 <DetailToolbar
@@ -520,8 +533,12 @@ function AppShell(): React.JSX.Element {
                 />
               ) : (
                 <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-                  <SidebarTrigger className="-ml-1" />
-                  <Separator orientation="vertical" className="mr-2 h-4" />
+                  {view === 'chat' || view === 'repositories' || view === 'sessions' ? (
+                    <>
+                      <SidebarTrigger className="-ml-1" />
+                      <Separator orientation="vertical" className="mr-2 h-4" />
+                    </>
+                  ) : null}
                   <h2 className="text-sm font-medium">{headerTitle}</h2>
                   {view === 'sessions' && (
                     <SessionsHeaderControls
@@ -532,7 +549,14 @@ function AppShell(): React.JSX.Element {
                 </header>
               )}
               <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-                {view === 'settings' ? (
+                {view === 'dashboard' ? (
+                  <DashboardPage />
+                ) : view === 'chat' ? (
+                  <ChatPage
+                    repositories={repositories}
+                    worktreesByRepositoryId={worktreesByRepositoryId}
+                  />
+                ) : view === 'settings' ? (
                   <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
                     <SettingsPage />
                   </div>
@@ -620,7 +644,9 @@ function App(): React.JSX.Element {
     <ThemeProvider>
       <TasksProvider>
         <PrReviewProvider>
-          <AppShell />
+          <ChatProvider>
+            <AppShell />
+          </ChatProvider>
         </PrReviewProvider>
       </TasksProvider>
     </ThemeProvider>

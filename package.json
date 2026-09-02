@@ -12,8 +12,8 @@
     "typecheck": "yarn typecheck:web",
     "dev:web": "vite",
     "build:web": "vite build",
-    "tauri": "tauri",
-    "dev": "tauri dev",
+    "tauri": "node scripts/tauri.mjs",
+    "dev": "node scripts/tauri.mjs dev",
     "build": "tauri build"
   },
   "dependencies": {

@@ -12,7 +12,7 @@ A desktop application built with **Tauri 2**, **Rust**, **TypeScript**, **Vite**
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) (stable) and the MSVC build tools on Windows
+- [Rust](https://rustup.rs/) 1.94 or newer and the MSVC build tools on Windows
 - Node.js 22 + Yarn (pinned via Corepack from the `packageManager` field)
 - WebView2 runtime (preinstalled on current Windows)
 

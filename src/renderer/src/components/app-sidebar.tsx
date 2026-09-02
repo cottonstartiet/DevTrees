@@ -6,11 +6,9 @@ import {
   GitBranch as GitBranchIcon,
   GitBranchPlus as GitBranchPlusIcon,
   GripVertical as GripVerticalIcon,
-  History as HistoryIcon,
   Loader2 as Loader2Icon,
   MoreHorizontal as MoreHorizontalIcon,
   Plus as PlusIcon,
-  Settings as SettingsIcon,
   Sparkles as SparklesIcon,
   SquareTerminal as SquareTerminalIcon,
   Trash2 as Trash2Icon,
@@ -55,7 +53,6 @@ import {
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupContent,
@@ -72,7 +69,6 @@ import { cn } from '@/lib/utils'
 import { openInWindowsTerminal } from '@/lib/system'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { useSessions } from '@/contexts/sessions-context'
-import { useTerminalMode } from '@/contexts/terminal-mode-context'
 import { sessionPrimaryLabel, sessionRepoLabel } from '@/lib/session-label'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
@@ -109,7 +105,7 @@ function repositoryIcon(remoteKind: RepositoryRemoteKind): React.JSX.Element {
   return <FolderIcon />
 }
 
-export type AppView = 'home' | 'settings' | 'repository' | 'history' | 'sessions'
+export type AppView = 'dashboard' | 'chat' | 'repositories' | 'sessions' | 'history' | 'settings'
 
 interface AppSidebarProps {
   activeView: AppView
@@ -178,7 +174,7 @@ function SortableRepositoryItem({
     transition
   }
   const isWsRowActive =
-    activeView === 'repository' && activeRepositoryId === ws.id && !activeWorktreePath
+    activeView === 'repositories' && activeRepositoryId === ws.id && !activeWorktreePath
 
   return (
     <SidebarMenuItem ref={setNodeRef} style={style} className={cn(isDragging && 'z-50 opacity-80')}>
@@ -253,7 +249,7 @@ function SortableRepositoryItem({
             <SidebarMenuSub className="mr-0 pr-0">
               {worktrees.map((wt) => {
                 const isActive =
-                  activeView === 'repository' &&
+                  activeView === 'repositories' &&
                   activeRepositoryId === ws.id &&
                   activeWorktreePath === wt.path
                 const isDeleting = deletingWorktreePaths.has(wt.path)
@@ -383,10 +379,7 @@ export function AppSidebar({
   const [repositoriesOpen, setRepositoriesOpen] = React.useState(true)
   const [sessionsOpen, setSessionsOpen] = React.useState(true)
   const launchCopilot = useCopilotLauncher()
-  const { terminalMode } = useTerminalMode()
   const { sessions, activeSessionId, selectSession, requestCloseSession } = useSessions()
-  const runningCount = sessions.filter((s) => s.status === 'running').length
-  const showSessions = terminalMode === 'embedded' || sessions.length > 0
 
   const handleStartCopilotSession = React.useCallback(
     async (wt: Worktree, repository?: string): Promise<void> => {
@@ -443,72 +436,74 @@ export function AppSidebar({
   )
 
   return (
-    <Sidebar collapsible="icon" className="top-0 bottom-5 h-[calc(100svh-1.25rem)]">
+    <Sidebar collapsible="offcanvas" className="top-0 bottom-5 left-12 h-[calc(100svh-1.25rem)]">
       <SidebarContent className="overflow-x-hidden">
-        <Collapsible
-          open={repositoriesOpen}
-          onOpenChange={setRepositoriesOpen}
-          className="flex flex-col"
-        >
-          <SidebarGroup className="shrink-0">
-            <SidebarGroupLabel
-              asChild
-              className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            >
-              <CollapsibleTrigger className="group/ws-label flex w-full items-center">
-                <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/ws-label:rotate-90 group-data-[collapsible=icon]:hidden" />
-                Repositories
-              </CollapsibleTrigger>
-            </SidebarGroupLabel>
-            <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
-              <PlusIcon />
-              <span className="sr-only">Add repository</span>
-            </SidebarGroupAction>
-          </SidebarGroup>
-          <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
-            <SidebarGroupContent>
-              {repositories.length === 0 ? (
-                <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
-                  No repositories yet. Click + to add a git repository.
-                </p>
-              ) : (
-                <SidebarMenu>
-                  <DndContext
-                    sensors={sensors}
-                    collisionDetection={closestCenter}
-                    onDragEnd={handleRepositoryDragEnd}
-                  >
-                    <SortableContext
-                      items={repositories.map((w) => w.id)}
-                      strategy={verticalListSortingStrategy}
+        {activeView === 'repositories' ? (
+          <Collapsible
+            open={repositoriesOpen}
+            onOpenChange={setRepositoriesOpen}
+            className="flex flex-col"
+          >
+            <SidebarGroup className="shrink-0">
+              <SidebarGroupLabel
+                asChild
+                className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              >
+                <CollapsibleTrigger className="group/ws-label flex w-full items-center">
+                  <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/ws-label:rotate-90 group-data-[collapsible=icon]:hidden" />
+                  Repositories
+                </CollapsibleTrigger>
+              </SidebarGroupLabel>
+              <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
+                <PlusIcon />
+                <span className="sr-only">Add repository</span>
+              </SidebarGroupAction>
+            </SidebarGroup>
+            <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
+              <SidebarGroupContent>
+                {repositories.length === 0 ? (
+                  <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
+                    No repositories yet. Click + to add a git repository.
+                  </p>
+                ) : (
+                  <SidebarMenu>
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={handleRepositoryDragEnd}
                     >
-                      {repositories.map((ws) => (
-                        <SortableRepositoryItem
-                          key={ws.id}
-                          ws={ws}
-                          worktrees={worktreesByRepositoryId[ws.id] ?? []}
-                          activeView={activeView}
-                          activeRepositoryId={activeRepositoryId}
-                          activeWorktreePath={activeWorktreePath}
-                          deletingWorktreePaths={deletingWorktreePaths}
-                          onSelectRepository={onSelectRepository}
-                          onCreateWorktree={onCreateWorktree}
-                          onRemoveRepository={onRemoveRepository}
-                          onSelectWorktree={onSelectWorktree}
-                          onDeleteWorktree={onDeleteWorktree}
-                          onOpenTerminal={handleOpenTerminal}
-                          onStartCopilotSession={handleStartCopilotSession}
-                        />
-                      ))}
-                    </SortableContext>
-                  </DndContext>
-                </SidebarMenu>
-              )}
-            </SidebarGroupContent>
-          </CollapsibleContent>
-        </Collapsible>
+                      <SortableContext
+                        items={repositories.map((w) => w.id)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {repositories.map((ws) => (
+                          <SortableRepositoryItem
+                            key={ws.id}
+                            ws={ws}
+                            worktrees={worktreesByRepositoryId[ws.id] ?? []}
+                            activeView={activeView}
+                            activeRepositoryId={activeRepositoryId}
+                            activeWorktreePath={activeWorktreePath}
+                            deletingWorktreePaths={deletingWorktreePaths}
+                            onSelectRepository={onSelectRepository}
+                            onCreateWorktree={onCreateWorktree}
+                            onRemoveRepository={onRemoveRepository}
+                            onSelectWorktree={onSelectWorktree}
+                            onDeleteWorktree={onDeleteWorktree}
+                            onOpenTerminal={handleOpenTerminal}
+                            onStartCopilotSession={handleStartCopilotSession}
+                          />
+                        ))}
+                      </SortableContext>
+                    </DndContext>
+                  </SidebarMenu>
+                )}
+              </SidebarGroupContent>
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
 
-        {showSessions && (
+        {activeView === 'sessions' ? (
           <Collapsible
             open={sessionsOpen}
             onOpenChange={setSessionsOpen}
@@ -522,11 +517,6 @@ export function AppSidebar({
                 <CollapsibleTrigger className="group/se-label flex w-full items-center">
                   <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/se-label:rotate-90 group-data-[collapsible=icon]:hidden" />
                   Sessions
-                  {runningCount > 0 && (
-                    <span className="ml-auto rounded-full bg-primary/15 px-1.5 text-xs font-medium tabular-nums text-primary group-data-[collapsible=icon]:hidden">
-                      {runningCount}
-                    </span>
-                  )}
                 </CollapsibleTrigger>
               </SidebarGroupLabel>
             </SidebarGroup>
@@ -585,33 +575,8 @@ export function AppSidebar({
               </SidebarGroupContent>
             </CollapsibleContent>
           </Collapsible>
-        )}
+        ) : null}
       </SidebarContent>
-
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip="History"
-              isActive={activeView === 'history'}
-              onClick={() => onSelectView('history')}
-            >
-              <HistoryIcon />
-              <span>History</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip="Settings"
-              isActive={activeView === 'settings'}
-              onClick={() => onSelectView('settings')}
-            >
-              <SettingsIcon />
-              <span>Settings</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
     </Sidebar>
   )
 }

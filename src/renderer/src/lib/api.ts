@@ -78,7 +78,12 @@ import type {
   PrSetThreadStatusRequest,
   PrSetVoteRequest
 } from '@shared/pr-review'
-import type { RepoOpenPrsRequest, RepoOpenPrsResult, RepoPrThreadsRequest, RepoPrThreadsResult } from '@shared/reviews'
+import type {
+  RepoOpenPrsRequest,
+  RepoOpenPrsResult,
+  RepoPrThreadsRequest,
+  RepoPrThreadsResult
+} from '@shared/reviews'
 import type {
   AppInfo,
   LaunchCopilotCliRequest,
@@ -95,6 +100,15 @@ import type {
   SessionSnapshot
 } from '@shared/sessions'
 import { SessionEvents } from '@shared/sessions'
+import type {
+  ChatCompleteEvent,
+  ChatContext,
+  ChatConversation,
+  ChatDeltaEvent,
+  ChatErrorEvent,
+  ChatMessage
+} from '@shared/chat'
+import { ChatEvents } from '@shared/chat'
 
 type Args = Record<string, unknown>
 
@@ -394,6 +408,32 @@ const api = {
       return () => {
         void unlisten.then((un) => un())
       }
+    }
+  },
+  chat: {
+    listConversations: (): Promise<ChatConversation[]> => invoke('chat_list_conversations'),
+    createConversation: (context?: ChatContext): Promise<ChatConversation> =>
+      invoke('chat_create_conversation', { context }),
+    updateContext: (conversationId: string, context?: ChatContext): Promise<ChatConversation> =>
+      invoke('chat_update_context', { conversationId, context }),
+    deleteConversation: (conversationId: string): Promise<void> =>
+      invoke('chat_delete_conversation', { conversationId }),
+    listMessages: (conversationId: string): Promise<ChatMessage[]> =>
+      invoke('chat_list_messages', { conversationId }),
+    send: (conversationId: string, prompt: string): Promise<ChatMessage> =>
+      invoke('chat_send', { conversationId, prompt }),
+    abort: (conversationId: string): Promise<void> => invoke('chat_abort', { conversationId }),
+    onDelta: (cb: (event: ChatDeltaEvent) => void): (() => void) => {
+      const unlisten = listen<ChatDeltaEvent>(ChatEvents.Delta, (event) => cb(event.payload))
+      return () => void unlisten.then((un) => un())
+    },
+    onComplete: (cb: (event: ChatCompleteEvent) => void): (() => void) => {
+      const unlisten = listen<ChatCompleteEvent>(ChatEvents.Complete, (event) => cb(event.payload))
+      return () => void unlisten.then((un) => un())
+    },
+    onError: (cb: (event: ChatErrorEvent) => void): (() => void) => {
+      const unlisten = listen<ChatErrorEvent>(ChatEvents.Error, (event) => cb(event.payload))
+      return () => void unlisten.then((un) => un())
     }
   }
 }

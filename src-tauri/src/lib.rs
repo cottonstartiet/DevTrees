@@ -1,5 +1,6 @@
 mod ado;
 mod az;
+mod chat;
 mod copilot_history;
 mod db;
 mod error;
@@ -9,16 +10,17 @@ mod github;
 mod paths;
 mod pr_review;
 mod repo;
+mod repositories;
 mod reviews;
 mod sessions;
 mod system;
-mod repositories;
 mod worktrees;
 
 use std::sync::Mutex;
 
 use tauri::Manager;
 
+use chat::ChatManager;
 use db::DbState;
 use sessions::SessionManager;
 
@@ -56,6 +58,7 @@ pub fn run() {
             let conn = db::init()?;
             app.manage(DbState(Mutex::new(conn)));
             app.manage(SessionManager::default());
+            app.manage(ChatManager::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -68,6 +71,13 @@ pub fn run() {
             worktrees::worktrees_delete,
             worktrees::worktrees_status,
             copilot_history::copilot_history_list,
+            chat::chat_list_conversations,
+            chat::chat_create_conversation,
+            chat::chat_update_context,
+            chat::chat_delete_conversation,
+            chat::chat_list_messages,
+            chat::chat_send,
+            chat::chat_abort,
             system::system_open_in_vscode,
             system::system_open_in_vscode_scm,
             system::system_open_in_windows_terminal,
@@ -135,6 +145,9 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 if let Some(manager) = app.try_state::<SessionManager>() {
                     manager.kill_all();
+                }
+                if let Some(manager) = app.try_state::<ChatManager>() {
+                    tauri::async_runtime::block_on(manager.shutdown());
                 }
             }
         });

@@ -72,6 +72,37 @@ fn migrations() -> Vec<Migration> {
                  CREATE INDEX IF NOT EXISTS idx_repositories_added_at ON repositories(added_at);",
             )
         },
+        // 0006 -> user_version 6: persistent SDK chat conversations and messages.
+        |db| {
+            db.execute_batch(
+                "CREATE TABLE chat_conversations (
+                    id               TEXT PRIMARY KEY,
+                    title            TEXT NOT NULL,
+                    sdk_session_id   TEXT,
+                    context_kind     TEXT CHECK (context_kind IN ('repository', 'worktree')),
+                    context_id       TEXT,
+                    context_name     TEXT,
+                    context_path     TEXT,
+                    created_at       INTEGER NOT NULL,
+                    updated_at       INTEGER NOT NULL
+                 );
+                 CREATE INDEX idx_chat_conversations_updated_at
+                   ON chat_conversations(updated_at DESC);
+                 CREATE TABLE chat_messages (
+                    id               TEXT PRIMARY KEY,
+                    conversation_id  TEXT NOT NULL
+                      REFERENCES chat_conversations(id) ON DELETE CASCADE,
+                    role             TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                    content          TEXT NOT NULL,
+                    status           TEXT NOT NULL
+                      CHECK (status IN ('streaming', 'completed', 'error')),
+                    error            TEXT,
+                    created_at       INTEGER NOT NULL
+                 );
+                 CREATE INDEX idx_chat_messages_conversation
+                   ON chat_messages(conversation_id, created_at ASC);",
+            )
+        },
     ]
 }
 
@@ -87,6 +118,17 @@ fn run_migrations(db: &Connection) -> AppResult<()> {
         db.pragma_update(None, "user_version", (i + 1) as i64)?;
         tx.commit()?;
     }
+
+    Ok(())
+}
+
+fn recover_interrupted_chat_messages(db: &Connection) -> AppResult<()> {
+    db.execute(
+        "UPDATE chat_messages
+         SET status = 'error', error = 'Response was interrupted when DevTrees closed.'
+         WHERE status = 'streaming'",
+        [],
+    )?;
     Ok(())
 }
 
@@ -167,6 +209,50 @@ pub fn init() -> AppResult<Connection> {
     })?;
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
     run_migrations(&conn)?;
+    recover_interrupted_chat_messages(&conn)?;
     import_legacy_json(&conn)?;
     Ok(conn)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrations_create_chat_schema_and_recover_streams() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        run_migrations(&conn).unwrap();
+
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 6);
+
+        conn.execute(
+            "INSERT INTO chat_conversations
+               (id, title, created_at, updated_at)
+             VALUES ('conversation', 'Test', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chat_messages
+               (id, conversation_id, role, content, status, created_at)
+             VALUES ('message', 'conversation', 'assistant', '', 'streaming', 1)",
+            [],
+        )
+        .unwrap();
+
+        recover_interrupted_chat_messages(&conn).unwrap();
+        let (status, error): (String, String) = conn
+            .query_row(
+                "SELECT status, error FROM chat_messages WHERE id = 'message'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(status, "error");
+        assert_eq!(error, "Response was interrupted when DevTrees closed.");
+    }
 }
