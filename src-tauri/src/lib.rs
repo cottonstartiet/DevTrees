@@ -1,9 +1,6 @@
 mod ado;
-mod agent_sessions;
 mod az;
-mod chat;
 mod copilot_history;
-mod copilot_runtime;
 mod db;
 mod error;
 mod gh;
@@ -14,19 +11,17 @@ mod pr_review;
 mod repo;
 mod repositories;
 mod reviews;
-mod sessions;
 mod system;
+mod tasks;
+mod terminal_sessions;
 mod worktrees;
 
 use std::sync::Mutex;
 
 use tauri::Manager;
 
-use agent_sessions::AgentSessionManager;
-use chat::ChatManager;
-use copilot_runtime::CopilotRuntime;
 use db::DbState;
-use sessions::SessionManager;
+use terminal_sessions::TerminalSessionMonitor;
 
 /// Build and run the DevTrees Tauri application.
 ///
@@ -61,10 +56,11 @@ pub fn run() {
             // and stash the connection in managed state for commands to use.
             let conn = db::init()?;
             app.manage(DbState(Mutex::new(conn)));
-            app.manage(SessionManager::default());
-            app.manage(ChatManager::default());
-            app.manage(CopilotRuntime::default());
-            app.manage(AgentSessionManager::default());
+            app.manage(TerminalSessionMonitor::default());
+            // Resume mirroring any external Copilot terminal that outlived the last run.
+            if let Err(e) = terminal_sessions::init(app.handle()) {
+                eprintln!("failed to restore terminal session watches: {e}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -77,21 +73,6 @@ pub fn run() {
             worktrees::worktrees_delete,
             worktrees::worktrees_status,
             copilot_history::copilot_history_list,
-            chat::chat_list_conversations,
-            chat::chat_create_conversation,
-            chat::chat_update_context,
-            chat::chat_delete_conversation,
-            chat::chat_list_messages,
-            chat::chat_send,
-            chat::chat_abort,
-            agent_sessions::agent_sessions_create,
-            agent_sessions::agent_sessions_list,
-            agent_sessions::agent_sessions_snapshot,
-            agent_sessions::agent_sessions_send,
-            agent_sessions::agent_sessions_abort,
-            agent_sessions::agent_sessions_close,
-            agent_sessions::agent_sessions_resolve_permission,
-            agent_sessions::agent_sessions_answer_user_input,
             system::system_open_in_vscode,
             system::system_open_in_vscode_scm,
             system::system_open_in_windows_terminal,
@@ -144,31 +125,18 @@ pub fn run() {
             repo::repo_list_my_branches,
             repo::repo_branch_web_url,
             repo::repo_detect_merge_state,
-            sessions::sessions_create,
-            sessions::sessions_list,
-            sessions::sessions_snapshot,
-            sessions::sessions_kill,
-            sessions::sessions_input,
-            sessions::sessions_resize,
+            tasks::tasks_list,
+            tasks::tasks_create,
+            tasks::tasks_update,
+            tasks::tasks_move,
+            tasks::tasks_delete,
+            tasks::tasks_set_copilot_session,
+            terminal_sessions::terminal_sessions_list,
+            terminal_sessions::terminal_sessions_history,
+            terminal_sessions::terminal_sessions_watch,
+            terminal_sessions::terminal_sessions_forget,
         ])
         .build(tauri::generate_context!())
         .expect("error while building DevTrees")
-        .run(|app, event| {
-            // On exit, tear down every embedded Copilot session's process tree so no lingering
-            // child keeps a worktree folder locked after the app quits.
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                if let Some(manager) = app.try_state::<SessionManager>() {
-                    manager.kill_all();
-                }
-                if let Some(manager) = app.try_state::<ChatManager>() {
-                    tauri::async_runtime::block_on(manager.shutdown());
-                }
-                if let Some(manager) = app.try_state::<AgentSessionManager>() {
-                    tauri::async_runtime::block_on(manager.shutdown());
-                }
-                if let Some(runtime) = app.try_state::<CopilotRuntime>() {
-                    tauri::async_runtime::block_on(runtime.shutdown());
-                }
-            }
-        });
+        .run(|_, _| {});
 }

@@ -1,6 +1,14 @@
 export type LaunchResult = { ok: true } | { ok: false; error: string }
 
-export type LaunchCopilotCliRequest = { folderPath: string; prompt: string }
+export type LaunchCopilotCliRequest = {
+  folderPath: string
+  prompt: string
+  /**
+   * Pre-assigned Copilot session UUID (`copilot --session-id=...`). Supplying it lets the
+   * app mirror this externally launched session by tailing the CLI's event log.
+   */
+  sessionId?: string
+}
 
 export type LaunchCopilotResumeRequest = { folderPath: string; sessionId: string }
 

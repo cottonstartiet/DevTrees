@@ -1,11 +1,12 @@
 import * as React from 'react'
 
-import { useAgentSessions } from '@/contexts/agent-sessions-context'
+import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { buildPrCodeReviewPrompt } from '@/lib/copilot-pr-review-prompt'
+import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { getRepoOpenPrs } from '@/lib/reviews'
-import type { AgentSession, AgentSessionEvent, JsonValue } from '@shared/agent-session'
 import type { RepoPr } from '@shared/reviews'
 import type { Repository } from '@shared/repository'
+import type { TerminalSession } from '@shared/terminal-session'
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
@@ -14,10 +15,10 @@ export type DashboardReviewState = 'queued' | 'running' | 'completed' | 'error'
 export type DashboardReviewRecord = {
   key: string
   state: DashboardReviewState
-  sessionId?: string
+  /** The Copilot CLI session running the review, for linking to the Sessions view. */
+  sessionId: string
   triggeredAt: number
   completedAt?: number
-  output?: string
   error?: string
 }
 
@@ -39,38 +40,28 @@ function reviewKey(repository: Repository, pr: RepoPr): string {
   return `${repository.path.toLowerCase()}::${pr.provider}::${pr.id}`
 }
 
-function sessionReviewKey(session: AgentSession): string | null {
-  if (session.purpose !== 'pr_review' || !session.provider || !session.prId) return null
-  return `${session.folderPath.toLowerCase()}::${session.provider}::${session.prId}`
+/**
+ * Reviews run as ordinary terminal sessions, which carry no PR metadata of their own. The
+ * label is therefore the link back to the PR, and is matched together with the folder so
+ * a review is recognized again after a restart.
+ */
+function reviewLabel(pr: RepoPr): string {
+  return `Review PR #${pr.id}`
 }
 
-function stringField(value: JsonValue, field: string): string | undefined {
-  if (!value || Array.isArray(value) || typeof value !== 'object') return undefined
-  const candidate = value[field]
-  return typeof candidate === 'string' ? candidate : undefined
+function sessionKey(session: TerminalSession): string | null {
+  const match = session.label.match(/^Review PR #(.+)$/)
+  if (!match) return null
+  return `${session.folderPath.toLowerCase()}::${match[1]}`
 }
 
-function reviewOutput(events: AgentSessionEvent[]): string | undefined {
-  const messages = events
-    .filter((event) => event.type === 'assistant.message' && !event.agentId)
-    .map((event) => stringField(event.data, 'content')?.trim())
-    .filter((value): value is string => !!value)
-  return messages.at(-1)
-}
-
-function reviewRecord(
-  key: string,
-  session: AgentSession,
-  events: AgentSessionEvent[]
-): DashboardReviewRecord {
-  const output = reviewOutput(events)
-  const completed = events.some((event) => event.type === 'session.idle')
+function reviewRecord(key: string, session: TerminalSession): DashboardReviewRecord {
   const state: DashboardReviewState =
-    session.lifecycle === 'failed' || (session.lifecycle === 'stopped' && !completed)
+    session.status === 'error'
       ? 'error'
-      : session.lifecycle === 'idle' || completed
+      : session.status === 'idle' || session.status === 'done'
         ? 'completed'
-        : session.lifecycle === 'initializing'
+        : session.status === 'starting'
           ? 'queued'
           : 'running'
   return {
@@ -78,18 +69,14 @@ function reviewRecord(
     state,
     sessionId: session.id,
     triggeredAt: session.createdAt,
-    completedAt: session.completedAt,
-    output,
-    error:
-      session.lastError ??
-      (session.lifecycle === 'stopped' && !completed
-        ? 'Review stopped before Copilot reported completion.'
-        : undefined)
+    completedAt: state === 'completed' ? session.updatedAt : undefined,
+    error: session.status === 'error' ? session.lastActivity : undefined
   }
 }
 
 export function useDashboardPrReviews(repositories: Repository[]): DashboardPrReviews {
-  const { reviewSessions, eventsBySessionId, createSession } = useAgentSessions()
+  const { sessions } = useTerminalSessions()
+  const launch = useCopilotLauncher()
   const [assigned, setAssigned] = React.useState<
     Array<{ key: string; repository: Repository; pr: RepoPr }>
   >([])
@@ -166,17 +153,25 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
   }, [repositoryKey, refresh])
 
   const sessionsByKey = React.useMemo(() => {
-    const result = new Map<string, AgentSession>()
-    for (const session of reviewSessions) {
-      const key = sessionReviewKey(session)
+    const result = new Map<string, TerminalSession>()
+    for (const session of sessions) {
+      const key = sessionKey(session)
+      // `reviewKey` embeds the provider; the label only has the PR id, so match on the
+      // folder + id suffix instead of an exact key.
       if (key) result.set(key, session)
     }
     return result
-  }, [reviewSessions])
+  }, [sessions])
+
+  const lookup = React.useCallback(
+    (repository: Repository, pr: RepoPr): TerminalSession | undefined =>
+      sessionsByKey.get(`${repository.path.toLowerCase()}::${pr.id}`),
+    [sessionsByKey]
+  )
 
   const startReview = React.useCallback(
     async (item: { key: string; repository: Repository; pr: RepoPr }): Promise<void> => {
-      if (sessionsByKey.has(item.key) || launchingRef.current.has(item.key)) return
+      if (lookup(item.repository, item.pr) || launchingRef.current.has(item.key)) return
       launchingRef.current.add(item.key)
       const prompt = buildPrCodeReviewPrompt({
         folderPath: item.repository.path,
@@ -188,31 +183,24 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
         targetRef: item.pr.targetRef
       })
       try {
-        await createSession(
-          {
-            purpose: 'pr_review',
-            folderPath: item.repository.path,
-            prompt,
-            label: `Review PR #${item.pr.id}`,
-            branch: item.pr.sourceRef,
-            repository: item.repository.name,
-            provider: item.pr.provider,
-            prId: String(item.pr.id),
-            prTitle: item.pr.title
-          },
-          { activate: false }
-        )
+        await launch({
+          folderPath: item.repository.path,
+          prompt,
+          label: reviewLabel(item.pr),
+          branch: item.pr.sourceRef,
+          repository: item.repository.name
+        })
       } finally {
         launchingRef.current.delete(item.key)
       }
     },
-    [createSession, sessionsByKey]
+    [launch, lookup]
   )
 
   React.useEffect(() => {
     let cancelled = false
     const pending = assigned.filter(
-      (item) => !sessionsByKey.has(item.key) && !launchingRef.current.has(item.key)
+      (item) => !lookup(item.repository, item.pr) && !launchingRef.current.has(item.key)
     )
     queueMicrotask(async () => {
       for (const item of pending) {
@@ -223,18 +211,16 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
     return () => {
       cancelled = true
     }
-  }, [assigned, sessionsByKey, startReview])
+  }, [assigned, lookup, startReview])
 
   const items = React.useMemo(
     () =>
       assigned
         .map((item) => {
-          const session = sessionsByKey.get(item.key)
+          const session = lookup(item.repository, item.pr)
           return {
             ...item,
-            review: session
-              ? reviewRecord(item.key, session, eventsBySessionId[session.id] ?? [])
-              : undefined
+            review: session ? reviewRecord(item.key, session) : undefined
           }
         })
         .sort((left, right) => {
@@ -243,7 +229,7 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
           if (leftRank !== rightRank) return leftRank - rightRank
           return (right.pr.createdAt ?? '').localeCompare(left.pr.createdAt ?? '')
         }),
-    [assigned, eventsBySessionId, sessionsByKey]
+    [assigned, lookup]
   )
 
   return { items, errors, isLoading, refresh }

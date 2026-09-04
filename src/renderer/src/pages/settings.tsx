@@ -1,17 +1,10 @@
 import * as React from 'react'
-import {
-  Monitor as MonitorIcon,
-  Moon as MoonIcon,
-  Sun as SunIcon,
-  SquareTerminal as SquareTerminalIcon,
-  TerminalSquare as TerminalSquareIcon
-} from 'lucide-react'
+import { Monitor as MonitorIcon, Moon as MoonIcon, Sun as SunIcon } from 'lucide-react'
 
 import appIcon from '../assets/icon.png'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTheme, type Theme } from '@/contexts/theme-context'
-import { useTerminalMode, type TerminalMode } from '@/contexts/terminal-mode-context'
 import { cn } from '@/lib/utils'
 import { getAppInfo } from '@/lib/system'
 import type { AppInfo } from '@shared/system'
@@ -20,26 +13,6 @@ const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; Icon: typeof S
   { value: 'light', label: 'Light', Icon: SunIcon },
   { value: 'dark', label: 'Dark', Icon: MoonIcon },
   { value: 'system', label: 'System', Icon: MonitorIcon }
-]
-
-const TERMINAL_MODE_OPTIONS: ReadonlyArray<{
-  value: TerminalMode
-  label: string
-  description: string
-  Icon: typeof SunIcon
-}> = [
-  {
-    value: 'external',
-    label: 'Windows Terminal',
-    description: 'Launch Copilot in the external Windows Terminal.',
-    Icon: SquareTerminalIcon
-  },
-  {
-    value: 'embedded',
-    label: 'DevTrees SDK',
-    description: 'Run Copilot through the structured SDK session harness.',
-    Icon: TerminalSquareIcon
-  }
 ]
 
 function AppearanceSettings(): React.JSX.Element {
@@ -75,49 +48,6 @@ function AppearanceSettings(): React.JSX.Element {
               <Icon className="size-4" />
               <span className="text-xs font-medium">{label}</span>
             </Button>
-          )
-        })}
-      </div>
-    </section>
-  )
-}
-
-function TerminalSettings(): React.JSX.Element {
-  const { terminalMode, setTerminalMode } = useTerminalMode()
-
-  return (
-    <section className="bg-card text-card-foreground flex w-full max-w-sm flex-col gap-3 rounded-2xl border px-6 py-5 shadow-sm">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-sm font-semibold tracking-tight">Copilot session mode</h2>
-        <p className="text-muted-foreground text-xs">
-          Choose where Copilot sessions run when you launch them.
-        </p>
-      </div>
-      <div role="radiogroup" aria-label="Copilot session mode" className="flex flex-col gap-2">
-        {TERMINAL_MODE_OPTIONS.map(({ value, label, description, Icon }) => {
-          const isActive = terminalMode === value
-          return (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={isActive}
-              onClick={() => setTerminalMode(value)}
-              className={cn(
-                'flex items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors',
-                isActive
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border hover:bg-muted text-muted-foreground'
-              )}
-            >
-              <Icon className={cn('mt-0.5 size-4 shrink-0', isActive && 'text-primary')} />
-              <span className="flex flex-col gap-0.5">
-                <span className={cn('text-sm font-medium', isActive && 'text-foreground')}>
-                  {label}
-                </span>
-                <span className="text-muted-foreground text-xs">{description}</span>
-              </span>
-            </button>
           )
         })}
       </div>
@@ -170,7 +100,6 @@ export function SettingsPage(): React.JSX.Element {
       </section>
 
       <AppearanceSettings />
-      <TerminalSettings />
     </div>
   )
 }

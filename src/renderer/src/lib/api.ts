@@ -92,53 +92,27 @@ import type {
 } from '@shared/system'
 import type { CopilotHistoryListResult } from '@shared/copilot-history'
 import type {
-  CopilotSession,
-  CreateSessionRequest,
-  CreateSessionResult,
-  SessionDataEvent,
-  SessionExitEvent,
-  SessionSnapshot
-} from '@shared/sessions'
-import { SessionEvents } from '@shared/sessions'
-import type {
-  ChatCompleteEvent,
-  ChatContext,
-  ChatConversation,
-  ChatDeltaEvent,
-  ChatErrorEvent,
-  ChatMessage
-} from '@shared/chat'
-import { ChatEvents } from '@shared/chat'
-import type {
-  AgentPendingInteraction,
-  AgentSession,
-  AgentSessionSnapshot,
-  AgentSessionUpdate,
-  AnswerAgentUserInputRequest,
-  CreateAgentSessionRequest,
-  CreateAgentSessionResult,
-  ResolveAgentPermissionRequest
-} from '@shared/agent-session'
-import { AgentSessionEvents } from '@shared/agent-session'
+  CreateTaskRequest,
+  CreateTaskResult,
+  DeleteTaskRequest,
+  DeleteTaskResult,
+  MoveTaskRequest,
+  MoveTaskResult,
+  SetTaskCopilotSessionRequest,
+  Task,
+  UpdateTaskRequest,
+  UpdateTaskResult
+} from '@shared/task'
+import {
+  TERMINAL_SESSIONS_UPDATE_EVENT,
+  type TerminalSession,
+  type TerminalSessionResult,
+  type TerminalSessionUpdate,
+  type TerminalTimelineEntry,
+  type WatchTerminalSessionRequest
+} from '@shared/terminal-session'
 
 type Args = Record<string, unknown>
-
-/** A live output chunk for a session, with the raw bytes already decoded from base64. */
-export type SessionData = { id: string; seq: number; data: Uint8Array }
-
-/** A session snapshot with its rolling buffer decoded from base64. */
-export type DecodedSessionSnapshot = {
-  session: CopilotSession
-  buffer: Uint8Array
-  lastSeq: number
-}
-
-function decodeB64(b64: string): Uint8Array {
-  const binary = atob(b64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-  return bytes
-}
 
 function messageOf(err: unknown): string {
   if (typeof err === 'string') return err
@@ -393,86 +367,52 @@ const api = {
         message
       }))
   },
-  sessions: {
-    create: (req: CreateSessionRequest): Promise<CreateSessionResult> =>
-      result('sessions_create', { req }, (error) => ({ ok: false, error })),
-    list: (): Promise<CopilotSession[]> => invoke('sessions_list'),
-    snapshot: async (id: string): Promise<DecodedSessionSnapshot | null> => {
-      const snap = await invoke<SessionSnapshot | null>('sessions_snapshot', { id })
-      if (!snap) return null
-      return { session: snap.session, buffer: decodeB64(snap.bufferB64), lastSeq: snap.lastSeq }
-    },
-    kill: (id: string): Promise<void> => invoke('sessions_kill', { id }),
-    sendInput: (id: string, data: string): Promise<void> => invoke('sessions_input', { id, data }),
-    resize: (id: string, cols: number, rows: number): Promise<void> =>
-      invoke('sessions_resize', { id, cols, rows }),
-    onData: (cb: (event: SessionData) => void): (() => void) => {
-      const unlisten = listen<SessionDataEvent>(SessionEvents.Data, (e) => {
-        cb({ id: e.payload.id, seq: e.payload.seq, data: decodeB64(e.payload.dataB64) })
-      })
-      return () => {
-        void unlisten.then((un) => un())
-      }
-    },
-    onExit: (cb: (event: SessionExitEvent) => void): (() => void) => {
-      const unlisten = listen<SessionExitEvent>(SessionEvents.Exit, (e) => cb(e.payload))
-      return () => {
-        void unlisten.then((un) => un())
-      }
-    }
-  },
-  agentSessions: {
-    create: (req: CreateAgentSessionRequest): Promise<CreateAgentSessionResult> =>
-      result('agent_sessions_create', { req }, (error) => ({ ok: false, error })),
-    list: (): Promise<AgentSession[]> => invoke('agent_sessions_list'),
-    snapshot: (id: string): Promise<AgentSessionSnapshot> =>
-      invoke('agent_sessions_snapshot', { id }),
-    send: (id: string, prompt: string): Promise<void> =>
-      invoke('agent_sessions_send', { id, prompt }),
-    abort: (id: string): Promise<void> => invoke('agent_sessions_abort', { id }),
-    close: (id: string): Promise<void> => invoke('agent_sessions_close', { id }),
-    resolvePermission: (req: ResolveAgentPermissionRequest): Promise<void> =>
-      invoke('agent_sessions_resolve_permission', { req }),
-    answerUserInput: (req: AnswerAgentUserInputRequest): Promise<void> =>
-      invoke('agent_sessions_answer_user_input', { req }),
-    onUpdate: (cb: (update: AgentSessionUpdate) => void): (() => void) => {
-      const unlisten = listen<AgentSessionUpdate>(AgentSessionEvents.Update, (event) =>
-        cb(event.payload)
-      )
-      return () => void unlisten.then((un) => un())
-    },
-    onInteraction: (cb: (interaction: AgentPendingInteraction) => void): (() => void) => {
-      const unlisten = listen<AgentPendingInteraction>(AgentSessionEvents.Interaction, (event) =>
+  terminalSessions: {
+    list: (): Promise<TerminalSession[]> => invoke('terminal_sessions_list'),
+    watch: (req: WatchTerminalSessionRequest): Promise<TerminalSessionResult> =>
+      result('terminal_sessions_watch', { req }, (error) => ({ ok: false, error })),
+    forget: (id: string): Promise<void> => invoke('terminal_sessions_forget', { id }),
+    history: (id: string): Promise<TerminalTimelineEntry[]> =>
+      invoke('terminal_sessions_history', { id }),
+    onUpdate: (cb: (update: TerminalSessionUpdate) => void): (() => void) => {
+      const unlisten = listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) =>
         cb(event.payload)
       )
       return () => void unlisten.then((un) => un())
     }
   },
-  chat: {
-    listConversations: (): Promise<ChatConversation[]> => invoke('chat_list_conversations'),
-    createConversation: (context?: ChatContext): Promise<ChatConversation> =>
-      invoke('chat_create_conversation', { context }),
-    updateContext: (conversationId: string, context?: ChatContext): Promise<ChatConversation> =>
-      invoke('chat_update_context', { conversationId, context }),
-    deleteConversation: (conversationId: string): Promise<void> =>
-      invoke('chat_delete_conversation', { conversationId }),
-    listMessages: (conversationId: string): Promise<ChatMessage[]> =>
-      invoke('chat_list_messages', { conversationId }),
-    send: (conversationId: string, prompt: string): Promise<ChatMessage> =>
-      invoke('chat_send', { conversationId, prompt }),
-    abort: (conversationId: string): Promise<void> => invoke('chat_abort', { conversationId }),
-    onDelta: (cb: (event: ChatDeltaEvent) => void): (() => void) => {
-      const unlisten = listen<ChatDeltaEvent>(ChatEvents.Delta, (event) => cb(event.payload))
-      return () => void unlisten.then((un) => un())
-    },
-    onComplete: (cb: (event: ChatCompleteEvent) => void): (() => void) => {
-      const unlisten = listen<ChatCompleteEvent>(ChatEvents.Complete, (event) => cb(event.payload))
-      return () => void unlisten.then((un) => un())
-    },
-    onError: (cb: (event: ChatErrorEvent) => void): (() => void) => {
-      const unlisten = listen<ChatErrorEvent>(ChatEvents.Error, (event) => cb(event.payload))
-      return () => void unlisten.then((un) => un())
-    }
+  tasks: {
+    list: (): Promise<Task[]> => invoke('tasks_list'),
+    create: (req: CreateTaskRequest): Promise<CreateTaskResult> =>
+      result('tasks_create', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      })),
+    update: (req: UpdateTaskRequest): Promise<UpdateTaskResult> =>
+      result('tasks_update', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      })),
+    move: (req: MoveTaskRequest): Promise<MoveTaskResult> =>
+      result('tasks_move', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      })),
+    delete: (req: DeleteTaskRequest): Promise<DeleteTaskResult> =>
+      result('tasks_delete', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      })),
+    setCopilotSession: (req: SetTaskCopilotSessionRequest): Promise<UpdateTaskResult> =>
+      result('tasks_set_copilot_session', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      }))
   }
 }
 

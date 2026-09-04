@@ -226,7 +226,9 @@ function StartCopilotSessionAction({
         </span>
       </TooltipTrigger>
       <TooltipContent>
-        {IS_WINDOWS ? 'Start a Copilot session in this worktree' : 'Copilot sessions (Windows only)'}
+        {IS_WINDOWS
+          ? 'Start a Copilot session in this worktree'
+          : 'Copilot sessions (Windows only)'}
       </TooltipContent>
     </Tooltip>
   )
@@ -367,9 +369,7 @@ function PrTabActions({
                 size="sm"
                 className="h-7 gap-1.5 px-2"
                 disabled={
-                  isCreatingPullRequest ||
-                  !onCreatePullRequest ||
-                  !isPullRequestStatusResolved
+                  isCreatingPullRequest || !onCreatePullRequest || !isPullRequestStatusResolved
                 }
                 onClick={onCreatePullRequest}
               >
@@ -424,10 +424,7 @@ function BranchesTab({
 }: TabSectionProps): React.JSX.Element {
   if (!repository) {
     return (
-      <PlaceholderCard
-        title="Branches"
-        hint="Branch list is available at the repository level."
-      />
+      <PlaceholderCard title="Branches" hint="Branch list is available at the repository level." />
     )
   }
   return (

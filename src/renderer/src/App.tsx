@@ -4,7 +4,6 @@ import { toast } from 'sonner'
 
 import { AppSidebar, type AppView } from '@/components/app-sidebar'
 import { ActivityRail } from '@/components/activity-rail'
-import { ChatSidebar } from '@/components/chat-sidebar'
 import { CreateBranchDialog } from '@/components/create-branch-dialog'
 import { CreateWorktreeDialog } from '@/components/create-worktree-dialog'
 import { DeleteWorktreeDialog } from '@/components/delete-worktree-dialog'
@@ -15,24 +14,30 @@ import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/s
 import { Toaster } from '@/components/ui/sonner'
 import { PrReviewProvider } from '@/contexts/pr-review-context'
 import { TasksProvider } from '@/contexts/tasks-context'
+import { TaskBoardProvider, useTaskBoard } from '@/contexts/task-board-context'
 import { ThemeProvider } from '@/contexts/theme-context'
-import { TerminalModeProvider } from '@/contexts/terminal-mode-context'
-import { ChatProvider } from '@/contexts/chat-context'
+import {
+  TerminalSessionsProvider,
+  useTerminalSessions,
+  isTerminalSessionFinished
+} from '@/contexts/terminal-sessions-context'
 import { DashboardProvider } from '@/contexts/dashboard-context'
-import { AgentSessionsProvider } from '@/contexts/agent-sessions-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useRepositories } from '@/hooks/use-repositories'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
 import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
-import { ChatPage } from '@/pages/chat'
 import { DashboardPage } from '@/pages/dashboard'
 import { HistoryPage } from '@/pages/history'
 import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
-import { loadViewMode, persistViewMode, type SessionViewMode } from '@/pages/sessions-view-mode'
+import { TasksPage, TasksHeaderControls } from '@/pages/tasks'
+import { setTaskCopilotSession } from '@/lib/tasks'
+import { useCopilotLauncher } from '@/lib/copilot-launch'
+import { buildTaskCodeReviewPrompt } from '@/lib/copilot-task-review-prompt'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Repository } from '@shared/repository'
+import type { Task } from '@shared/task'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
 
 function worktreeLabel(path: string): string {
@@ -40,10 +45,219 @@ function worktreeLabel(path: string): string {
   return idx < 0 ? path : path.slice(idx + 1)
 }
 
+interface TasksPageContainerProps {
+  repositories: Repository[]
+  worktreesByRepositoryId: Record<string, Worktree[]>
+  createWorktree: (repository: Repository, name: string) => Promise<boolean>
+  refreshWorktreesFor: (repositoryId: string) => Promise<void>
+  checkWorktreeStatus: (path: string) => Promise<WorktreeStatusResult>
+  dialogOpen: boolean
+  onDialogOpenChange: (open: boolean) => void
+  activeTask: Task | null
+  onOpenTask: (task: Task | null) => void
+}
+
+/** Owns the "Start task" action, launching Copilot in a terminal window for the task. */
+function TasksPageContainer({
+  repositories,
+  worktreesByRepositoryId,
+  createWorktree,
+  refreshWorktreesFor,
+  checkWorktreeStatus,
+  dialogOpen,
+  onDialogOpenChange,
+  activeTask,
+  onOpenTask
+}: TasksPageContainerProps): React.JSX.Element {
+  const { byId: terminalSessionsById } = useTerminalSessions()
+  const launchCopilot = useCopilotLauncher()
+  const { moveTask, setTaskLocal } = useTaskBoard()
+
+  const handleStartTask = useCallback(
+    async (task: Task): Promise<void> => {
+      // Already running? Don't spawn a second terminal for the same task.
+      const linkedId = task.copilotSessionId
+      const linkedTerminal = linkedId ? terminalSessionsById[linkedId] : undefined
+      if (linkedTerminal != null && !isTerminalSessionFinished(linkedTerminal.status)) {
+        toast.info('A Copilot session for this task is already running.')
+        if (task.status === 'todo') await moveTask(task.id, 'in_progress')
+        return
+      }
+
+      // The worktree may have been deleted outside the app since the task was created.
+      const worktreePath = task.worktreePath
+      const repository = repositories.find((r) => r.id === task.repositoryId) ?? null
+      try {
+        const status = await checkWorktreeStatus(worktreePath)
+        const missing =
+          (status.ok && status.folderMissing) || (!status.ok && status.error === 'not-found')
+        if (missing) {
+          if (!repository) {
+            toast.error('The worktree for this task is missing and its repository is unavailable.')
+            return
+          }
+          const recreated = await createWorktree(repository, worktreeLabel(worktreePath))
+          const after = recreated ? await checkWorktreeStatus(worktreePath) : null
+          const stillMissing =
+            !after ||
+            (after.ok && after.folderMissing) ||
+            (!after.ok && after.error === 'not-found')
+          if (stillMissing) {
+            toast.error('Could not recreate the missing worktree for this task.')
+            return
+          }
+        }
+      } catch (error) {
+        console.error('[tasks] worktree status check failed:', error)
+      }
+
+      const prompt = [task.title.trim(), task.description.trim()].filter(Boolean).join('\n\n')
+      const result = await launchCopilot({
+        folderPath: worktreePath,
+        prompt,
+        label: task.title.trim() || task.repositoryName,
+        branch: task.worktreeBranch ?? undefined,
+        repository: task.repositoryName,
+        taskId: task.id
+      })
+
+      if (!result.ok) {
+        toast.error(result.error || 'Could not start a Copilot session for this task.')
+        return
+      }
+
+      // Link the mirrored CLI session to the task, so a second Start reuses it.
+      const sessionId = result.sessionId
+      setTaskLocal({ ...task, copilotSessionId: sessionId })
+      try {
+        const res = await setTaskCopilotSession({ id: task.id, copilotSessionId: sessionId })
+        if (res.ok) setTaskLocal(res.task)
+        else toast.error(res.message ?? 'Could not link the session to this task.')
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Could not link the session to this task.'
+        )
+      }
+
+      if (task.status === 'todo') await moveTask(task.id, 'in_progress')
+
+      toast.success(
+        `Copilot launched for "${task.title}" in a terminal. DevTrees will notify you when it needs you.`
+      )
+    },
+    [
+      checkWorktreeStatus,
+      createWorktree,
+      launchCopilot,
+      moveTask,
+      repositories,
+      setTaskLocal,
+      terminalSessionsById
+    ]
+  )
+
+  const canReviewTask = useCallback(
+    (task: Task): boolean => {
+      if (task.status !== 'in_progress') return false
+      const linkedId = task.copilotSessionId
+      if (!linkedId) return false
+      const session = terminalSessionsById[linkedId]
+      if (!session) return false
+      // "Work is done" = the session finished, or its turn ended and it is idle at the prompt.
+      return isTerminalSessionFinished(session.status) || session.status === 'idle'
+    },
+    [terminalSessionsById]
+  )
+
+  const handleReviewTask = useCallback(
+    async (task: Task): Promise<void> => {
+      const worktreePath = task.worktreePath
+      const repository = repositories.find((r) => r.id === task.repositoryId) ?? null
+      try {
+        const status = await checkWorktreeStatus(worktreePath)
+        const missing =
+          (status.ok && status.folderMissing) || (!status.ok && status.error === 'not-found')
+        if (missing) {
+          if (!repository) {
+            toast.error('The worktree for this task is missing and its repository is unavailable.')
+            return
+          }
+          const recreated = await createWorktree(repository, worktreeLabel(worktreePath))
+          const after = recreated ? await checkWorktreeStatus(worktreePath) : null
+          const stillMissing =
+            !after ||
+            (after.ok && after.folderMissing) ||
+            (!after.ok && after.error === 'not-found')
+          if (stillMissing) {
+            toast.error('Could not find the worktree to review for this task.')
+            return
+          }
+        }
+      } catch (error) {
+        console.error('[tasks] worktree status check failed:', error)
+      }
+
+      const prompt = buildTaskCodeReviewPrompt({
+        folderPath: worktreePath,
+        taskTitle: task.title,
+        taskDescription: task.description,
+        repositoryName: task.repositoryName,
+        branch: task.worktreeBranch
+      })
+
+      const result = await launchCopilot({
+        folderPath: worktreePath,
+        prompt,
+        label: `Review: ${task.title.trim() || task.repositoryName}`,
+        branch: task.worktreeBranch ?? undefined,
+        repository: task.repositoryName,
+        taskId: task.id
+      })
+
+      if (!result.ok) {
+        toast.error(result.error || 'Could not start the code review for this task.')
+        return
+      }
+
+      // The review session becomes the task's current session, so the card tracks it.
+      const sessionId = result.sessionId
+      setTaskLocal({ ...task, copilotSessionId: sessionId })
+      try {
+        const res = await setTaskCopilotSession({ id: task.id, copilotSessionId: sessionId })
+        if (res.ok) setTaskLocal(res.task)
+        else toast.error(res.message ?? 'Could not link the review session to this task.')
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Could not link the review session to this task.'
+        )
+      }
+
+      await moveTask(task.id, 'review')
+      toast.success(`Code review started for "${task.title}" in a terminal.`)
+    },
+    [checkWorktreeStatus, createWorktree, launchCopilot, moveTask, repositories, setTaskLocal]
+  )
+
+  return (
+    <TasksPage
+      repositories={repositories}
+      worktreesByRepositoryId={worktreesByRepositoryId}
+      createWorktree={createWorktree}
+      refreshWorktreesFor={refreshWorktreesFor}
+      onStartTask={handleStartTask}
+      onReviewTask={handleReviewTask}
+      canReviewTask={canReviewTask}
+      dialogOpen={dialogOpen}
+      onDialogOpenChange={onDialogOpenChange}
+      activeTask={activeTask}
+      onOpenTask={onOpenTask}
+    />
+  )
+}
+
 function AppShell(): React.JSX.Element {
   useAutoUpdate()
   const [view, setView] = useState<AppView>('dashboard')
-  const [sessionsViewMode, setSessionsViewMode] = useState<SessionViewMode>(() => loadViewMode())
   const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null)
   const [dialogRepository, setDialogRepository] = useState<Repository | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -71,7 +285,8 @@ function AppShell(): React.JSX.Element {
     createWorktree,
     createBranchInWorktree,
     deleteWorktree,
-    checkWorktreeStatus
+    checkWorktreeStatus,
+    refreshWorktreesFor
   } = useRepositories()
 
   const handleSelectRepository = useCallback(
@@ -187,20 +402,29 @@ function AppShell(): React.JSX.Element {
     if (!open) setCreateBranchTarget(null)
   }, [])
 
-  const handleSessionsViewModeChange = useCallback((mode: SessionViewMode): void => {
-    setSessionsViewMode(mode)
-    persistViewMode(mode)
-  }, [])
-
   const handleNavigateToSessions = useCallback((): void => {
     setView('sessions')
+  }, [])
+
+  const { tasks: allTasks } = useTaskBoard()
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false)
+  const [activeTaskForDialog, setActiveTaskForDialog] = useState<Task | null>(null)
+
+  const handleOpenAddTaskDialog = useCallback((): void => {
+    setActiveTaskForDialog(null)
+    setTaskDialogOpen(true)
+  }, [])
+
+  const handleOpenTaskDialog = useCallback((task: Task | null): void => {
+    setActiveTaskForDialog(task)
+    setTaskDialogOpen(true)
   }, [])
 
   const headerTitle =
     view === 'dashboard'
       ? 'Dashboard'
-      : view === 'chat'
-        ? 'Chat'
+      : view === 'tasks'
+        ? 'Tasks'
         : view === 'settings'
           ? 'Settings'
           : view === 'history'
@@ -491,157 +715,161 @@ function AppShell(): React.JSX.Element {
   ])
 
   return (
-    <TerminalModeProvider>
-      <AgentSessionsProvider onNavigateToSessions={handleNavigateToSessions}>
-        <DashboardProvider repositories={repositories}>
-          <SidebarProvider className="flex h-svh flex-col">
-            <div className="flex min-h-0 w-full flex-1">
-              <ActivityRail activeView={view} onSelect={setView} />
-              {view === 'chat' ? (
-                <ChatSidebar />
-              ) : view === 'repositories' || view === 'sessions' ? (
-                <AppSidebar
-                  activeView={view}
-                  onSelectView={setView}
-                  repositories={repositories}
-                  activeRepositoryId={activeRepositoryId}
-                  activeWorktreePath={activeWorktreePath}
-                  worktreesByRepositoryId={worktreesByRepositoryId}
-                  deletingWorktreePaths={deletingWorktreePaths}
-                  onAddRepository={handleAddRepository}
-                  onSelectRepository={handleSelectRepository}
-                  onRemoveRepository={handleRemoveRepository}
-                  onReorderRepositories={reorderRepositories}
-                  onCreateWorktree={handleCreateWorktreeClick}
-                  onSelectWorktree={handleSelectWorktree}
-                  onDeleteWorktree={handleDeleteWorktreeClick}
+    <TerminalSessionsProvider onNavigateToSessions={handleNavigateToSessions}>
+      <DashboardProvider repositories={repositories}>
+        <SidebarProvider className="flex h-svh flex-col">
+          <div className="flex min-h-0 w-full flex-1">
+            <ActivityRail activeView={view} onSelect={setView} />
+            {view === 'repositories' || view === 'sessions' ? (
+              <AppSidebar
+                activeView={view}
+                onSelectView={setView}
+                repositories={repositories}
+                activeRepositoryId={activeRepositoryId}
+                activeWorktreePath={activeWorktreePath}
+                worktreesByRepositoryId={worktreesByRepositoryId}
+                deletingWorktreePaths={deletingWorktreePaths}
+                onAddRepository={handleAddRepository}
+                onSelectRepository={handleSelectRepository}
+                onRemoveRepository={handleRemoveRepository}
+                onReorderRepositories={reorderRepositories}
+                onCreateWorktree={handleCreateWorktreeClick}
+                onSelectWorktree={handleSelectWorktree}
+                onDeleteWorktree={handleDeleteWorktreeClick}
+              />
+            ) : null}
+            <SidebarInset className="min-w-0 overflow-hidden">
+              {showDetailToolbar && detailFolderPath ? (
+                <DetailToolbar
+                  title={headerTitle}
+                  folderPath={detailFolderPath}
+                  branch={detailBranch}
+                  isDetached={detailIsDetached}
+                  headState={detailHeadState}
+                  isWorktree={!!activeWorktree}
+                  repositoryPath={activeRepository?.path ?? null}
+                  repo={repo}
+                  existingPullRequest={existingPullRequest}
+                  onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
+                  branchWebUrl={branchWebUrl}
+                  onOpenBranch={branchWebUrl ? handleOpenBranch : undefined}
                 />
-              ) : null}
-              <SidebarInset className="min-w-0 overflow-hidden">
-                {showDetailToolbar && detailFolderPath ? (
-                  <DetailToolbar
-                    title={headerTitle}
-                    folderPath={detailFolderPath}
-                    branch={detailBranch}
-                    isDetached={detailIsDetached}
-                    headState={detailHeadState}
-                    isWorktree={!!activeWorktree}
-                    repositoryPath={activeRepository?.path ?? null}
-                    repo={repo}
-                    existingPullRequest={existingPullRequest}
-                    onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
-                    branchWebUrl={branchWebUrl}
-                    onOpenBranch={branchWebUrl ? handleOpenBranch : undefined}
-                  />
-                ) : (
-                  <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-                    {view === 'chat' || view === 'repositories' || view === 'sessions' ? (
-                      <>
-                        <SidebarTrigger className="-ml-1" />
-                        <Separator orientation="vertical" className="mr-2 h-4" />
-                      </>
-                    ) : null}
-                    <h2 className="text-sm font-medium">{headerTitle}</h2>
-                    {view === 'sessions' && (
-                      <SessionsHeaderControls
-                        viewMode={sessionsViewMode}
-                        onChange={handleSessionsViewModeChange}
-                      />
-                    )}
-                  </header>
-                )}
-                <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-                  {view === 'dashboard' ? (
-                    <DashboardPage
-                      repositories={repositories}
-                      onNavigateToSessions={handleNavigateToSessions}
-                    />
-                  ) : view === 'chat' ? (
-                    <ChatPage
-                      repositories={repositories}
-                      worktreesByRepositoryId={worktreesByRepositoryId}
-                    />
-                  ) : view === 'settings' ? (
-                    <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
-                      <SettingsPage />
-                    </div>
-                  ) : view === 'history' ? (
-                    <HistoryPage />
-                  ) : view === 'sessions' ? (
-                    <SessionsPage viewMode={sessionsViewMode} />
-                  ) : (
-                    <DetailView
-                      repository={activeRepository}
-                      worktree={activeWorktree}
-                      folderPath={detailFolderPath}
-                      branch={detailBranch}
-                      defaultBranch={repo.defaultBranch ?? null}
-                      headState={detailHeadState}
-                      existingPullRequest={existingPullRequest}
-                      onCreateBranch={
-                        activeWorktree && activeWorktree.isDetached
-                          ? handleCreateBranchClick
-                          : undefined
-                      }
-                      onCreatePullRequest={
-                        detailHeadState === 'branch' &&
-                        detailFolderPath &&
-                        detailBranch &&
-                        repo.defaultBranch &&
-                        detailBranch !== repo.defaultBranch &&
-                        !existingPullRequest
-                          ? handleCreatePullRequest
-                          : undefined
-                      }
-                      onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
-                      onPullRequestTabActive={
-                        existingPullRequest ? handleRefreshPullRequest : undefined
-                      }
-                      isCreatingPullRequest={
-                        !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
-                      }
-                      isPullRequestStatusResolved={isPullRequestStatusResolved}
-                      onSelectWorktreePath={
-                        activeRepository
-                          ? (path: string) => handleSelectWorktree(activeRepository.id, path)
-                          : undefined
-                      }
+              ) : (
+                <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+                  {view === 'repositories' || view === 'sessions' ? (
+                    <>
+                      <SidebarTrigger className="-ml-1" />
+                      <Separator orientation="vertical" className="mr-2 h-4" />
+                    </>
+                  ) : null}
+                  <h2 className="text-sm font-medium">{headerTitle}</h2>
+                  {view === 'sessions' && <SessionsHeaderControls />}
+                  {view === 'tasks' && (
+                    <TasksHeaderControls
+                      taskCount={allTasks.length}
+                      onAddTask={handleOpenAddTaskDialog}
                     />
                   )}
-                </div>
-              </SidebarInset>
-            </div>
-            <StatusBar context={statusContext} />
-            <CreateWorktreeDialog
-              repository={dialogRepository}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-              onSubmit={handleDialogSubmit}
-            />
-            <DeleteWorktreeDialog
-              worktree={deleteTarget?.worktree ?? null}
-              repositoryName={
-                deleteTarget
-                  ? (repositories.find((w) => w.id === deleteTarget.repositoryId)?.name ?? null)
-                  : null
-              }
-              status={deleteStatus}
-              open={deleteOpen}
-              onOpenChange={handleDeleteOpenChange}
-              onConfirm={handleDeleteConfirm}
-            />
-            <CreateBranchDialog
-              repository={createBranchTarget?.repository ?? null}
-              worktree={createBranchTarget?.worktree ?? null}
-              open={createBranchOpen}
-              onOpenChange={handleCreateBranchOpenChange}
-              onSubmit={handleCreateBranchSubmit}
-            />
-            <Toaster richColors closeButton position="bottom-right" />
-          </SidebarProvider>
-        </DashboardProvider>
-      </AgentSessionsProvider>
-    </TerminalModeProvider>
+                </header>
+              )}
+              <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+                {view === 'dashboard' ? (
+                  <DashboardPage
+                    repositories={repositories}
+                    onNavigateToSessions={handleNavigateToSessions}
+                  />
+                ) : view === 'tasks' ? (
+                  <TasksPageContainer
+                    repositories={repositories}
+                    worktreesByRepositoryId={worktreesByRepositoryId}
+                    createWorktree={createWorktree}
+                    refreshWorktreesFor={refreshWorktreesFor}
+                    checkWorktreeStatus={checkWorktreeStatus}
+                    dialogOpen={taskDialogOpen}
+                    onDialogOpenChange={setTaskDialogOpen}
+                    activeTask={activeTaskForDialog}
+                    onOpenTask={handleOpenTaskDialog}
+                  />
+                ) : view === 'settings' ? (
+                  <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
+                    <SettingsPage />
+                  </div>
+                ) : view === 'history' ? (
+                  <HistoryPage />
+                ) : view === 'sessions' ? (
+                  <SessionsPage />
+                ) : (
+                  <DetailView
+                    repository={activeRepository}
+                    worktree={activeWorktree}
+                    folderPath={detailFolderPath}
+                    branch={detailBranch}
+                    defaultBranch={repo.defaultBranch ?? null}
+                    headState={detailHeadState}
+                    existingPullRequest={existingPullRequest}
+                    onCreateBranch={
+                      activeWorktree && activeWorktree.isDetached
+                        ? handleCreateBranchClick
+                        : undefined
+                    }
+                    onCreatePullRequest={
+                      detailHeadState === 'branch' &&
+                      detailFolderPath &&
+                      detailBranch &&
+                      repo.defaultBranch &&
+                      detailBranch !== repo.defaultBranch &&
+                      !existingPullRequest
+                        ? handleCreatePullRequest
+                        : undefined
+                    }
+                    onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
+                    onPullRequestTabActive={
+                      existingPullRequest ? handleRefreshPullRequest : undefined
+                    }
+                    isCreatingPullRequest={
+                      !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
+                    }
+                    isPullRequestStatusResolved={isPullRequestStatusResolved}
+                    onSelectWorktreePath={
+                      activeRepository
+                        ? (path: string) => handleSelectWorktree(activeRepository.id, path)
+                        : undefined
+                    }
+                  />
+                )}
+              </div>
+            </SidebarInset>
+          </div>
+          <StatusBar context={statusContext} />
+          <CreateWorktreeDialog
+            repository={dialogRepository}
+            open={dialogOpen}
+            onOpenChange={setDialogOpen}
+            onSubmit={handleDialogSubmit}
+          />
+          <DeleteWorktreeDialog
+            worktree={deleteTarget?.worktree ?? null}
+            repositoryName={
+              deleteTarget
+                ? (repositories.find((w) => w.id === deleteTarget.repositoryId)?.name ?? null)
+                : null
+            }
+            status={deleteStatus}
+            open={deleteOpen}
+            onOpenChange={handleDeleteOpenChange}
+            onConfirm={handleDeleteConfirm}
+          />
+          <CreateBranchDialog
+            repository={createBranchTarget?.repository ?? null}
+            worktree={createBranchTarget?.worktree ?? null}
+            open={createBranchOpen}
+            onOpenChange={handleCreateBranchOpenChange}
+            onSubmit={handleCreateBranchSubmit}
+          />
+          <Toaster richColors closeButton position="bottom-right" />
+        </SidebarProvider>
+      </DashboardProvider>
+    </TerminalSessionsProvider>
   )
 }
 
@@ -650,9 +878,9 @@ function App(): React.JSX.Element {
     <ThemeProvider>
       <TasksProvider>
         <PrReviewProvider>
-          <ChatProvider>
+          <TaskBoardProvider>
             <AppShell />
-          </ChatProvider>
+          </TaskBoardProvider>
         </PrReviewProvider>
       </TasksProvider>
     </ThemeProvider>

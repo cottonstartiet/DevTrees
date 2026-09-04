@@ -4,21 +4,26 @@ import {
   BotIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
-  CircleDotIcon,
   GitPullRequestIcon,
   Loader2Icon,
   RefreshCwIcon
 } from 'lucide-react'
 
 import { DashboardCard } from '@/components/detail/dashboard-card'
+import {
+  TERMINAL_SESSION_STATUS_ICON,
+  TERMINAL_SESSION_STATUS_LABEL,
+  TERMINAL_SESSION_STATUS_TONE
+} from '@/components/sessions/terminal-session-status'
 import { Button } from '@/components/ui/button'
 import { useDashboard } from '@/contexts/dashboard-context'
-import { useAgentSessions } from '@/contexts/agent-sessions-context'
+import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import {
   type DashboardAssignedPr,
   type DashboardReviewState
 } from '@/hooks/use-dashboard-pr-reviews'
 import { cn } from '@/lib/utils'
+import { isTerminalSessionFinished } from '@shared/terminal-session'
 import type { Repository } from '@shared/repository'
 
 function ReviewStatus({ state }: { state?: DashboardReviewState }): React.JSX.Element {
@@ -85,29 +90,15 @@ function PullRequestRow({
             variant="ghost"
             size="sm"
             className="h-7 shrink-0 gap-1 px-2 text-xs"
-            onClick={() => onOpenSession(review.sessionId!)}
+            onClick={() => onOpenSession(review.sessionId)}
           >
             Session
             <ChevronRightIcon className="size-3" />
           </Button>
         ) : null}
       </div>
-      {review?.state === 'completed' || review?.state === 'error' ? (
-        <details className="border-t px-3 py-2">
-          <summary className="text-muted-foreground hover:text-foreground cursor-pointer text-[10px] font-medium">
-            Review details
-          </summary>
-          {review.error ? <p className="text-destructive mt-2 text-xs">{review.error}</p> : null}
-          {review.output ? (
-            <pre className="bg-muted/60 mt-2 max-h-72 overflow-auto rounded-md border p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
-              {review.output}
-            </pre>
-          ) : (
-            <p className="text-muted-foreground mt-2 text-xs italic">
-              No review output was captured.
-            </p>
-          )}
-        </details>
+      {review?.error ? (
+        <p className="text-destructive border-t px-3 py-2 text-xs">{review.error}</p>
       ) : null}
     </li>
   )
@@ -120,26 +111,23 @@ export function DashboardPage({
   repositories: Repository[]
   onNavigateToSessions: () => void
 }): React.JSX.Element {
-  const { sessions, selectSession } = useAgentSessions()
+  const { sessions, select } = useTerminalSessions()
   const { items, errors, isLoading, refresh } = useDashboard()
-  const waitingSessions = sessions.filter(
-    (session) =>
-      session.lifecycle === 'waiting_for_user' || session.lifecycle === 'waiting_for_permission'
-  )
+  const liveSessions = sessions.filter((session) => !isTerminalSessionFinished(session.status))
 
   const openSession = React.useCallback(
     (sessionId: string): void => {
-      selectSession(sessionId)
+      select(sessionId)
       onNavigateToSessions()
     },
-    [onNavigateToSessions, selectSession]
+    [onNavigateToSessions, select]
   )
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-6">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-4">
         <div>
-          <h3 className="text-base font-semibold tracking-tight">System activity</h3>
+          <h3 className="text-base font-semibold tracking-tight">Activity</h3>
           <p className="text-muted-foreground text-xs">
             Attention and review work across {repositories.length}{' '}
             {repositories.length === 1 ? 'repository' : 'repositories'}.
@@ -147,41 +135,52 @@ export function DashboardPage({
         </div>
 
         <DashboardCard
-          title="Sessions awaiting input"
-          description={`${waitingSessions.length} session${waitingSessions.length === 1 ? '' : 's'} need attention`}
+          title="Active sessions"
+          description={`${liveSessions.length} Copilot session${liveSessions.length === 1 ? '' : 's'} running`}
         >
-          {waitingSessions.length === 0 ? (
-            <p className="text-muted-foreground text-xs italic">
-              No embedded Copilot sessions are waiting for input.
-            </p>
+          {liveSessions.length === 0 ? (
+            <p className="text-muted-foreground text-xs italic">No Copilot sessions are running.</p>
           ) : (
-            <ul className="flex flex-col gap-1.5">
-              {waitingSessions.map((session) => (
-                <li key={session.id}>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {liveSessions.map((session) => {
+                const StatusIcon = TERMINAL_SESSION_STATUS_ICON[session.status]
+                return (
                   <button
+                    key={session.id}
                     type="button"
                     onClick={() => openSession(session.id)}
                     className={cn(
-                      'bg-background/60 hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left transition-colors',
+                      'bg-background/60 hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full flex-col gap-2 rounded-md border p-3 text-left transition-colors',
                       'focus-visible:outline-none focus-visible:ring-3'
                     )}
                   >
-                    <CircleDotIcon className="size-3.5 shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium">{session.label}</p>
-                      <p className="text-muted-foreground truncate font-mono text-[10px]">
-                        {session.currentIntent ||
-                          (session.lifecycle === 'waiting_for_permission'
-                            ? 'Permission required'
-                            : 'Response required')}
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={cn(
+                          'flex size-6 shrink-0 items-center justify-center rounded-md',
+                          TERMINAL_SESSION_STATUS_TONE[session.status]
+                        )}
+                      >
+                        <StatusIcon
+                          className={cn('size-3.5', session.status === 'working' && 'animate-spin')}
+                        />
+                      </span>
+                      <span className="truncate text-xs font-medium">{session.label}</span>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground truncate text-[10px]">
+                        {TERMINAL_SESSION_STATUS_LABEL[session.status]}
+                        {session.repository ? ` · ${session.repository}` : ''}
+                        {session.branch ? ` · ${session.branch}` : ''}
+                      </p>
+                      <p className="text-muted-foreground truncate text-[10px]">
+                        {session.pendingPrompt || session.lastActivity}
                       </p>
                     </div>
-                    <BotIcon className="text-muted-foreground size-3.5 shrink-0" />
-                    <ChevronRightIcon className="text-muted-foreground size-3.5 shrink-0" />
                   </button>
-                </li>
-              ))}
-            </ul>
+                )
+              })}
+            </div>
           )}
         </DashboardCard>
 

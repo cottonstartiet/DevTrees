@@ -68,7 +68,8 @@ import {
 import { cn } from '@/lib/utils'
 import { openInWindowsTerminal } from '@/lib/system'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
-import { useAgentSessions } from '@/contexts/agent-sessions-context'
+import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
+import type { TerminalSessionStatus } from '@shared/terminal-session'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -104,7 +105,7 @@ function repositoryIcon(remoteKind: RepositoryRemoteKind): React.JSX.Element {
   return <FolderIcon />
 }
 
-export type AppView = 'dashboard' | 'chat' | 'repositories' | 'sessions' | 'history' | 'settings'
+export type AppView = 'dashboard' | 'tasks' | 'repositories' | 'sessions' | 'history' | 'settings'
 
 interface AppSidebarProps {
   activeView: AppView
@@ -121,6 +122,24 @@ interface AppSidebarProps {
   onCreateWorktree: (repository: Repository) => void
   onSelectWorktree: (repositoryId: string, worktreePath: string) => void
   onDeleteWorktree: (repositoryId: string, worktree: Worktree) => void
+}
+
+const SESSION_STATUS_LABEL: Record<TerminalSessionStatus, string> = {
+  starting: 'Starting',
+  working: 'Working',
+  'waiting-input': 'Needs you',
+  idle: 'Idle',
+  done: 'Ended',
+  error: 'Failed'
+}
+
+const SESSION_DOT_CLASS: Record<TerminalSessionStatus, string> = {
+  starting: 'text-muted-foreground',
+  working: 'text-primary',
+  'waiting-input': 'text-amber-500',
+  idle: 'text-emerald-500',
+  done: 'text-muted-foreground',
+  error: 'text-destructive'
 }
 
 function worktreeLabel(path: string): string {
@@ -378,7 +397,7 @@ export function AppSidebar({
   const [repositoriesOpen, setRepositoriesOpen] = React.useState(true)
   const [sessionsOpen, setSessionsOpen] = React.useState(true)
   const launchCopilot = useCopilotLauncher()
-  const { sessions, activeSessionId, selectSession, close } = useAgentSessions()
+  const { sessions, selectedId, select, forget } = useTerminalSessions()
 
   const handleStartCopilotSession = React.useCallback(
     async (wt: Worktree, repository?: string): Promise<void> => {
@@ -435,7 +454,11 @@ export function AppSidebar({
   )
 
   return (
-    <Sidebar collapsible="offcanvas" className="top-0 bottom-5 left-12 h-[calc(100svh-1.25rem)]">
+    <Sidebar
+      collapsible="offcanvas"
+      offset="4rem"
+      className="top-0 bottom-5 h-[calc(100svh-1.25rem)]"
+    >
       <SidebarContent className="overflow-x-hidden">
         {activeView === 'repositories' ? (
           <Collapsible
@@ -523,48 +546,42 @@ export function AppSidebar({
               <SidebarGroupContent>
                 {sessions.length === 0 ? (
                   <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
-                    No active sessions.
+                    No sessions yet.
                   </p>
                 ) : (
                   <SidebarMenu>
                     {sessions.map((session) => {
-                      const primary = session.branch || session.label
+                      const primary = session.label || session.branch || session.folderPath
                       const repoLabel = session.repository
                       return (
                         <SidebarMenuItem key={session.id}>
                           <SidebarMenuButton
                             tooltip={repoLabel ? `${primary} · ${repoLabel}` : primary}
-                            isActive={activeView === 'sessions' && activeSessionId === session.id}
+                            isActive={activeView === 'sessions' && selectedId === session.id}
                             className="h-auto py-1"
                             onClick={() => {
-                              selectSession(session.id)
+                              select(session.id)
                               onSelectView('sessions')
                             }}
                           >
                             <CircleDotIcon
-                              className={cn(
-                                'size-3.5 shrink-0',
-                                session.lifecycle === 'failed'
-                                  ? 'text-destructive'
-                                  : 'text-muted-foreground'
-                              )}
+                              className={cn('size-3.5 shrink-0', SESSION_DOT_CLASS[session.status])}
                             />
                             <div className="flex min-w-0 flex-1 flex-col leading-tight">
                               <span className="truncate">{primary}</span>
-                              {repoLabel ? (
-                                <span className="text-sidebar-foreground/70 truncate text-[10px]">
-                                  {repoLabel}
-                                </span>
-                              ) : null}
+                              <span className="text-sidebar-foreground/70 truncate text-[10px]">
+                                {repoLabel ? `${repoLabel} · ` : ''}
+                                {SESSION_STATUS_LABEL[session.status]}
+                              </span>
                             </div>
                           </SidebarMenuButton>
                           <SidebarMenuAction
                             showOnHover
-                            title="Close session"
-                            onClick={() => void close(session.id)}
+                            title="Dismiss session"
+                            onClick={() => void forget(session.id)}
                           >
                             <XIcon />
-                            <span className="sr-only">Close session</span>
+                            <span className="sr-only">Dismiss session</span>
                           </SidebarMenuAction>
                         </SidebarMenuItem>
                       )

@@ -157,18 +157,29 @@ fn is_valid_copilot_session_id(id: &str) -> bool {
     re.is_match(id)
 }
 
-fn launch_copilot_cli(folder_path: &str, prompt: &str) -> LaunchResult {
+fn launch_copilot_cli(folder_path: &str, prompt: &str, session_id: Option<&str>) -> LaunchResult {
     if !cfg!(windows) {
         return LaunchResult::err("Copilot CLI launch is currently Windows-only.");
     }
     if folder_path.trim().is_empty() {
         return LaunchResult::err("folderPath is required.");
     }
+    // Pinning the session id up front (`--session-id` also *sets* the UUID for a new
+    // session) is what lets the app find and tail this session's event log afterwards.
+    let id_arg = match session_id {
+        Some(id) if !id.trim().is_empty() => {
+            if !is_valid_copilot_session_id(id) {
+                return LaunchResult::err("Invalid Copilot session id.");
+            }
+            format!(" --session-id={id}")
+        }
+        _ => String::new(),
+    };
     // An empty prompt launches a plain interactive Copilot session (`copilot --allow-all-tools`).
     // A non-empty prompt is passed via `-i <prompt>` so Copilot executes it immediately. This is the
     // external-terminal replacement for the former embedded "start Copilot session" feature.
     let ps_command = if prompt.trim().is_empty() {
-        "copilot --allow-all-tools".to_string()
+        format!("copilot --allow-all-tools{id_arg}")
     } else {
         // PowerShell 5.1 does not escape embedded double quotes when serializing an argument
         // to a native exe; pre-escape for the Windows CRT argv (double the backslash run
@@ -180,7 +191,7 @@ fn launch_copilot_cli(folder_path: &str, prompt: &str) -> LaunchResult {
             format!("{slashes}{slashes}\\\"")
         });
         let ps_escaped = native_escaped.replace('\'', "''");
-        format!("copilot --allow-all-tools -i '{ps_escaped}'")
+        format!("copilot --allow-all-tools{id_arg} -i '{ps_escaped}'")
     };
     let encoded = encode_ps_command(&ps_command);
     launch_detached(
@@ -265,8 +276,13 @@ pub async fn system_open_path(app: AppHandle, folder_path: String) -> AppResult<
 pub async fn system_launch_copilot_cli(
     folder_path: String,
     prompt: String,
+    session_id: Option<String>,
 ) -> AppResult<LaunchResult> {
-    Ok(launch_copilot_cli(&folder_path, &prompt))
+    Ok(launch_copilot_cli(
+        &folder_path,
+        &prompt,
+        session_id.as_deref(),
+    ))
 }
 
 #[tauri::command]

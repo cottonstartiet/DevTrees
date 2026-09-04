@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -172,6 +171,81 @@ fn migrations() -> Vec<Migration> {
                    ON agent_pending_interactions(session_id, created_at ASC);",
             )
         },
+        // 0008 -> user_version 8: kanban task board.
+        |db| {
+            db.execute_batch(
+                "CREATE TABLE tasks (
+                   id                     TEXT PRIMARY KEY,
+                   title                  TEXT NOT NULL,
+                   description            TEXT NOT NULL DEFAULT '',
+                   status                 TEXT NOT NULL
+                     CHECK (status IN ('todo', 'in_progress', 'review', 'done')),
+                   repository_id          TEXT NOT NULL,
+                   repository_name        TEXT NOT NULL,
+                   repository_path        TEXT NOT NULL,
+                   worktree_path          TEXT NOT NULL,
+                   worktree_branch        TEXT,
+                   chat_conversation_id   TEXT,
+                   sort_order             INTEGER NOT NULL DEFAULT 0,
+                   created_at             INTEGER NOT NULL,
+                   updated_at             INTEGER NOT NULL
+                 );
+                 CREATE INDEX idx_tasks_status_sort ON tasks(status, sort_order ASC);",
+            )
+        },
+        // 0009 -> user_version 9: tasks link to a Copilot agent session, not a chat.
+        |db| {
+            db.execute_batch(
+                "ALTER TABLE tasks RENAME COLUMN chat_conversation_id TO agent_session_id;",
+            )
+        },
+        // 0010 -> user_version 10: agent sessions track a plan/agent mode.
+        |db| {
+            db.execute_batch(
+                "ALTER TABLE agent_sessions ADD COLUMN mode TEXT NOT NULL DEFAULT 'agent';",
+            )
+        },
+        // 0011 -> user_version 11: externally launched Copilot CLI sessions that the app
+        // mirrors by tailing `~/.copilot/session-state/<id>/events.jsonl`.
+        |db| {
+            db.execute_batch(
+                "CREATE TABLE terminal_sessions (
+                   id             TEXT PRIMARY KEY,
+                   task_id        TEXT,
+                   folder_path    TEXT NOT NULL,
+                   label          TEXT NOT NULL,
+                   repository     TEXT,
+                   branch         TEXT,
+                   status         TEXT NOT NULL,
+                   last_activity  TEXT NOT NULL DEFAULT '',
+                   pending_prompt TEXT,
+                   cursor         INTEGER NOT NULL DEFAULT 0,
+                   created_at     INTEGER NOT NULL,
+                   updated_at     INTEGER NOT NULL
+                 );
+                 CREATE INDEX idx_terminal_sessions_task ON terminal_sessions(task_id);",
+            )
+        },
+        // 0012 -> user_version 12: Copilot now only ever runs in an external terminal, so
+        // the embedded SDK harness and its tables are gone. Tasks link to a Copilot CLI
+        // session id, which the old "agent session" name no longer describes.
+        |db| {
+            db.execute_batch(
+                "DROP TABLE IF EXISTS agent_session_events;
+                 DROP TABLE IF EXISTS agent_sessions;
+                 DROP TABLE IF EXISTS agent_pending_interactions;
+                 ALTER TABLE tasks RENAME COLUMN agent_session_id TO copilot_session_id;
+                 ALTER TABLE terminal_sessions ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;",
+            )
+        },
+        // 0013 -> user_version 13: remove the persistent in-app Chat feature and
+        // permanently delete its stored conversations and messages.
+        |db| {
+            db.execute_batch(
+                "DROP TABLE IF EXISTS chat_messages;
+                 DROP TABLE IF EXISTS chat_conversations;",
+            )
+        },
     ]
 }
 
@@ -188,50 +262,6 @@ fn run_migrations(db: &Connection) -> AppResult<()> {
         tx.commit()?;
     }
 
-    Ok(())
-}
-
-fn recover_interrupted_chat_messages(db: &Connection) -> AppResult<()> {
-    db.execute(
-        "UPDATE chat_messages
-         SET status = 'error', error = 'Response was interrupted when DevTrees closed.'
-         WHERE status = 'streaming'",
-        [],
-    )?;
-    Ok(())
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-fn recover_interrupted_agent_sessions(db: &Connection) -> AppResult<()> {
-    let recovered_at = now_ms();
-    db.execute(
-        "UPDATE agent_sessions
-         SET lifecycle = 'idle', activity = 'none', current_intent = NULL,
-             updated_at = ?1
-         WHERE purpose = 'interactive'
-           AND lifecycle IN (
-             'initializing', 'active', 'waiting_for_user', 'waiting_for_permission'
-           )",
-        [recovered_at],
-    )?;
-    db.execute(
-        "UPDATE agent_sessions
-         SET lifecycle = 'failed', activity = 'none', current_intent = NULL,
-             last_error = 'Review was interrupted when DevTrees closed.',
-             updated_at = ?1, completed_at = ?1
-         WHERE purpose = 'pr_review'
-           AND lifecycle IN (
-             'initializing', 'active', 'waiting_for_user', 'waiting_for_permission'
-           )",
-        [recovered_at],
-    )?;
-    db.execute("DELETE FROM agent_pending_interactions", [])?;
     Ok(())
 }
 
@@ -312,8 +342,6 @@ pub fn init() -> AppResult<Connection> {
     })?;
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
     run_migrations(&conn)?;
-    recover_interrupted_chat_messages(&conn)?;
-    recover_interrupted_agent_sessions(&conn)?;
     import_legacy_json(&conn)?;
     Ok(conn)
 }
@@ -323,15 +351,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrations_create_chat_schema_and_recover_streams() {
+    fn migrations_remove_embedded_copilot_tables() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-        run_migrations(&conn).unwrap();
-
-        let version: i64 = conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, 7);
+        let migrations = migrations();
+        for (index, migrate) in migrations.iter().take(12).enumerate() {
+            migrate(&conn).unwrap();
+            conn.pragma_update(None, "user_version", (index + 1) as i64)
+                .unwrap();
+        }
 
         conn.execute(
             "INSERT INTO chat_conversations
@@ -348,67 +376,28 @@ mod tests {
         )
         .unwrap();
 
-        recover_interrupted_chat_messages(&conn).unwrap();
-        let (status, error): (String, String) = conn
-            .query_row(
-                "SELECT status, error FROM chat_messages WHERE id = 'message'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(status, "error");
-        assert_eq!(error, "Response was interrupted when DevTrees closed.");
+        run_migrations(&conn).unwrap();
 
-        conn.execute(
-            "INSERT INTO agent_sessions
-               (id, purpose, label, folder_path, lifecycle, activity, created_at, updated_at)
-             VALUES ('agent', 'interactive', 'Agent', 'C:\\repo', 'active', 'running_tool', 1, 1)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO agent_sessions
-               (id, purpose, label, folder_path, lifecycle, activity, created_at, updated_at)
-             VALUES ('review', 'pr_review', 'Review', 'C:\\repo', 'active', 'running_tool', 1, 1)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO agent_pending_interactions
-               (id, session_id, kind, request_id, payload_json, created_at)
-             VALUES ('interaction', 'agent', 'permission', 'request', '{}', 1)",
-            [],
-        )
-        .unwrap();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 13);
 
-        recover_interrupted_agent_sessions(&conn).unwrap();
-        let (lifecycle, activity): (String, String) = conn
-            .query_row(
-                "SELECT lifecycle, activity FROM agent_sessions WHERE id = 'agent'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(lifecycle, "idle");
-        assert_eq!(activity, "none");
-        let (lifecycle, error, completed_at): (String, String, i64) = conn
-            .query_row(
-                "SELECT lifecycle, last_error, completed_at
-                 FROM agent_sessions WHERE id = 'review'",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        assert_eq!(lifecycle, "failed");
-        assert_eq!(error, "Review was interrupted when DevTrees closed.");
-        assert!(completed_at > 1);
-        let pending: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM agent_pending_interactions",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(pending, 0);
+        for table in [
+            "chat_conversations",
+            "chat_messages",
+            "agent_sessions",
+            "agent_session_events",
+            "agent_pending_interactions",
+        ] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "{table} should have been dropped");
+        }
     }
 }

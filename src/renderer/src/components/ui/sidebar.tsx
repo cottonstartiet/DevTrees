@@ -210,13 +210,16 @@ function Sidebar({
   side = 'left',
   variant = 'sidebar',
   collapsible = 'offcanvas',
+  offset = '0px',
   className,
   children,
+  style,
   ...props
 }: React.ComponentProps<'div'> & {
   side?: 'left' | 'right'
   variant?: 'sidebar' | 'floating' | 'inset'
   collapsible?: 'offcanvas' | 'icon' | 'none'
+  offset?: string
 }): React.JSX.Element {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
 
@@ -268,6 +271,7 @@ function Sidebar({
       data-variant={variant}
       data-side={side}
       data-slot="sidebar"
+      style={{ '--sidebar-offset': offset } as React.CSSProperties}
     >
       <div
         data-slot="sidebar-gap"
@@ -285,13 +289,14 @@ function Sidebar({
         className={cn(
           'fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear md:flex',
           side === 'left'
-            ? 'left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]'
-            : 'right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]',
+            ? 'left-[var(--sidebar-offset)] group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-offset)-var(--sidebar-width))]'
+            : 'right-[var(--sidebar-offset)] group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-offset)-var(--sidebar-width))]',
           variant === 'floating' || variant === 'inset'
             ? 'p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]'
             : 'group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l',
           className
         )}
+        style={style}
         {...props}
       >
         <div
@@ -402,8 +407,8 @@ function SidebarResizeHandle({ side }: { side: 'left' | 'right' }): React.JSX.El
       className={cn(
         'group/resize-handle fixed top-0 bottom-5 z-20 hidden w-1.5 cursor-col-resize touch-none select-none md:block',
         side === 'left'
-          ? 'left-[calc(var(--sidebar-width)-3px)]'
-          : 'right-[calc(var(--sidebar-width)-3px)]',
+          ? 'left-[calc(var(--sidebar-offset)+var(--sidebar-width)-3px)]'
+          : 'right-[calc(var(--sidebar-offset)+var(--sidebar-width)-3px)]',
         'group-data-[state=collapsed]:hidden',
         'after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-transparent after:transition-colors',
         'hover:after:bg-sidebar-border data-[resizing=true]:after:bg-sidebar-ring'

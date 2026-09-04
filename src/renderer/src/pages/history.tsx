@@ -215,7 +215,9 @@ export function HistoryPage(): React.JSX.Element {
         <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
           <AlertTriangleIcon className="size-10 opacity-40" />
           <div className="space-y-1">
-            <p className="text-foreground text-sm font-medium">Couldn&apos;t read session history</p>
+            <p className="text-foreground text-sm font-medium">
+              Couldn&apos;t read session history
+            </p>
             <p className="text-xs">{error}</p>
           </div>
         </div>
