@@ -2,6 +2,7 @@ import * as React from 'react'
 import {
   FolderGit2Icon,
   GaugeIcon,
+  GitPullRequestIcon,
   HistoryIcon,
   KanbanSquareIcon,
   SettingsIcon,
@@ -19,6 +20,7 @@ const TOP_ITEMS: ReadonlyArray<{
   { view: 'dashboard', label: 'Dashboard', Icon: GaugeIcon },
   { view: 'tasks', label: 'Tasks', Icon: KanbanSquareIcon },
   { view: 'repositories', label: 'Repos', Icon: FolderGit2Icon },
+  { view: 'reviews', label: 'Reviews', Icon: GitPullRequestIcon },
   { view: 'sessions', label: 'Sessions', Icon: SquareTerminalIcon },
   { view: 'history', label: 'History', Icon: HistoryIcon }
 ]

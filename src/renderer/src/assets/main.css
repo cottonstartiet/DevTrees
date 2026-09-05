@@ -182,6 +182,14 @@
   color: var(--foreground);
   overflow-wrap: anywhere;
 }
+.markdown-body [style] {
+  max-width: 100% !important;
+  overflow-wrap: anywhere;
+}
+.markdown-body small {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
 .markdown-body > * + * {
   margin-top: 0.75em;
 }
@@ -262,6 +270,8 @@
 }
 .markdown-body img {
   max-width: 100%;
+  max-height: min(60vh, 40rem);
+  object-fit: contain;
 }
 
 /* Preview blocks carry their raw-markdown line range, so a comment made here

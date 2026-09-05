@@ -189,7 +189,7 @@ pub async fn github_repo_open_prs(folder_path: String) -> AppResult<RepoOpenPrsR
             "--limit".into(),
             "200".into(),
             "--json".into(),
-            "number,title,author,headRefName,baseRefName,url,isDraft,createdAt,reviewRequests,assignees"
+            "number,title,body,author,headRefName,baseRefName,url,isDraft,createdAt,reviewRequests,assignees"
                 .into(),
         ],
         folder_path.clone(),
@@ -269,6 +269,11 @@ pub async fn github_repo_open_prs(folder_path: String) -> AppResult<RepoOpenPrsR
                     .unwrap_or_default(),
                 title: item
                     .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                description: item
+                    .get("body")
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string(),

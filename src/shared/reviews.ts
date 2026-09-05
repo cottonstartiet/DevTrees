@@ -17,6 +17,8 @@ export type RepoPr = {
   /** PR number (GitHub) or pull request id (Azure DevOps). */
   id: number
   title: string
+  /** PR description/body, used by Reviews search. */
+  description: string
   /** Author display name (ADO) or login (GitHub). */
   author: string
   /** Short source branch name (e.g. `feature/foo`). */

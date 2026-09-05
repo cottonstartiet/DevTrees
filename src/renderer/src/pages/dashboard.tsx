@@ -1,13 +1,5 @@
 import * as React from 'react'
-import {
-  AlertCircleIcon,
-  BotIcon,
-  CheckCircle2Icon,
-  ChevronRightIcon,
-  GitPullRequestIcon,
-  Loader2Icon,
-  RefreshCwIcon
-} from 'lucide-react'
+import { AlertCircleIcon, ChevronRightIcon, GitPullRequestIcon, RefreshCwIcon } from 'lucide-react'
 
 import { DashboardCard } from '@/components/detail/dashboard-card'
 import {
@@ -18,98 +10,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { useDashboard } from '@/contexts/dashboard-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
-import {
-  type DashboardAssignedPr,
-  type DashboardReviewState
-} from '@/hooks/use-dashboard-pr-reviews'
 import { cn } from '@/lib/utils'
-import { isTerminalSessionFinished } from '@shared/terminal-session'
 import type { Repository } from '@shared/repository'
-
-function ReviewStatus({ state }: { state?: DashboardReviewState }): React.JSX.Element {
-  if (!state) {
-    return <span className="text-muted-foreground text-[10px]">Awaiting review</span>
-  }
-  if (state === 'queued' || state === 'running') {
-    return (
-      <span className="text-muted-foreground flex items-center gap-1 text-[10px]">
-        <Loader2Icon className="size-3 animate-spin" />
-        {state === 'queued' ? 'Queued' : 'Reviewing'}
-      </span>
-    )
-  }
-  if (state === 'completed') {
-    return (
-      <span className="text-muted-foreground flex items-center gap-1 text-[10px]">
-        <CheckCircle2Icon className="size-3" />
-        Complete
-      </span>
-    )
-  }
-  return (
-    <span className="text-destructive flex items-center gap-1 text-[10px]">
-      <AlertCircleIcon className="size-3" />
-      Failed
-    </span>
-  )
-}
-
-function PullRequestRow({
-  item,
-  sessionAvailable,
-  onOpenSession
-}: {
-  item: DashboardAssignedPr
-  sessionAvailable: boolean
-  onOpenSession: (sessionId: string) => void
-}): React.JSX.Element {
-  const review = item.review
-  return (
-    <li className="bg-background/60 rounded-md border">
-      <div className="flex min-w-0 items-center gap-3 px-3 py-2.5">
-        <span className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]">
-          #{item.pr.id}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-xs font-medium">{item.pr.title}</span>
-            {item.pr.isDraft ? (
-              <span className="bg-muted text-muted-foreground shrink-0 rounded-full px-1.5 py-0.5 text-[10px]">
-                Draft
-              </span>
-            ) : null}
-          </div>
-          <p className="text-muted-foreground truncate text-[10px]">
-            {item.repository.name} · {item.pr.author || 'Unknown'} · {item.pr.sourceRef} →{' '}
-            {item.pr.targetRef}
-          </p>
-        </div>
-        <ReviewStatus state={review?.state} />
-        {review?.sessionId && sessionAvailable ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 shrink-0 gap-1 px-2 text-xs"
-            onClick={() => onOpenSession(review.sessionId)}
-          >
-            Session
-            <ChevronRightIcon className="size-3" />
-          </Button>
-        ) : null}
-      </div>
-      {review?.error ? (
-        <p className="text-destructive border-t px-3 py-2 text-xs">{review.error}</p>
-      ) : null}
-    </li>
-  )
-}
+import { isTerminalSessionFinished } from '@shared/terminal-session'
 
 export function DashboardPage({
   repositories,
-  onNavigateToSessions
+  onNavigateToSessions,
+  onNavigateToReviews
 }: {
   repositories: Repository[]
   onNavigateToSessions: () => void
+  onNavigateToReviews: () => void
 }): React.JSX.Element {
   const { sessions, select } = useTerminalSessions()
   const { items, errors, isLoading, refresh } = useDashboard()
@@ -185,8 +97,12 @@ export function DashboardPage({
         </DashboardCard>
 
         <DashboardCard
-          title="Assigned pull requests"
-          description={`${items.length} pull request${items.length === 1 ? '' : 's'} assigned to you`}
+          title="Assigned reviews"
+          description={
+            isLoading && items.length === 0
+              ? 'Checking configured repositories…'
+              : `${items.length} pull request${items.length === 1 ? '' : 's'} awaiting your review`
+          }
           actions={
             <Button
               variant="ghost"
@@ -202,43 +118,30 @@ export function DashboardPage({
           }
         >
           {errors.length > 0 ? (
-            <div className="border-destructive/30 bg-destructive/5 rounded-md border px-3 py-2">
-              {errors.map((error) => (
-                <p key={error} className="text-destructive text-xs">
-                  {error}
-                </p>
-              ))}
+            <div className="border-destructive/30 bg-destructive/5 flex items-start gap-2 rounded-md border px-3 py-2">
+              <AlertCircleIcon className="text-destructive mt-0.5 size-3.5 shrink-0" />
+              <p className="text-destructive line-clamp-2 text-xs">{errors.join(' · ')}</p>
             </div>
           ) : null}
-          {isLoading && items.length === 0 ? (
-            <div className="text-muted-foreground flex items-center gap-2 py-3 text-xs">
-              <Loader2Icon className="size-3.5 animate-spin" />
-              Checking configured repositories…
-            </div>
-          ) : items.length === 0 ? (
-            <div className="text-muted-foreground flex items-center gap-2 py-3 text-xs italic">
+          <button
+            type="button"
+            onClick={onNavigateToReviews}
+            className={cn(
+              'bg-background/60 hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left transition-colors',
+              'focus-visible:outline-none focus-visible:ring-3'
+            )}
+          >
+            <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
               <GitPullRequestIcon className="size-4" />
-              No pull requests are currently assigned to you.
-            </div>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {items.map((item) => (
-                <PullRequestRow
-                  key={item.key}
-                  item={item}
-                  sessionAvailable={
-                    !!item.review?.sessionId &&
-                    sessions.some((session) => session.id === item.review?.sessionId)
-                  }
-                  onOpenSession={openSession}
-                />
-              ))}
-            </ul>
-          )}
-          <div className="text-muted-foreground flex items-center gap-1.5 border-t pt-2 text-[10px]">
-            <BotIcon className="size-3" />
-            New assignments start an embedded, read-only Copilot review automatically.
-          </div>
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-xs font-medium">Open Reviews</span>
+              <span className="text-muted-foreground block truncate text-[10px]">
+                Choose a repository to inspect assigned and recent pull requests.
+              </span>
+            </span>
+            <ChevronRightIcon className="text-muted-foreground size-4 shrink-0" />
+          </button>
         </DashboardCard>
       </div>
     </div>

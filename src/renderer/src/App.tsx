@@ -29,6 +29,7 @@ import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
 import { DashboardPage } from '@/pages/dashboard'
 import { HistoryPage } from '@/pages/history'
+import { ReviewsPage } from '@/pages/reviews'
 import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
 import { TasksPage, TasksHeaderControls } from '@/pages/tasks'
@@ -259,6 +260,7 @@ function AppShell(): React.JSX.Element {
   useAutoUpdate()
   const [view, setView] = useState<AppView>('dashboard')
   const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null)
+  const [reviewsRepositoryId, setReviewsRepositoryId] = useState<string | null>(null)
   const [dialogRepository, setDialogRepository] = useState<Repository | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{
@@ -306,6 +308,11 @@ function AppShell(): React.JSX.Element {
     },
     [selectRepository]
   )
+
+  const handleSelectReviewsRepository = useCallback((id: string): void => {
+    setReviewsRepositoryId(id)
+    setView('reviews')
+  }, [])
 
   const handleAddRepository = useCallback((): void => {
     void addRepository()
@@ -373,6 +380,11 @@ function AppShell(): React.JSX.Element {
       ? (repositories.find((w) => w.id === activeRepositoryId) ?? null)
       : null
 
+  const reviewsRepository =
+    view === 'reviews' && reviewsRepositoryId
+      ? (repositories.find((repository) => repository.id === reviewsRepositoryId) ?? null)
+      : null
+
   const activeWorktree =
     activeRepository && activeWorktreePath
       ? (worktreesByRepositoryId[activeRepository.id]?.find((w) => w.path === activeWorktreePath) ??
@@ -425,19 +437,21 @@ function AppShell(): React.JSX.Element {
       ? 'Dashboard'
       : view === 'tasks'
         ? 'Tasks'
-        : view === 'settings'
-          ? 'Settings'
-          : view === 'history'
-            ? 'History'
-            : view === 'sessions'
-              ? 'Sessions'
-              : activeWorktree
-                ? worktreeLabel(activeWorktree.path)
-                : activeRepository
-                  ? activeRepository.name
-                  : view === 'repositories'
-                    ? 'Repositories'
-                    : 'DevTrees'
+        : view === 'reviews'
+          ? 'Reviews'
+          : view === 'settings'
+            ? 'Settings'
+            : view === 'history'
+              ? 'History'
+              : view === 'sessions'
+                ? 'Sessions'
+                : activeWorktree
+                  ? worktreeLabel(activeWorktree.path)
+                  : activeRepository
+                    ? activeRepository.name
+                    : view === 'repositories'
+                      ? 'Repositories'
+                      : 'DevTrees'
 
   const repo = useRepoStatus(activeRepository?.path ?? null, view === 'repositories')
 
@@ -720,17 +734,19 @@ function AppShell(): React.JSX.Element {
         <SidebarProvider className="flex h-svh flex-col">
           <div className="flex min-h-0 w-full flex-1">
             <ActivityRail activeView={view} onSelect={setView} />
-            {view === 'repositories' || view === 'sessions' ? (
+            {view === 'repositories' || view === 'reviews' || view === 'sessions' ? (
               <AppSidebar
                 activeView={view}
                 onSelectView={setView}
                 repositories={repositories}
-                activeRepositoryId={activeRepositoryId}
-                activeWorktreePath={activeWorktreePath}
+                activeRepositoryId={view === 'reviews' ? reviewsRepositoryId : activeRepositoryId}
+                activeWorktreePath={view === 'repositories' ? activeWorktreePath : null}
                 worktreesByRepositoryId={worktreesByRepositoryId}
                 deletingWorktreePaths={deletingWorktreePaths}
                 onAddRepository={handleAddRepository}
-                onSelectRepository={handleSelectRepository}
+                onSelectRepository={
+                  view === 'reviews' ? handleSelectReviewsRepository : handleSelectRepository
+                }
                 onRemoveRepository={handleRemoveRepository}
                 onReorderRepositories={reorderRepositories}
                 onCreateWorktree={handleCreateWorktreeClick}
@@ -756,7 +772,7 @@ function AppShell(): React.JSX.Element {
                 />
               ) : (
                 <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-                  {view === 'repositories' || view === 'sessions' ? (
+                  {view === 'repositories' || view === 'reviews' || view === 'sessions' ? (
                     <>
                       <SidebarTrigger className="-ml-1" />
                       <Separator orientation="vertical" className="mr-2 h-4" />
@@ -777,6 +793,7 @@ function AppShell(): React.JSX.Element {
                   <DashboardPage
                     repositories={repositories}
                     onNavigateToSessions={handleNavigateToSessions}
+                    onNavigateToReviews={() => setView('reviews')}
                   />
                 ) : view === 'tasks' ? (
                   <TasksPageContainer
@@ -796,6 +813,8 @@ function AppShell(): React.JSX.Element {
                   </div>
                 ) : view === 'history' ? (
                   <HistoryPage />
+                ) : view === 'reviews' ? (
+                  <ReviewsPage repository={reviewsRepository} />
                 ) : view === 'sessions' ? (
                   <SessionsPage />
                 ) : (

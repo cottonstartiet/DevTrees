@@ -10,6 +10,7 @@ pub struct RepoPr {
     pub provider: String,
     pub id: i64,
     pub title: String,
+    pub description: String,
     pub author: String,
     pub source_ref: String,
     pub target_ref: String,

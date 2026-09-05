@@ -772,6 +772,11 @@ pub async fn ado_repo_open_prs(folder_path: String) -> AppResult<RepoOpenPrsResu
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_string(),
+                description: item
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
                 author,
                 source_ref: short_ref(
                     item.get("sourceRefName")

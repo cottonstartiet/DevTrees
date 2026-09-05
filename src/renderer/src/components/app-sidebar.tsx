@@ -105,7 +105,14 @@ function repositoryIcon(remoteKind: RepositoryRemoteKind): React.JSX.Element {
   return <FolderIcon />
 }
 
-export type AppView = 'dashboard' | 'tasks' | 'repositories' | 'sessions' | 'history' | 'settings'
+export type AppView =
+  | 'dashboard'
+  | 'tasks'
+  | 'repositories'
+  | 'reviews'
+  | 'sessions'
+  | 'history'
+  | 'settings'
 
 interface AppSidebarProps {
   activeView: AppView
@@ -395,6 +402,7 @@ export function AppSidebar({
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
   const [repositoriesOpen, setRepositoriesOpen] = React.useState(true)
+  const [reviewsOpen, setReviewsOpen] = React.useState(true)
   const [sessionsOpen, setSessionsOpen] = React.useState(true)
   const launchCopilot = useCopilotLauncher()
   const { sessions, selectedId, select, forget } = useTerminalSessions()
@@ -518,6 +526,50 @@ export function AppSidebar({
                         ))}
                       </SortableContext>
                     </DndContext>
+                  </SidebarMenu>
+                )}
+              </SidebarGroupContent>
+            </CollapsibleContent>
+          </Collapsible>
+        ) : null}
+
+        {activeView === 'reviews' ? (
+          <Collapsible open={reviewsOpen} onOpenChange={setReviewsOpen} className="flex flex-col">
+            <SidebarGroup className="shrink-0">
+              <SidebarGroupLabel
+                asChild
+                className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              >
+                <CollapsibleTrigger className="group/reviews-label flex w-full items-center">
+                  <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/reviews-label:rotate-90 group-data-[collapsible=icon]:hidden" />
+                  Repositories
+                </CollapsibleTrigger>
+              </SidebarGroupLabel>
+              <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
+                <PlusIcon />
+                <span className="sr-only">Add repository</span>
+              </SidebarGroupAction>
+            </SidebarGroup>
+            <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
+              <SidebarGroupContent>
+                {repositories.length === 0 ? (
+                  <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
+                    No repositories yet. Click + to add a git repository.
+                  </p>
+                ) : (
+                  <SidebarMenu>
+                    {repositories.map((repository) => (
+                      <SidebarMenuItem key={repository.id}>
+                        <SidebarMenuButton
+                          tooltip={repository.name}
+                          isActive={activeRepositoryId === repository.id}
+                          onClick={() => onSelectRepository(repository.id)}
+                        >
+                          {repositoryIcon(repository.remoteKind)}
+                          <span className="truncate">{repository.name}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
                   </SidebarMenu>
                 )}
               </SidebarGroupContent>

@@ -7,8 +7,8 @@ import { cn } from '@/lib/utils'
 /**
  * Rendered markdown for PR descriptions and review comments.
  *
- * The HTML comes from `markdown-it` with raw HTML disabled, and link clicks are intercepted so a
- * comment can never navigate the app away from the workspace.
+ * The HTML comes from the shared sanitized Markdown renderer, and link clicks are intercepted so
+ * content can never navigate the app away from the workspace.
  */
 export function MarkdownBody({
   text,

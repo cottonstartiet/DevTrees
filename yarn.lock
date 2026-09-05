@@ -2735,6 +2735,13 @@ dompurify@^3.3.3:
   optionalDependencies:
     "@types/trusted-types" "^2.0.7"
 
+dompurify@^3.4.14:
+  version "3.4.14"
+  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/dompurify/-/dompurify-3.4.14.tgz#a789edb2c7bcdb69a93713a34edb7e0a5245d8c9"
+  integrity sha1-p4ntsse822mpNxOjTtt+ClJF2Mk=
+  optionalDependencies:
+    "@types/trusted-types" "^2.0.7"
+
 dunder-proto@^1.0.0, dunder-proto@^1.0.1:
   version "1.0.1"
   resolved "https://registry.yarnpkg.com/dunder-proto/-/dunder-proto-1.0.1.tgz#d7ae667e1dc83482f8b70fd0f6eefc50da30f58a"

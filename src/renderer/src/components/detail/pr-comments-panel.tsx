@@ -18,6 +18,7 @@ import { usePrReviewWorkspace } from '@/contexts/pr-review-context'
 import { buildPrCommentsPrompt } from '@/lib/copilot-pr-prompt'
 import { openExternal } from '@/lib/system'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
+import { markdownToPlainText } from '@/lib/markdown'
 import { cn } from '@/lib/utils'
 import type { RepoPrThread, RepoPrThreadStatus } from '@shared/reviews'
 import type { RepositoryRemoteKind } from '@shared/repository'
@@ -225,7 +226,7 @@ function ThreadRow({ thread }: { thread: RepoPrThread }): React.JSX.Element {
               {firstComment.author.displayName}
             </span>
             <span className="text-muted-foreground min-w-0 flex-1 truncate text-xs">
-              {firstComment.content || '(no content)'}
+              {markdownToPlainText(firstComment.content) || '(no content)'}
             </span>
           </div>
         ) : null}

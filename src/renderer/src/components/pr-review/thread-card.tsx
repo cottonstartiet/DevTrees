@@ -9,6 +9,7 @@ import {
 import { CommentComposer } from '@/components/pr-review/comment-composer'
 import { MarkdownBody } from '@/components/pr-review/markdown-body'
 import { Button } from '@/components/ui/button'
+import { markdownToPlainText } from '@/lib/markdown'
 import { openExternal } from '@/lib/system'
 import { cn } from '@/lib/utils'
 import type { RepoPrThread } from '@shared/reviews'
@@ -65,7 +66,9 @@ export function ThreadCard({
           {firstComment?.author.displayName ?? 'Unknown'}
         </span>
         <span className="text-muted-foreground min-w-0 flex-1 truncate text-[11px]">
-          {firstComment?.content.replace(/\s+/g, ' ').trim() || '(no content)'}
+          {firstComment
+            ? markdownToPlainText(firstComment.content) || '(no content)'
+            : '(no content)'}
         </span>
         {replyCount > 0 ? (
           <span className="text-muted-foreground shrink-0 text-[10px]">

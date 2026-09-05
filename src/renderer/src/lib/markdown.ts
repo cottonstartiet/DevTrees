@@ -1,13 +1,209 @@
+import DOMPurify from 'dompurify'
 import MarkdownIt from 'markdown-it'
 
 /**
  * Markdown rendering for the review workspace.
  *
- * `html: false` is deliberate: PR bodies and file contents are untrusted input, so raw HTML is
- * escaped rather than rendered. Links are never navigated in-app — the preview component
- * intercepts clicks and hands the URL to `system.openExternal`.
+ * Raw HTML is supported because providers and bots commonly use it in PR content. Every rendered
+ * result is sanitized before it reaches the DOM. Links are never navigated in-app — preview
+ * components intercept clicks and hand HTTP(S) URLs to `system.openExternal`.
  */
-const md = new MarkdownIt({ html: false, linkify: true, typographer: false })
+const md = new MarkdownIt({ html: true, linkify: true, typographer: false })
+const SOURCE_MAP_NONCE = crypto.randomUUID()
+
+const SAFE_STYLE_PROPERTIES = new Set([
+  'align-items',
+  'background-color',
+  'border',
+  'border-bottom',
+  'border-bottom-color',
+  'border-bottom-left-radius',
+  'border-bottom-right-radius',
+  'border-bottom-style',
+  'border-bottom-width',
+  'border-color',
+  'border-left',
+  'border-left-color',
+  'border-left-style',
+  'border-left-width',
+  'border-radius',
+  'border-right',
+  'border-right-color',
+  'border-right-style',
+  'border-right-width',
+  'border-style',
+  'border-top',
+  'border-top-color',
+  'border-top-left-radius',
+  'border-top-right-radius',
+  'border-top-style',
+  'border-top-width',
+  'border-width',
+  'color',
+  'column-gap',
+  'display',
+  'flex-direction',
+  'flex-wrap',
+  'font-family',
+  'font-size',
+  'font-style',
+  'font-weight',
+  'gap',
+  'height',
+  'justify-content',
+  'letter-spacing',
+  'line-height',
+  'margin',
+  'margin-bottom',
+  'margin-left',
+  'margin-right',
+  'margin-top',
+  'padding',
+  'padding-bottom',
+  'padding-left',
+  'padding-right',
+  'padding-top',
+  'row-gap',
+  'text-align',
+  'text-decoration',
+  'vertical-align',
+  'white-space'
+])
+
+const BLOCKED_STYLE_VALUE = /(?:url\s*\(|expression\s*\(|@import|-moz-binding|behavior\s*:)/i
+const DISPLAY_VALUES = new Set(['block', 'flex', 'inline', 'inline-block', 'inline-flex', 'none'])
+const SAFE_LENGTH = /^0$|^(?:\d+(?:\.\d+)?)(?:px|rem|em)$/
+const SPACING_PROPERTY = /^(?:column-gap|gap|margin(?:-.+)?|padding(?:-.+)?|row-gap)$/
+
+function safeLengthList(value: string, maxPixels: number, maxRelative: number): boolean {
+  return value
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .every((part) => {
+      if (!SAFE_LENGTH.test(part)) return false
+      const amount = Number.parseFloat(part)
+      return part.endsWith('px') ? amount <= maxPixels : amount <= maxRelative
+    })
+}
+
+function isSafeStyleValue(property: string, value: string): boolean {
+  if (BLOCKED_STYLE_VALUE.test(value)) return false
+  const normalized = value.trim().toLowerCase()
+  if (property === 'display') return DISPLAY_VALUES.has(normalized)
+  if (property === 'background-color' || property === 'color' || property.endsWith('-color')) {
+    return CSS.supports('color', value)
+  }
+  if (property === 'border-style' || property.endsWith('-style')) {
+    return /^(?:dashed|dotted|double|none|solid)(?:\s+(?:dashed|dotted|double|none|solid)){0,3}$/.test(
+      normalized
+    )
+  }
+  if (property === 'border-width' || property.endsWith('-width')) {
+    return safeLengthList(value, 8, 0.5)
+  }
+  if (property === 'border-radius' || property.endsWith('-radius')) {
+    return safeLengthList(value, 32, 2)
+  }
+  if (SPACING_PROPERTY.test(property)) return safeLengthList(value, 64, 4)
+  if (property === 'font-size') return safeLengthList(value, 32, 2)
+  if (property === 'height') {
+    if (!SAFE_LENGTH.test(normalized)) return false
+    const amount = Number.parseFloat(normalized)
+    if (normalized.endsWith('px')) return amount <= 200
+    return amount <= 12
+  }
+  return true
+}
+
+function sanitizeInlineStyle(value: string): string {
+  const probe = document.createElement('span')
+  const normalizedProviderStyles = value
+    .replace(
+      /rgba\(\s*var\(--[^)]+\)\s*,\s*[^)]+\)/gi,
+      'color-mix(in oklab, currentColor 18%, transparent)'
+    )
+    .replace(/var\(--text-secondary-color\)/gi, 'currentColor')
+  probe.setAttribute('style', normalizedProviderStyles)
+  const declarations: string[] = []
+
+  for (const property of Array.from(probe.style)) {
+    if (!SAFE_STYLE_PROPERTIES.has(property)) continue
+    const propertyValue = probe.style.getPropertyValue(property).trim()
+    if (!propertyValue || !isSafeStyleValue(property, propertyValue)) continue
+    declarations.push(`${property}: ${propertyValue}`)
+  }
+
+  return declarations.join('; ')
+}
+
+DOMPurify.addHook('uponSanitizeAttribute', (_node, event) => {
+  if (event.attrName !== 'style') return
+  const style = sanitizeInlineStyle(event.attrValue)
+  if (!style) {
+    event.keepAttr = false
+    return
+  }
+  event.attrValue = style
+})
+
+function sanitizeRenderedHtml(html: string): string {
+  const sanitized = DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    ALLOW_DATA_ATTR: false,
+    ALLOW_UNKNOWN_PROTOCOLS: false,
+    SANITIZE_DOM: true,
+    SANITIZE_NAMED_PROPS: true,
+    ADD_ATTR: ['data-src-start', 'data-src-end'],
+    FORBID_ATTR: ['class', 'download', 'height', 'id', 'name', 'ping', 'srcdoc', 'target', 'width'],
+    FORBID_TAGS: [
+      'audio',
+      'base',
+      'button',
+      'canvas',
+      'embed',
+      'form',
+      'iframe',
+      'input',
+      'link',
+      'meta',
+      'object',
+      'option',
+      'script',
+      'select',
+      'source',
+      'style',
+      'template',
+      'textarea',
+      'track',
+      'video'
+    ]
+  })
+
+  const template = document.createElement('template')
+  template.innerHTML = sanitized
+  for (const element of template.content.querySelectorAll(
+    `[${SRC_START_ATTR}], [${SRC_END_ATTR}]`
+  )) {
+    const start = trustedSourceLine(element.getAttribute(SRC_START_ATTR))
+    const end = trustedSourceLine(element.getAttribute(SRC_END_ATTR))
+    if (start && end) {
+      element.setAttribute(SRC_START_ATTR, start)
+      element.setAttribute(SRC_END_ATTR, end)
+    } else {
+      element.removeAttribute(SRC_START_ATTR)
+      element.removeAttribute(SRC_END_ATTR)
+    }
+  }
+  return template.innerHTML
+}
+
+function trustedSourceLine(value: string | null): string | null {
+  const prefix = `${SOURCE_MAP_NONCE}:`
+  if (!value?.startsWith(prefix)) return null
+  const line = value.slice(prefix.length)
+  return /^\d+$/.test(line) ? line : null
+}
 
 /**
  * The token type is derived from `parse` rather than imported: markdown-it ships its own types
@@ -34,8 +230,8 @@ function stampSourceMap(tokens: Token[]): void {
   for (const token of tokens) {
     if (token.nesting === -1 || !token.map) continue
     const [start, end] = token.map
-    token.attrSet(SRC_START_ATTR, String(start + 1))
-    token.attrSet(SRC_END_ATTR, String(Math.max(start + 1, end)))
+    token.attrSet(SRC_START_ATTR, `${SOURCE_MAP_NONCE}:${start + 1}`)
+    token.attrSet(SRC_END_ATTR, `${SOURCE_MAP_NONCE}:${Math.max(start + 1, end)}`)
   }
 }
 
@@ -43,7 +239,7 @@ export function renderMarkdownWithSourceMap(text: string): string {
   const env = {}
   const tokens = md.parse(text, env)
   stampSourceMap(tokens)
-  return md.renderer.render(tokens, md.options, env)
+  return sanitizeRenderedHtml(md.renderer.render(tokens, md.options, env))
 }
 
 /** Fields every block carries, whatever it renders as. */
@@ -128,7 +324,7 @@ export function renderMarkdownBlocks(text: string): MarkdownBlock[] {
       continue
     }
 
-    const html = md.renderer.render(group, md.options, env)
+    const html = sanitizeRenderedHtml(md.renderer.render(group, md.options, env))
     if (!html.trim()) continue
 
     blocks.push({ ...base, kind: 'html', html })
@@ -156,7 +352,14 @@ export function blockIndexForLine(blocks: MarkdownBlock[], line: number): number
 
 /** Render markdown without source maps — used for comment bodies and the PR description. */
 export function renderMarkdown(text: string): string {
-  return md.render(text)
+  return sanitizeRenderedHtml(md.render(text))
+}
+
+/** Render Markdown and provider HTML as normalized text for compact summaries. */
+export function markdownToPlainText(text: string): string {
+  const container = document.createElement('div')
+  container.innerHTML = renderMarkdown(text)
+  return (container.textContent ?? '').replace(/\s+/g, ' ').trim()
 }
 
 /**
