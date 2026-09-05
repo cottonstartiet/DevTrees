@@ -26,6 +26,7 @@ import type { Worktree } from '@shared/worktree'
 const VALID_WORKTREE_NAME = /^[A-Za-z0-9._-]+$/
 const MAX_NAME_LENGTH = 64
 
+const MAIN_BRANCH_VALUE = '__main-branch__'
 const NEW_WORKTREE_VALUE = '__new-worktree__'
 
 function worktreeLabel(path: string): string {
@@ -53,18 +54,21 @@ export interface TaskDetailDialogProps {
     title: string
     description: string
     repository: Repository
-    worktree: Worktree
+    worktreePath: string
+    worktreeBranch: string | null
+    pendingWorktreeName: string | null
   }) => Promise<void>
   onUpdate: (input: {
     task: Task
     title: string
     description: string
     repository: Repository
-    worktree: Worktree
+    worktreePath: string
+    worktreeBranch: string | null
+    pendingWorktreeName: string | null
   }) => Promise<void>
   onDelete: (task: Task) => Promise<void>
   onStart: (task: Task) => Promise<void>
-  onCreateWorktree: (repository: Repository, name: string) => Promise<Worktree | null>
 }
 
 type TaskFormProps = Omit<TaskDetailDialogProps, 'open'>
@@ -82,8 +86,7 @@ function TaskDetailForm({
   onCreate,
   onUpdate,
   onDelete,
-  onStart,
-  onCreateWorktree
+  onStart
 }: TaskFormProps): React.JSX.Element {
   const isEdit = task != null
 
@@ -92,8 +95,13 @@ function TaskDetailForm({
   const [repositoryId, setRepositoryId] = React.useState<string>(
     task?.repositoryId ?? repositories[0]?.id ?? ''
   )
-  const [worktreeSelection, setWorktreeSelection] = React.useState<string>(task?.worktreePath ?? '')
-  const [newWorktreeName, setNewWorktreeName] = React.useState('')
+  const initialSelection = task?.pendingWorktreeName
+    ? NEW_WORKTREE_VALUE
+    : task && task.worktreePath === task.repositoryPath
+      ? MAIN_BRANCH_VALUE
+      : (task?.worktreePath ?? '')
+  const [worktreeSelection, setWorktreeSelection] = React.useState<string>(initialSelection)
+  const [newWorktreeName, setNewWorktreeName] = React.useState(task?.pendingWorktreeName ?? '')
   const [touched, setTouched] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
 
@@ -106,7 +114,9 @@ function TaskDetailForm({
   const titleError = touched && !title.trim() ? 'Title is required.' : null
   const worktreeNameError = creatingNewWorktree ? validateWorktreeName(newWorktreeName) : null
   const worktreeError =
-    touched && !creatingNewWorktree && !worktreeSelection ? 'Select a worktree.' : null
+    touched && !creatingNewWorktree && !worktreeSelection
+      ? 'Select where this task will run.'
+      : null
 
   const handleRepositoryChange = (id: string): void => {
     setRepositoryId(id)
@@ -114,13 +124,35 @@ function TaskDetailForm({
     setNewWorktreeName('')
   }
 
-  const resolveWorktree = async (): Promise<Worktree | null> => {
+  const resolveWorktree = (): {
+    worktreePath: string
+    worktreeBranch: string | null
+    pendingWorktreeName: string | null
+  } | null => {
     if (!repository) return null
     if (creatingNewWorktree) {
       if (validateWorktreeName(newWorktreeName)) return null
-      return onCreateWorktree(repository, newWorktreeName.trim())
+      return {
+        worktreePath: repository.path,
+        worktreeBranch: null,
+        pendingWorktreeName: newWorktreeName.trim()
+      }
     }
-    return worktrees.find((w) => w.path === worktreeSelection) ?? null
+    if (worktreeSelection === MAIN_BRANCH_VALUE) {
+      return {
+        worktreePath: repository.path,
+        worktreeBranch: null,
+        pendingWorktreeName: null
+      }
+    }
+    const worktree = worktrees.find((w) => w.path === worktreeSelection)
+    return worktree
+      ? {
+          worktreePath: worktree.path,
+          worktreeBranch: worktree.branch,
+          pendingWorktreeName: null
+        }
+      : null
   }
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>): Promise<void> => {
@@ -133,12 +165,12 @@ function TaskDetailForm({
 
     setBusy(true)
     try {
-      const worktree = await resolveWorktree()
-      if (!worktree) return
+      const target = resolveWorktree()
+      if (!target) return
       if (isEdit && task) {
-        await onUpdate({ task, title: title.trim(), description, repository, worktree })
+        await onUpdate({ task, title: title.trim(), description, repository, ...target })
       } else {
-        await onCreate({ title: title.trim(), description, repository, worktree })
+        await onCreate({ title: title.trim(), description, repository, ...target })
       }
       onOpenChange(false)
     } finally {
@@ -179,7 +211,7 @@ function TaskDetailForm({
             ? readOnly
               ? `Status: ${statusLabel} · read-only. Move the task back to To Do to edit it.`
               : `Status: ${statusLabel}`
-            : 'Create a task and link it to a repository and worktree.'}
+            : 'Create a task and choose where it will run.'}
         </DialogDescription>
       </DialogHeader>
 
@@ -232,7 +264,7 @@ function TaskDetailForm({
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-sm font-medium">Worktree</span>
+          <span className="text-sm font-medium">Run in</span>
           <Select
             value={worktreeSelection}
             onValueChange={setWorktreeSelection}
@@ -242,6 +274,7 @@ function TaskDetailForm({
               <SelectValue placeholder="Select a worktree" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={MAIN_BRANCH_VALUE}>Main branch</SelectItem>
               {worktrees.map((wt) => (
                 <SelectItem key={wt.path} value={wt.path}>
                   {wt.branch ?? worktreeLabel(wt.path)}
@@ -264,7 +297,7 @@ function TaskDetailForm({
                 <p className="text-destructive text-xs">{worktreeNameError}</p>
               ) : (
                 <p className="text-muted-foreground text-xs">
-                  A new worktree will be created in &quot;{repository?.name}&quot;.
+                  The worktree will be created when this task moves to In Progress.
                 </p>
               )}
             </div>

@@ -58,7 +58,11 @@ export function TaskCard({
         </span>
         <span className="inline-flex items-center gap-1">
           <GitBranchIcon className="size-3" />
-          {task.worktreeBranch ?? worktreeLabel(task.worktreePath)}
+          {task.pendingWorktreeName
+            ? `${task.pendingWorktreeName} (planned)`
+            : task.worktreePath === task.repositoryPath
+              ? 'Main branch'
+              : (task.worktreeBranch ?? worktreeLabel(task.worktreePath))}
         </span>
       </div>
       {task.status === 'todo' ? (

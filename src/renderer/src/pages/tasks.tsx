@@ -13,7 +13,6 @@ import { Button } from '@/components/ui/button'
 import { TaskColumn } from '@/components/task-column'
 import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
-import { listWorktreesForRepository } from '@/lib/worktrees'
 import type { Repository } from '@shared/repository'
 import type { Task, TaskStatus } from '@shared/task'
 import type { Worktree } from '@shared/worktree'
@@ -21,9 +20,8 @@ import type { Worktree } from '@shared/worktree'
 interface TasksPageProps {
   repositories: Repository[]
   worktreesByRepositoryId: Record<string, Worktree[]>
-  createWorktree: (repository: Repository, name: string) => Promise<boolean>
-  refreshWorktreesFor: (repositoryId: string) => Promise<void>
   onStartTask: (task: Task) => Promise<void>
+  onMoveTask: (task: Task, status: TaskStatus, beforeId?: string | null) => Promise<void>
   onReviewTask: (task: Task) => Promise<void>
   canReviewTask: (task: Task) => boolean
   dialogOpen: boolean
@@ -61,9 +59,8 @@ function isTaskStatus(value: string): value is TaskStatus {
 export function TasksPage({
   repositories,
   worktreesByRepositoryId,
-  createWorktree,
-  refreshWorktreesFor,
   onStartTask,
+  onMoveTask,
   onReviewTask,
   canReviewTask,
   dialogOpen,
@@ -71,28 +68,9 @@ export function TasksPage({
   activeTask,
   onOpenTask
 }: TasksPageProps): React.JSX.Element {
-  const { tasks, tasksByStatus, createTask, updateTask, moveTask, deleteTask } = useTaskBoard()
+  const { tasks, tasksByStatus, createTask, updateTask, deleteTask } = useTaskBoard()
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
-
-  const handleCreateWorktree = React.useCallback(
-    async (repository: Repository, name: string): Promise<Worktree | null> => {
-      const ok = await createWorktree(repository, name)
-      if (!ok) return null
-      // Trigger the shared hook's refresh so other views stay in sync, but don't rely
-      // on its (asynchronously updated) state to resolve the worktree we just made —
-      // fetch the fresh list directly to avoid a stale-closure race.
-      void refreshWorktreesFor(repository.id)
-      try {
-        const list = await listWorktreesForRepository(repository.path)
-        return list.find((w) => w.path.endsWith(name)) ?? null
-      } catch (err) {
-        console.error('[tasks] failed to resolve newly created worktree:', err)
-        return null
-      }
-    },
-    [createWorktree, refreshWorktreesFor]
-  )
 
   const handleDragEnd = React.useCallback(
     (event: DragEndEvent): void => {
@@ -105,16 +83,16 @@ export function TasksPage({
 
       if (isTaskStatus(overId)) {
         if (dragged.status === overId) return
-        void moveTask(activeId, overId, null)
+        void onMoveTask(dragged, overId, null)
         return
       }
 
       const overTask = tasks.find((t) => t.id === overId)
       if (!overTask) return
       if (overTask.id === activeId) return
-      void moveTask(activeId, overTask.status, overTask.id)
+      void onMoveTask(dragged, overTask.status, overTask.id)
     },
-    [tasks, moveTask]
+    [tasks, onMoveTask]
   )
 
   return (
@@ -144,18 +122,34 @@ export function TasksPage({
         task={activeTask}
         repositories={repositories}
         worktreesByRepositoryId={worktreesByRepositoryId}
-        onCreate={async ({ title, description, repository, worktree }) => {
+        onCreate={async ({
+          title,
+          description,
+          repository,
+          worktreePath,
+          worktreeBranch,
+          pendingWorktreeName
+        }) => {
           await createTask({
             title,
             description,
             repositoryId: repository.id,
             repositoryName: repository.name,
             repositoryPath: repository.path,
-            worktreePath: worktree.path,
-            worktreeBranch: worktree.branch
+            worktreePath,
+            worktreeBranch,
+            pendingWorktreeName
           })
         }}
-        onUpdate={async ({ task, title, description, repository, worktree }) => {
+        onUpdate={async ({
+          task,
+          title,
+          description,
+          repository,
+          worktreePath,
+          worktreeBranch,
+          pendingWorktreeName
+        }) => {
           await updateTask({
             id: task.id,
             title,
@@ -163,15 +157,15 @@ export function TasksPage({
             repositoryId: repository.id,
             repositoryName: repository.name,
             repositoryPath: repository.path,
-            worktreePath: worktree.path,
-            worktreeBranch: worktree.branch
+            worktreePath,
+            worktreeBranch,
+            pendingWorktreeName
           })
         }}
         onDelete={async (task) => {
           await deleteTask(task.id)
         }}
         onStart={onStartTask}
-        onCreateWorktree={handleCreateWorktree}
       />
     </>
   )

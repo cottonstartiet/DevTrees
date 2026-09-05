@@ -33,11 +33,12 @@ import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
 import { TasksPage, TasksHeaderControls } from '@/pages/tasks'
 import { setTaskCopilotSession } from '@/lib/tasks'
+import { listWorktreesForRepository } from '@/lib/worktrees'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { buildTaskCodeReviewPrompt } from '@/lib/copilot-task-review-prompt'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Repository } from '@shared/repository'
-import type { Task } from '@shared/task'
+import type { Task, TaskStatus } from '@shared/task'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
 
 function worktreeLabel(path: string): string {
@@ -71,22 +72,89 @@ function TasksPageContainer({
 }: TasksPageContainerProps): React.JSX.Element {
   const { byId: terminalSessionsById } = useTerminalSessions()
   const launchCopilot = useCopilotLauncher()
-  const { moveTask, setTaskLocal } = useTaskBoard()
+  const { moveTask, setTaskLocal, updateTask } = useTaskBoard()
+
+  const materializeTaskWorktree = useCallback(
+    async (task: Task): Promise<Task | null> => {
+      const name = task.pendingWorktreeName
+      if (!name) return task
+
+      const repository = repositories.find((r) => r.id === task.repositoryId)
+      if (!repository) {
+        toast.error('The repository for this task is unavailable.')
+        return null
+      }
+
+      try {
+        let worktree = (await listWorktreesForRepository(repository.path)).find(
+          (candidate) => !candidate.isMain && worktreeLabel(candidate.path) === name
+        )
+        if (!worktree) {
+          const created = await createWorktree(repository, name)
+          if (!created) return null
+          worktree = (await listWorktreesForRepository(repository.path)).find(
+            (candidate) => !candidate.isMain && worktreeLabel(candidate.path) === name
+          )
+        }
+        if (!worktree) {
+          toast.error('The new worktree was created but could not be resolved.')
+          return null
+        }
+
+        const updated = await updateTask({
+          id: task.id,
+          title: task.title,
+          description: task.description,
+          repositoryId: task.repositoryId,
+          repositoryName: task.repositoryName,
+          repositoryPath: task.repositoryPath,
+          worktreePath: worktree.path,
+          worktreeBranch: worktree.branch,
+          pendingWorktreeName: null
+        })
+        if (!updated) return null
+        await refreshWorktreesFor(repository.id)
+        return updated
+      } catch (error) {
+        console.error('[tasks] failed to prepare planned worktree:', error)
+        toast.error(
+          error instanceof Error ? error.message : 'Could not prepare the worktree for this task.'
+        )
+        return null
+      }
+    },
+    [createWorktree, refreshWorktreesFor, repositories, updateTask]
+  )
+
+  const handleMoveTask = useCallback(
+    async (task: Task, status: TaskStatus, beforeId?: string | null): Promise<void> => {
+      const resolved = status === 'in_progress' ? await materializeTaskWorktree(task) : task
+      if (!resolved) return
+      await moveTask(resolved.id, status, beforeId)
+    },
+    [materializeTaskWorktree, moveTask]
+  )
 
   const handleStartTask = useCallback(
     async (task: Task): Promise<void> => {
+      const resolvedTask = await materializeTaskWorktree(task)
+      if (!resolvedTask) return
+
+      if (resolvedTask.status === 'todo') {
+        await moveTask(resolvedTask.id, 'in_progress')
+      }
+
       // Already running? Don't spawn a second terminal for the same task.
-      const linkedId = task.copilotSessionId
+      const linkedId = resolvedTask.copilotSessionId
       const linkedTerminal = linkedId ? terminalSessionsById[linkedId] : undefined
       if (linkedTerminal != null && !isTerminalSessionFinished(linkedTerminal.status)) {
         toast.info('A Copilot session for this task is already running.')
-        if (task.status === 'todo') await moveTask(task.id, 'in_progress')
         return
       }
 
       // The worktree may have been deleted outside the app since the task was created.
-      const worktreePath = task.worktreePath
-      const repository = repositories.find((r) => r.id === task.repositoryId) ?? null
+      const worktreePath = resolvedTask.worktreePath
+      const repository = repositories.find((r) => r.id === resolvedTask.repositoryId) ?? null
       try {
         const status = await checkWorktreeStatus(worktreePath)
         const missing =
@@ -111,14 +179,16 @@ function TasksPageContainer({
         console.error('[tasks] worktree status check failed:', error)
       }
 
-      const prompt = [task.title.trim(), task.description.trim()].filter(Boolean).join('\n\n')
+      const prompt = [resolvedTask.title.trim(), resolvedTask.description.trim()]
+        .filter(Boolean)
+        .join('\n\n')
       const result = await launchCopilot({
         folderPath: worktreePath,
         prompt,
-        label: task.title.trim() || task.repositoryName,
-        branch: task.worktreeBranch ?? undefined,
-        repository: task.repositoryName,
-        taskId: task.id
+        label: resolvedTask.title.trim() || resolvedTask.repositoryName,
+        branch: resolvedTask.worktreeBranch ?? undefined,
+        repository: resolvedTask.repositoryName,
+        taskId: resolvedTask.id
       })
 
       if (!result.ok) {
@@ -128,9 +198,12 @@ function TasksPageContainer({
 
       // Link the mirrored CLI session to the task, so a second Start reuses it.
       const sessionId = result.sessionId
-      setTaskLocal({ ...task, copilotSessionId: sessionId })
+      setTaskLocal({ ...resolvedTask, copilotSessionId: sessionId })
       try {
-        const res = await setTaskCopilotSession({ id: task.id, copilotSessionId: sessionId })
+        const res = await setTaskCopilotSession({
+          id: resolvedTask.id,
+          copilotSessionId: sessionId
+        })
         if (res.ok) setTaskLocal(res.task)
         else toast.error(res.message ?? 'Could not link the session to this task.')
       } catch (error) {
@@ -139,10 +212,8 @@ function TasksPageContainer({
         )
       }
 
-      if (task.status === 'todo') await moveTask(task.id, 'in_progress')
-
       toast.success(
-        `Copilot launched for "${task.title}" in a terminal. DevTrees will notify you when it needs you.`
+        `Copilot launched for "${resolvedTask.title}" in a terminal. DevTrees will notify you when it needs you.`
       )
     },
     [
@@ -150,6 +221,7 @@ function TasksPageContainer({
       createWorktree,
       launchCopilot,
       moveTask,
+      materializeTaskWorktree,
       repositories,
       setTaskLocal,
       terminalSessionsById
@@ -242,9 +314,8 @@ function TasksPageContainer({
     <TasksPage
       repositories={repositories}
       worktreesByRepositoryId={worktreesByRepositoryId}
-      createWorktree={createWorktree}
-      refreshWorktreesFor={refreshWorktreesFor}
       onStartTask={handleStartTask}
+      onMoveTask={handleMoveTask}
       onReviewTask={handleReviewTask}
       canReviewTask={canReviewTask}
       dialogOpen={dialogOpen}

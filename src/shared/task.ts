@@ -10,6 +10,7 @@ export type Task = {
   repositoryPath: string
   worktreePath: string
   worktreeBranch: string | null
+  pendingWorktreeName: string | null
   copilotSessionId: string | null
   sortOrder: number
   createdAt: number
@@ -24,6 +25,7 @@ export type CreateTaskRequest = {
   repositoryPath: string
   worktreePath: string
   worktreeBranch: string | null
+  pendingWorktreeName: string | null
 }
 
 export type TaskErrorCode = 'invalid-title' | 'not-found' | 'unknown'
@@ -41,6 +43,7 @@ export type UpdateTaskRequest = {
   repositoryPath: string
   worktreePath: string
   worktreeBranch: string | null
+  pendingWorktreeName: string | null
 }
 
 export type UpdateTaskResult =

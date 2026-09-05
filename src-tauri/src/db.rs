@@ -246,6 +246,8 @@ fn migrations() -> Vec<Migration> {
                  DROP TABLE IF EXISTS chat_conversations;",
             )
         },
+        // 0014 -> user_version 14: tasks can defer creating a new worktree until started.
+        |db| db.execute_batch("ALTER TABLE tasks ADD COLUMN pending_worktree_name TEXT;"),
     ]
 }
 
