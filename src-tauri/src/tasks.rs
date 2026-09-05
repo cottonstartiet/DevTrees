@@ -20,6 +20,7 @@ pub struct Task {
     pub repository_path: String,
     pub worktree_path: String,
     pub worktree_branch: Option<String>,
+    pub pending_worktree_name: Option<String>,
     pub copilot_session_id: Option<String>,
     pub sort_order: i64,
     pub created_at: i64,
@@ -137,15 +138,17 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         repository_path: row.get(6)?,
         worktree_path: row.get(7)?,
         worktree_branch: row.get(8)?,
-        copilot_session_id: row.get(9)?,
-        sort_order: row.get(10)?,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
+        pending_worktree_name: row.get(9)?,
+        copilot_session_id: row.get(10)?,
+        sort_order: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
     })
 }
 
 const SELECT_COLUMNS: &str = "id, title, description, status, repository_id, repository_name,
-     repository_path, worktree_path, worktree_branch, copilot_session_id, sort_order,
+     repository_path, worktree_path, worktree_branch, pending_worktree_name,
+     copilot_session_id, sort_order,
      created_at, updated_at";
 
 fn load_tasks(conn: &Connection) -> rusqlite::Result<Vec<Task>> {
@@ -191,6 +194,7 @@ pub async fn tasks_create(
     repository_path: String,
     worktree_path: String,
     worktree_branch: Option<String>,
+    pending_worktree_name: Option<String>,
 ) -> AppResult<TaskResult> {
     let trimmed_title = title.trim();
     if trimmed_title.is_empty() {
@@ -210,8 +214,9 @@ pub async fn tasks_create(
     conn.execute(
         "INSERT INTO tasks (
             id, title, description, status, repository_id, repository_name, repository_path,
-            worktree_path, worktree_branch, copilot_session_id, sort_order, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10, ?10)",
+            worktree_path, worktree_branch, pending_worktree_name, copilot_session_id, sort_order,
+            created_at, updated_at
+         ) VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?11)",
         rusqlite::params![
             id,
             trimmed_title,
@@ -221,6 +226,7 @@ pub async fn tasks_create(
             repository_path,
             worktree_path,
             worktree_branch,
+            pending_worktree_name,
             sort_order,
             now
         ],
@@ -247,6 +253,7 @@ pub async fn tasks_update(
     repository_path: String,
     worktree_path: String,
     worktree_branch: Option<String>,
+    pending_worktree_name: Option<String>,
 ) -> AppResult<TaskResult> {
     let trimmed_title = title.trim();
     if trimmed_title.is_empty() {
@@ -267,7 +274,8 @@ pub async fn tasks_update(
     let now = now_ms();
     conn.execute(
         "UPDATE tasks SET title = ?2, description = ?3, repository_id = ?4, repository_name = ?5,
-            repository_path = ?6, worktree_path = ?7, worktree_branch = ?8, updated_at = ?9
+            repository_path = ?6, worktree_path = ?7, worktree_branch = ?8,
+            pending_worktree_name = ?9, updated_at = ?10
          WHERE id = ?1",
         rusqlite::params![
             id,
@@ -278,6 +286,7 @@ pub async fn tasks_update(
             repository_path,
             worktree_path,
             worktree_branch,
+            pending_worktree_name,
             now
         ],
     )?;
