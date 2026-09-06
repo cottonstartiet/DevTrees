@@ -104,8 +104,13 @@ import type {
   UpdateTaskResult
 } from '@shared/task'
 import {
+  TERMINAL_SESSIONS_INTERACTION_EVENT,
   TERMINAL_SESSIONS_UPDATE_EVENT,
+  type RespondTerminalSessionRequest,
+  type StartTerminalSessionRequest,
   type TerminalSession,
+  type TerminalSessionInteraction,
+  type TerminalSessionInteractionUpdate,
   type TerminalSessionResult,
   type TerminalSessionUpdate,
   type TerminalTimelineEntry,
@@ -369,17 +374,28 @@ const api = {
   },
   terminalSessions: {
     list: (): Promise<TerminalSession[]> => invoke('terminal_sessions_list'),
+    start: (req: StartTerminalSessionRequest): Promise<TerminalSessionResult> =>
+      result('terminal_sessions_start', { req }, (error) => ({ ok: false, error })),
+    prompt: (id: string, prompt: string): Promise<void> =>
+      invoke('terminal_sessions_prompt', { id, prompt }),
+    interaction: (id: string): Promise<TerminalSessionInteraction | null> =>
+      invoke('terminal_sessions_interaction', { id }),
+    respond: (req: RespondTerminalSessionRequest): Promise<void> =>
+      invoke('terminal_sessions_respond', { req }),
+    cancel: (id: string): Promise<void> => invoke('terminal_sessions_cancel', { id }),
     watch: (req: WatchTerminalSessionRequest): Promise<TerminalSessionResult> =>
       result('terminal_sessions_watch', { req }, (error) => ({ ok: false, error })),
     forget: (id: string): Promise<void> => invoke('terminal_sessions_forget', { id }),
     history: (id: string): Promise<TerminalTimelineEntry[]> =>
       invoke('terminal_sessions_history', { id }),
-    onUpdate: (cb: (update: TerminalSessionUpdate) => void): (() => void) => {
-      const unlisten = listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) =>
+    onUpdate: async (cb: (update: TerminalSessionUpdate) => void): Promise<() => void> =>
+      listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) => cb(event.payload)),
+    onInteraction: async (
+      cb: (update: TerminalSessionInteractionUpdate) => void
+    ): Promise<() => void> =>
+      listen<TerminalSessionInteractionUpdate>(TERMINAL_SESSIONS_INTERACTION_EVENT, (event) =>
         cb(event.payload)
       )
-      return () => void unlisten.then((un) => un())
-    }
   },
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),

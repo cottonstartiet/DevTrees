@@ -1,20 +1,20 @@
-//! Monitoring for Copilot CLI sessions that run in an **external terminal**.
+//! Managed Copilot CLI sessions plus compatibility monitoring for legacy external terminals.
 //!
-//! When DevTrees launches `copilot` in Windows Terminal the process is detached, so
-//! there is no pipe to read. The CLI does, however, append a structured event log to
-//! `~/.copilot/session-state/<session-id>/events.jsonl`, and it lets the caller pin the
-//! session id up front via `--session-id=<uuid>`. Together that gives us a reliable,
-//! read-only side channel: the app generates the id, launches the terminal with it, and
-//! tails the resulting event log to mirror the session's state back into the UI.
+//! New sessions run as `copilot --acp`, giving DevTrees a bidirectional JSON-RPC channel
+//! for prompts, structured elicitation, permission requests, plan transitions, status,
+//! and timeline updates. Older sessions launched in Windows Terminal can still be
+//! observed by tailing `~/.copilot/session-state/<session-id>/events.jsonl`.
 //!
-//! The tail is driven by a single polling task shared by every watched session. Each
+//! The compatibility tail is driven by a single polling task. Each
 //! poll reads only the bytes appended since the last cursor, so watching a long-running
 //! session stays cheap even when its log grows to hundreds of megabytes.
 
 use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::process::{ChildStdin, Command, Stdio};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -26,6 +26,7 @@ use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 
 pub const EVENT_UPDATE: &str = "terminal-sessions:update";
+pub const EVENT_INTERACTION: &str = "terminal-sessions:interaction";
 
 /// How often the tail task re-reads every watched log. Fast enough that a prompt in the
 /// terminal surfaces as a toast almost immediately, slow enough to stay invisible.
@@ -55,7 +56,7 @@ pub enum TerminalSessionStatus {
     Starting,
     /// A model turn or tool call is in flight.
     Working,
-    /// Copilot is blocked on the user: a permission prompt or an `ask_user` question.
+    /// Copilot is blocked on the user: permission, elicitation, or another client request.
     WaitingInput,
     /// The turn finished and the CLI is sitting at its prompt.
     Idle,
@@ -128,6 +129,23 @@ pub struct WatchTerminalSessionRequest {
     pub branch: Option<String>,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartTerminalSessionRequest {
+    pub folder_path: String,
+    pub label: String,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub resume_session_id: Option<String>,
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSessionResult {
@@ -136,6 +154,85 @@ pub struct TerminalSessionResult {
     pub session: Option<TerminalSession>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSessionPermissionOption {
+    option_id: String,
+    name: String,
+    kind: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum TerminalSessionInteraction {
+    Permission {
+        request_id: u64,
+        message: String,
+        options: Vec<TerminalSessionPermissionOption>,
+    },
+    Elicitation {
+        request_id: u64,
+        mode: String,
+        message: String,
+        requested_schema: Option<serde_json::Value>,
+        url: Option<String>,
+    },
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalSessionInteractionUpdate {
+    session_id: String,
+    interaction: Option<TerminalSessionInteraction>,
+}
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum RespondTerminalSessionRequest {
+    Permission {
+        id: String,
+        request_id: u64,
+        option_id: String,
+    },
+    Elicitation {
+        id: String,
+        request_id: u64,
+        action: String,
+        #[serde(default)]
+        content: Option<serde_json::Value>,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PendingAcpRequest {
+    Permission,
+    Elicitation,
+}
+
+struct AcpSession {
+    stdin: Arc<Mutex<ChildStdin>>,
+    next_request_id: u64,
+    prompt_requests: Vec<u64>,
+    user_message_entries: HashMap<String, (u64, String)>,
+    message_entries: HashMap<String, (u64, String)>,
+    tool_entries: HashMap<String, (u64, String, String)>,
+    plan_entry: Option<u64>,
+}
+
+#[derive(Default)]
+pub struct AcpSessionManager {
+    sessions: Mutex<HashMap<String, AcpSession>>,
+    pending: Mutex<HashMap<(String, u64), TerminalSessionInteraction>>,
 }
 
 // ----- Timeline -----
@@ -230,6 +327,8 @@ struct Watch {
     /// Number of consecutive polls where the session folder did not exist yet. Used to
     /// give up on a launch that never produced a session.
     missing_polls: u32,
+    /// Managed ACP sessions stream updates directly and must not be tailed as terminals.
+    managed: bool,
 }
 
 #[derive(Default)]
@@ -313,7 +412,7 @@ fn upsert(db: &Connection, session: &TerminalSession, cursor: u64, seq: u64) -> 
 
 const SELECT_COLUMNS: &str =
     "id, task_id, folder_path, label, repository, branch, status, last_activity, \
-     pending_prompt, cursor, created_at, updated_at, seq";
+     pending_prompt, cursor, created_at, updated_at, seq, managed";
 
 fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
     let status: String = row.get(6)?;
@@ -338,6 +437,7 @@ fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
         open_entries: Vec::new(),
         saw_lock: false,
         missing_polls: 0,
+        managed: row.get::<_, i64>(13)? != 0,
     })
 }
 
@@ -649,6 +749,543 @@ fn apply_event(session: &mut TerminalSession, event: &RawEvent) -> bool {
         || session.pending_prompt != before_pending
 }
 
+fn write_rpc(stdin: &Arc<Mutex<ChildStdin>>, value: &serde_json::Value) -> AppResult<()> {
+    let mut input = stdin
+        .lock()
+        .map_err(|_| AppError::msg("Copilot input mutex poisoned"))?;
+    serde_json::to_writer(&mut *input, value)?;
+    input.write_all(b"\n")?;
+    input.flush()?;
+    Ok(())
+}
+
+fn next_acp_request(
+    manager: &AcpSessionManager,
+    session_id: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> AppResult<u64> {
+    let (stdin, request_id) = {
+        let mut sessions = manager
+            .sessions
+            .lock()
+            .map_err(|_| AppError::msg("Copilot session mutex poisoned"))?;
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| AppError::msg("This Copilot session is no longer connected."))?;
+        let request_id = session.next_request_id;
+        session.next_request_id += 1;
+        (session.stdin.clone(), request_id)
+    };
+    write_rpc(
+        &stdin,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params
+        }),
+    )?;
+    Ok(request_id)
+}
+
+fn send_acp_prompt(app: &AppHandle, session_id: &str, prompt: &str) -> AppResult<()> {
+    let seq = allocate_managed_seq(app, session_id)
+        .ok_or_else(|| AppError::msg("This Copilot session is no longer available."))?;
+    emit_managed_entry(
+        app,
+        session_id,
+        TerminalTimelineEntry::UserMessage {
+            seq,
+            timestamp: None,
+            text: truncate(prompt, MAX_ENTRY_TEXT),
+        },
+    );
+    let request_id = next_acp_request(
+        &app.state::<AcpSessionManager>(),
+        session_id,
+        "session/prompt",
+        serde_json::json!({
+            "sessionId": session_id,
+            "prompt": [{ "type": "text", "text": prompt }]
+        }),
+    )?;
+    if let Ok(mut sessions) = app.state::<AcpSessionManager>().sessions.lock() {
+        if let Some(session) = sessions.get_mut(session_id) {
+            session.prompt_requests.push(request_id);
+        }
+    }
+    set_managed_status(
+        app,
+        session_id,
+        TerminalSessionStatus::Working,
+        "Working on your message",
+        None,
+    );
+    Ok(())
+}
+
+fn emit_interaction(
+    app: &AppHandle,
+    session_id: &str,
+    interaction: Option<TerminalSessionInteraction>,
+) {
+    let _ = app.emit(
+        EVENT_INTERACTION,
+        TerminalSessionInteractionUpdate {
+            session_id: session_id.to_string(),
+            interaction,
+        },
+    );
+}
+
+fn pending_interaction_for_session(
+    pending: &HashMap<(String, u64), TerminalSessionInteraction>,
+    session_id: &str,
+) -> Option<TerminalSessionInteraction> {
+    pending
+        .iter()
+        .filter(|((pending_session_id, _), _)| pending_session_id == session_id)
+        .min_by_key(|((_, request_id), _)| *request_id)
+        .map(|(_, interaction)| interaction.clone())
+}
+
+fn managed_pending_interaction(
+    app: &AppHandle,
+    session_id: &str,
+) -> Option<TerminalSessionInteraction> {
+    let manager = app.try_state::<AcpSessionManager>()?;
+    let pending = manager.pending.lock().ok()?;
+    pending_interaction_for_session(&pending, session_id)
+}
+
+fn interaction_prompt(interaction: &TerminalSessionInteraction) -> &str {
+    match interaction {
+        TerminalSessionInteraction::Permission { message, .. }
+        | TerminalSessionInteraction::Elicitation { message, .. } => message,
+    }
+}
+
+fn interaction_message(params: &serde_json::Value) -> String {
+    params
+        .get("toolCall")
+        .and_then(|tool| tool.get("title"))
+        .and_then(|value| value.as_str())
+        .or_else(|| params.get("message").and_then(|value| value.as_str()))
+        .unwrap_or("Copilot needs your input.")
+        .to_string()
+}
+
+fn allocate_managed_seq(app: &AppHandle, session_id: &str) -> Option<u64> {
+    let monitor = app.try_state::<TerminalSessionMonitor>()?;
+    let mut watches = monitor.watches.lock().ok()?;
+    let watch = watches.get_mut(session_id)?;
+    let seq = watch.seq;
+    watch.seq += 1;
+    Some(seq)
+}
+
+fn emit_managed_entry(app: &AppHandle, session_id: &str, entry: TerminalTimelineEntry) {
+    let snapshot = {
+        let Some(monitor) = app.try_state::<TerminalSessionMonitor>() else {
+            return;
+        };
+        let Ok(watches) = monitor.watches.lock() else {
+            return;
+        };
+        let Some(watch) = watches.get(session_id) else {
+            return;
+        };
+        (watch.session.clone(), watch.cursor, watch.seq)
+    };
+    persist(app, &snapshot.0, snapshot.1, snapshot.2);
+    emit(app, &snapshot.0, vec![entry]);
+}
+
+fn content_text(content: &serde_json::Value) -> Option<&str> {
+    content
+        .get("text")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            content
+                .get("content")
+                .and_then(|value| value.get("text"))
+                .and_then(|value| value.as_str())
+        })
+}
+
+fn stream_message(app: &AppHandle, session_id: &str, update: &serde_json::Value, user: bool) {
+    let Some(text) = update.get("content").and_then(content_text) else {
+        return;
+    };
+    let key = update
+        .get("messageId")
+        .and_then(|value| value.as_str())
+        .unwrap_or(if user { "active-user" } else { "active-agent" })
+        .to_string();
+    let manager = app.state::<AcpSessionManager>();
+    let entry = {
+        let Ok(mut sessions) = manager.sessions.lock() else {
+            return;
+        };
+        let Some(session) = sessions.get_mut(session_id) else {
+            return;
+        };
+        let entries = if user {
+            &mut session.user_message_entries
+        } else {
+            &mut session.message_entries
+        };
+        let seq = entries
+            .get(&key)
+            .map(|entry| entry.0)
+            .or_else(|| allocate_managed_seq(app, session_id));
+        let Some(seq) = seq else {
+            return;
+        };
+        let accumulated = entries.entry(key).or_insert_with(|| (seq, String::new()));
+        accumulated.1.push_str(text);
+        let text = truncate(&accumulated.1, MAX_ENTRY_TEXT);
+        if user {
+            TerminalTimelineEntry::UserMessage {
+                seq,
+                timestamp: None,
+                text,
+            }
+        } else {
+            TerminalTimelineEntry::AssistantMessage {
+                seq,
+                timestamp: None,
+                text,
+            }
+        }
+    };
+    if !user {
+        set_managed_status(
+            app,
+            session_id,
+            TerminalSessionStatus::Working,
+            summarize(text),
+            None,
+        );
+    }
+    emit_managed_entry(app, session_id, entry);
+}
+
+fn handle_session_update(app: &AppHandle, session_id: &str, update: &serde_json::Value) {
+    match update
+        .get("sessionUpdate")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+    {
+        "user_message_chunk" => stream_message(app, session_id, update, true),
+        "agent_message_chunk" => stream_message(app, session_id, update, false),
+        "plan" => {
+            let text = update
+                .get("entries")
+                .and_then(|value| value.as_array())
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(|entry| {
+                            let content = entry.get("content")?.as_str()?;
+                            let status = entry
+                                .get("status")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("pending");
+                            Some(format!("[{status}] {content}"))
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            if text.is_empty() {
+                return;
+            }
+            let manager = app.state::<AcpSessionManager>();
+            let seq = {
+                let Ok(mut sessions) = manager.sessions.lock() else {
+                    return;
+                };
+                let Some(session) = sessions.get_mut(session_id) else {
+                    return;
+                };
+                match session.plan_entry {
+                    Some(seq) => seq,
+                    None => {
+                        let Some(seq) = allocate_managed_seq(app, session_id) else {
+                            return;
+                        };
+                        session.plan_entry = Some(seq);
+                        seq
+                    }
+                }
+            };
+            emit_managed_entry(
+                app,
+                session_id,
+                TerminalTimelineEntry::Notice {
+                    seq,
+                    timestamp: None,
+                    text,
+                    level: "info".to_string(),
+                },
+            );
+        }
+        "tool_call" | "tool_call_update" => {
+            let Some(tool_call_id) = update.get("toolCallId").and_then(|value| value.as_str())
+            else {
+                return;
+            };
+            let manager = app.state::<AcpSessionManager>();
+            let (seq, title, detail) = {
+                let Ok(mut sessions) = manager.sessions.lock() else {
+                    return;
+                };
+                let Some(session) = sessions.get_mut(session_id) else {
+                    return;
+                };
+                match session.tool_entries.get(tool_call_id) {
+                    Some(entry) => entry.clone(),
+                    None => {
+                        let Some(seq) = allocate_managed_seq(app, session_id) else {
+                            return;
+                        };
+                        let title = update
+                            .get("title")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("Tool")
+                            .to_string();
+                        let detail = update
+                            .get("rawInput")
+                            .map(describe_arguments)
+                            .unwrap_or_default();
+                        session.tool_entries.insert(
+                            tool_call_id.to_string(),
+                            (seq, title.clone(), detail.clone()),
+                        );
+                        (seq, title, detail)
+                    }
+                }
+            };
+            let status = update
+                .get("status")
+                .and_then(|value| value.as_str())
+                .unwrap_or("pending");
+            let success = match status {
+                "completed" => Some(true),
+                "failed" => Some(false),
+                _ => None,
+            };
+            let result = update
+                .get("content")
+                .and_then(|value| value.as_array())
+                .and_then(|items| items.iter().find_map(content_text))
+                .map(|text| truncate(text, MAX_ENTRY_TEXT));
+            emit_managed_entry(
+                app,
+                session_id,
+                TerminalTimelineEntry::ToolCall {
+                    seq,
+                    timestamp: None,
+                    tool_call_id: tool_call_id.to_string(),
+                    name: title,
+                    detail,
+                    success,
+                    result,
+                },
+            );
+        }
+        _ => {}
+    }
+}
+
+fn handle_acp_message(app: &AppHandle, session_id_hint: &str, message: &serde_json::Value) {
+    if let Some(response_id) = message.get("id").and_then(|value| value.as_u64()) {
+        let manager = app.state::<AcpSessionManager>();
+        let completed_prompt = manager
+            .sessions
+            .lock()
+            .ok()
+            .and_then(|mut sessions| {
+                let session = sessions.get_mut(session_id_hint)?;
+                let index = session
+                    .prompt_requests
+                    .iter()
+                    .position(|request_id| *request_id == response_id)?;
+                session.prompt_requests.remove(index);
+                session.user_message_entries.clear();
+                session.message_entries.clear();
+                session.plan_entry = None;
+                Some(())
+            })
+            .is_some();
+        if completed_prompt {
+            if let Some(error) = message.get("error") {
+                let text = summarize(&error.to_string());
+                if let Some(seq) = allocate_managed_seq(app, session_id_hint) {
+                    emit_managed_entry(
+                        app,
+                        session_id_hint,
+                        TerminalTimelineEntry::Notice {
+                            seq,
+                            timestamp: None,
+                            text: text.clone(),
+                            level: "error".to_string(),
+                        },
+                    );
+                }
+                set_managed_status(
+                    app,
+                    session_id_hint,
+                    TerminalSessionStatus::Error,
+                    text,
+                    None,
+                );
+            } else {
+                emit_interaction(
+                    app,
+                    session_id_hint,
+                    managed_pending_interaction(app, session_id_hint),
+                );
+                set_managed_status(
+                    app,
+                    session_id_hint,
+                    TerminalSessionStatus::Idle,
+                    "Waiting for your next instruction",
+                    None,
+                );
+            }
+            return;
+        }
+    }
+
+    let Some(method) = message.get("method").and_then(|value| value.as_str()) else {
+        return;
+    };
+    let params = message.get("params").unwrap_or(&serde_json::Value::Null);
+    let session_id = params
+        .get("sessionId")
+        .and_then(|value| value.as_str())
+        .unwrap_or(session_id_hint);
+
+    if method == "session/update" {
+        if let Some(update) = params.get("update") {
+            handle_session_update(app, session_id, update);
+        }
+        return;
+    }
+
+    let Some(request_id) = message.get("id").and_then(|value| value.as_u64()) else {
+        return;
+    };
+
+    let manager = app.state::<AcpSessionManager>();
+    match method {
+        "session/request_permission" => {
+            let prompt = interaction_message(params);
+            let options = params
+                .get("options")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|option| {
+                    Some(TerminalSessionPermissionOption {
+                        option_id: option.get("optionId")?.as_str()?.to_string(),
+                        name: option.get("name")?.as_str()?.to_string(),
+                        kind: option
+                            .get("kind")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("allow_once")
+                            .to_string(),
+                    })
+                })
+                .collect();
+            let interaction = TerminalSessionInteraction::Permission {
+                request_id,
+                message: prompt.clone(),
+                options,
+            };
+            if let Ok(mut pending) = manager.pending.lock() {
+                pending.insert((session_id.to_string(), request_id), interaction.clone());
+            }
+            let active = managed_pending_interaction(app, session_id).unwrap_or(interaction);
+            let active_prompt = interaction_prompt(&active).to_string();
+            emit_interaction(app, session_id, Some(active));
+            set_managed_status(
+                app,
+                session_id,
+                TerminalSessionStatus::WaitingInput,
+                active_prompt.clone(),
+                Some(active_prompt),
+            );
+        }
+        "elicitation/create" => {
+            let prompt = interaction_message(params);
+            let interaction = TerminalSessionInteraction::Elicitation {
+                request_id,
+                mode: params
+                    .get("mode")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("form")
+                    .to_string(),
+                message: prompt.clone(),
+                requested_schema: params.get("requestedSchema").cloned(),
+                url: params
+                    .get("url")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string),
+            };
+            if let Ok(mut pending) = manager.pending.lock() {
+                pending.insert((session_id.to_string(), request_id), interaction.clone());
+            }
+            let active = managed_pending_interaction(app, session_id).unwrap_or(interaction);
+            let active_prompt = interaction_prompt(&active).to_string();
+            emit_interaction(app, session_id, Some(active));
+            set_managed_status(
+                app,
+                session_id,
+                TerminalSessionStatus::WaitingInput,
+                active_prompt.clone(),
+                Some(active_prompt),
+            );
+        }
+        _ => {}
+    }
+}
+
+fn read_rpc_response(
+    reader: &mut BufReader<std::process::ChildStdout>,
+    expected_id: u64,
+) -> AppResult<(serde_json::Value, Vec<serde_json::Value>)> {
+    let mut notifications = Vec::new();
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line)? == 0 {
+            return Err(AppError::msg(
+                "Copilot ACP exited before the session was ready.",
+            ));
+        }
+        let message: serde_json::Value = match serde_json::from_str(line.trim()) {
+            Ok(message) => message,
+            Err(_) => continue,
+        };
+        if message.get("id").and_then(|value| value.as_u64()) == Some(expected_id) {
+            if let Some(error) = message.get("error") {
+                return Err(AppError::msg(format!("Copilot ACP error: {error}")));
+            }
+            return Ok((
+                message
+                    .get("result")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+                notifications,
+            ));
+        }
+        notifications.push(message);
+    }
+}
+
 /// Read newly appended complete lines from `events.jsonl`, advancing `cursor` only past
 /// the final newline so a half-written line is re-read on the next poll.
 fn read_new_lines(path: &PathBuf, cursor: &mut u64) -> Vec<String> {
@@ -716,6 +1353,57 @@ fn persist(app: &AppHandle, session: &TerminalSession, cursor: u64, seq: u64) {
     }
 }
 
+fn persist_managed_transport(app: &AppHandle, session_id: &str) {
+    if let Some(state) = app.try_state::<DbState>() {
+        if let Ok(db) = state.0.lock() {
+            let _ = db.execute(
+                "UPDATE terminal_sessions SET managed = 1 WHERE id = ?1",
+                [session_id],
+            );
+        }
+    }
+}
+
+fn set_managed_status(
+    app: &AppHandle,
+    session_id: &str,
+    mut status: TerminalSessionStatus,
+    activity: impl Into<String>,
+    mut pending_prompt: Option<String>,
+) {
+    let mut activity = activity.into();
+    if matches!(
+        status,
+        TerminalSessionStatus::Working | TerminalSessionStatus::Idle
+    ) {
+        if let Some(interaction) = managed_pending_interaction(app, session_id) {
+            let prompt = interaction_prompt(&interaction).to_string();
+            status = TerminalSessionStatus::WaitingInput;
+            activity = prompt.clone();
+            pending_prompt = Some(prompt);
+        }
+    }
+
+    let snapshot = {
+        let Some(monitor) = app.try_state::<TerminalSessionMonitor>() else {
+            return;
+        };
+        let Ok(mut watches) = monitor.watches.lock() else {
+            return;
+        };
+        let Some(watch) = watches.get_mut(session_id) else {
+            return;
+        };
+        watch.session.status = status;
+        watch.session.last_activity = activity;
+        watch.session.pending_prompt = pending_prompt;
+        watch.session.updated_at = now_ms();
+        (watch.session.clone(), watch.cursor, watch.seq)
+    };
+    persist(app, &snapshot.0, snapshot.1, snapshot.2);
+    emit(app, &snapshot.0, Vec::new());
+}
+
 /// One tick: advance every watched session, emitting and persisting the ones that moved.
 fn poll_once(app: &AppHandle) {
     let Some(monitor) = app.try_state::<TerminalSessionMonitor>() else {
@@ -732,6 +1420,9 @@ fn poll_once(app: &AppHandle) {
         };
         for watch in watches.values_mut() {
             if watch.session.status.is_final() {
+                continue;
+            }
+            if watch.managed {
                 continue;
             }
             let dir = root.join(&watch.session.id);
@@ -832,7 +1523,14 @@ pub fn init(app: &AppHandle) -> AppResult<()> {
             .watches
             .lock()
             .map_err(|_| AppError::msg("terminal session monitor mutex poisoned"))?;
-        for watch in restored {
+        for mut watch in restored {
+            if watch.managed && !watch.session.status.is_final() {
+                watch.session.status = TerminalSessionStatus::Done;
+                watch.session.pending_prompt = None;
+                watch.session.last_activity = "DevTrees closed the managed session".to_string();
+                watch.session.updated_at = now_ms();
+                persist(app, &watch.session, watch.cursor, watch.seq);
+            }
             watches.insert(watch.session.id.clone(), watch);
         }
     }
@@ -854,9 +1552,8 @@ pub async fn terminal_sessions_list(db: State<'_, DbState>) -> AppResult<Vec<Ter
 }
 
 /// Begin mirroring an externally launched Copilot CLI session.
-#[tauri::command]
-pub async fn terminal_sessions_watch(
-    app: AppHandle,
+fn watch_terminal_session(
+    app: &AppHandle,
     req: WatchTerminalSessionRequest,
 ) -> AppResult<TerminalSessionResult> {
     if req.id.trim().is_empty() {
@@ -901,7 +1598,7 @@ pub async fn terminal_sessions_watch(
         updated_at: now,
     };
 
-    persist(&app, &session, cursor, seq);
+    persist(app, &session, cursor, seq);
     {
         let monitor = app.state::<TerminalSessionMonitor>();
         let mut watches = monitor
@@ -917,17 +1614,363 @@ pub async fn terminal_sessions_watch(
                 open_entries: Vec::new(),
                 saw_lock: false,
                 missing_polls: 0,
+                managed: false,
             },
         );
     }
-    ensure_polling(&app);
-    emit(&app, &session, Vec::new());
+    ensure_polling(app);
+    emit(app, &session, Vec::new());
 
     Ok(TerminalSessionResult {
         ok: true,
         session: Some(session),
         error: None,
     })
+}
+
+#[tauri::command]
+pub async fn terminal_sessions_watch(
+    app: AppHandle,
+    req: WatchTerminalSessionRequest,
+) -> AppResult<TerminalSessionResult> {
+    watch_terminal_session(&app, req)
+}
+
+fn start_acp_session(
+    app: AppHandle,
+    req: StartTerminalSessionRequest,
+) -> AppResult<TerminalSessionResult> {
+    if req.folder_path.trim().is_empty() {
+        return Ok(TerminalSessionResult {
+            ok: false,
+            session: None,
+            error: Some("A session folder is required.".into()),
+        });
+    }
+
+    let mut child = Command::new("copilot")
+        .arg("--acp")
+        .current_dir(&req.folder_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| AppError::msg(format!("Could not start Copilot ACP: {error}")))?;
+    let stdin =
+        Arc::new(Mutex::new(child.stdin.take().ok_or_else(|| {
+            AppError::msg("Copilot ACP did not expose stdin.")
+        })?));
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AppError::msg("Copilot ACP did not expose stdout."))?;
+    let mut reader = BufReader::new(stdout);
+
+    write_rpc(
+        &stdin,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": 1,
+                "clientCapabilities": {
+                    "fs": { "readTextFile": false, "writeTextFile": false },
+                    "terminal": false,
+                    "elicitation": { "form": {}, "url": {} },
+                    "session": { "configOptions": { "boolean": {} } }
+                },
+                "clientInfo": {
+                    "name": "DevTrees",
+                    "title": "DevTrees",
+                    "version": env!("CARGO_PKG_VERSION")
+                }
+            }
+        }),
+    )?;
+    let _ = read_rpc_response(&mut reader, 1)?;
+
+    let resume_id = req
+        .resume_session_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    let (method, params) = match resume_id {
+        Some(id) => (
+            "session/load",
+            serde_json::json!({
+                "sessionId": id,
+                "cwd": req.folder_path,
+                "mcpServers": []
+            }),
+        ),
+        None => (
+            "session/new",
+            serde_json::json!({
+                "cwd": req.folder_path,
+                "mcpServers": []
+            }),
+        ),
+    };
+    write_rpc(
+        &stdin,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": method,
+            "params": params
+        }),
+    )?;
+    let (setup, setup_notifications) = read_rpc_response(&mut reader, 2)?;
+    let session_id = resume_id
+        .map(str::to_string)
+        .or_else(|| {
+            setup
+                .get("sessionId")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .ok_or_else(|| AppError::msg("Copilot ACP did not return a session id."))?;
+
+    let watch_result = watch_terminal_session(
+        &app,
+        WatchTerminalSessionRequest {
+            id: session_id.clone(),
+            folder_path: req.folder_path.clone(),
+            label: req.label,
+            task_id: req.task_id,
+            repository: req.repository,
+            branch: req.branch,
+        },
+    )?;
+    if !watch_result.ok {
+        return Ok(watch_result);
+    }
+    if let Ok(mut watches) = app.state::<TerminalSessionMonitor>().watches.lock() {
+        if let Some(watch) = watches.get_mut(&session_id) {
+            watch.managed = true;
+            watch.session.status = TerminalSessionStatus::Idle;
+            watch.session.last_activity = "Waiting for your first instruction".to_string();
+        }
+    }
+    persist_managed_transport(&app, &session_id);
+
+    {
+        let manager = app.state::<AcpSessionManager>();
+        let mut sessions = manager
+            .sessions
+            .lock()
+            .map_err(|_| AppError::msg("Copilot session mutex poisoned"))?;
+        sessions.insert(
+            session_id.clone(),
+            AcpSession {
+                stdin: stdin.clone(),
+                next_request_id: 3,
+                prompt_requests: Vec::new(),
+                user_message_entries: HashMap::new(),
+                message_entries: HashMap::new(),
+                tool_entries: HashMap::new(),
+                plan_entry: None,
+            },
+        );
+    }
+    for notification in setup_notifications {
+        handle_acp_message(&app, &session_id, &notification);
+    }
+
+    let reader_app = app.clone();
+    let reader_session_id = session_id.clone();
+    std::thread::spawn(move || {
+        for line in reader.lines() {
+            let Ok(line) = line else { break };
+            let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            handle_acp_message(&reader_app, &reader_session_id, &message);
+        }
+        let manager = reader_app.state::<AcpSessionManager>();
+        if let Ok(mut sessions) = manager.sessions.lock() {
+            sessions.remove(&reader_session_id);
+        }
+        if let Ok(mut pending) = manager.pending.lock() {
+            pending.retain(|(session_id, _), _| session_id != &reader_session_id);
+        }
+        emit_interaction(&reader_app, &reader_session_id, None);
+        set_managed_status(
+            &reader_app,
+            &reader_session_id,
+            TerminalSessionStatus::Done,
+            "Copilot session ended",
+            None,
+        );
+        let _ = child.wait();
+    });
+
+    set_managed_status(
+        &app,
+        &session_id,
+        TerminalSessionStatus::Idle,
+        "Waiting for your first instruction",
+        None,
+    );
+    if let Some(prompt) = req.prompt.map(|value| value.trim().to_string()) {
+        if !prompt.is_empty() {
+            send_acp_prompt(&app, &session_id, &prompt)?;
+        }
+    }
+
+    let session = app
+        .state::<TerminalSessionMonitor>()
+        .watches
+        .lock()
+        .ok()
+        .and_then(|watches| watches.get(&session_id).map(|watch| watch.session.clone()))
+        .ok_or_else(|| AppError::msg("Copilot session disappeared during startup."))?;
+    Ok(TerminalSessionResult {
+        ok: true,
+        session: Some(session),
+        error: None,
+    })
+}
+
+#[tauri::command]
+pub async fn terminal_sessions_start(
+    app: AppHandle,
+    req: StartTerminalSessionRequest,
+) -> AppResult<TerminalSessionResult> {
+    tauri::async_runtime::spawn_blocking(move || start_acp_session(app, req))
+        .await
+        .map_err(|error| AppError::msg(format!("Copilot session task failed: {error}")))?
+}
+
+#[tauri::command]
+pub async fn terminal_sessions_prompt(app: AppHandle, id: String, prompt: String) -> AppResult<()> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err(AppError::msg("A message is required."));
+    }
+    send_acp_prompt(&app, &id, prompt)
+}
+
+#[tauri::command]
+pub async fn terminal_sessions_cancel(app: AppHandle, id: String) -> AppResult<()> {
+    let stdin = {
+        let manager = app.state::<AcpSessionManager>();
+        let sessions = manager
+            .sessions
+            .lock()
+            .map_err(|_| AppError::msg("Copilot session mutex poisoned"))?;
+        sessions
+            .get(&id)
+            .map(|session| session.stdin.clone())
+            .ok_or_else(|| AppError::msg("This Copilot session is no longer connected."))?
+    };
+    write_rpc(
+        &stdin,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "session/cancel",
+            "params": { "sessionId": id }
+        }),
+    )
+}
+
+#[tauri::command]
+pub async fn terminal_sessions_interaction(
+    app: AppHandle,
+    id: String,
+) -> AppResult<Option<TerminalSessionInteraction>> {
+    let manager = app.state::<AcpSessionManager>();
+    let pending = manager
+        .pending
+        .lock()
+        .map_err(|_| AppError::msg("Copilot request mutex poisoned"))?;
+    Ok(pending_interaction_for_session(&pending, &id))
+}
+
+#[tauri::command]
+pub async fn terminal_sessions_respond(
+    app: AppHandle,
+    req: RespondTerminalSessionRequest,
+) -> AppResult<()> {
+    let (id, request_id, expected, result) = match req {
+        RespondTerminalSessionRequest::Permission {
+            id,
+            request_id,
+            option_id,
+        } => (
+            id,
+            request_id,
+            PendingAcpRequest::Permission,
+            serde_json::json!({
+                "outcome": { "outcome": "selected", "optionId": option_id }
+            }),
+        ),
+        RespondTerminalSessionRequest::Elicitation {
+            id,
+            request_id,
+            action,
+            content,
+        } => {
+            if !matches!(action.as_str(), "accept" | "decline" | "cancel") {
+                return Err(AppError::msg("Invalid elicitation response."));
+            }
+            let mut result = serde_json::json!({ "action": action });
+            if action == "accept" {
+                if let Some(content) = content {
+                    result["content"] = content;
+                }
+            }
+            (id, request_id, PendingAcpRequest::Elicitation, result)
+        }
+    };
+
+    {
+        let manager = app.state::<AcpSessionManager>();
+        let pending = manager
+            .pending
+            .lock()
+            .map_err(|_| AppError::msg("Copilot request mutex poisoned"))?;
+        match pending.get(&(id.clone(), request_id)) {
+            Some(TerminalSessionInteraction::Permission { .. })
+                if expected == PendingAcpRequest::Permission => {}
+            Some(TerminalSessionInteraction::Elicitation { .. })
+                if expected == PendingAcpRequest::Elicitation => {}
+            _ => return Err(AppError::msg("This Copilot request is no longer pending.")),
+        }
+    }
+
+    let stdin = {
+        let manager = app.state::<AcpSessionManager>();
+        let sessions = manager
+            .sessions
+            .lock()
+            .map_err(|_| AppError::msg("Copilot session mutex poisoned"))?;
+        sessions
+            .get(&id)
+            .map(|session| session.stdin.clone())
+            .ok_or_else(|| AppError::msg("This Copilot session is no longer connected."))?
+    };
+    write_rpc(
+        &stdin,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": result
+        }),
+    )?;
+    if let Ok(mut pending) = app.state::<AcpSessionManager>().pending.lock() {
+        pending.remove(&(id.clone(), request_id));
+    }
+    emit_interaction(&app, &id, managed_pending_interaction(&app, &id));
+    set_managed_status(
+        &app,
+        &id,
+        TerminalSessionStatus::Working,
+        "Continuing after your response",
+        None,
+    );
+    Ok(())
 }
 
 /// Replay a session's event log into timeline entries, capped at the most recent
@@ -967,6 +2010,29 @@ pub async fn terminal_sessions_history(id: String) -> AppResult<Vec<TerminalTime
 /// Stop mirroring a session and drop it from the list.
 #[tauri::command]
 pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<()> {
+    if app
+        .state::<AcpSessionManager>()
+        .sessions
+        .lock()
+        .map(|sessions| sessions.contains_key(&id))
+        .unwrap_or(false)
+    {
+        let _ = next_acp_request(
+            &app.state::<AcpSessionManager>(),
+            &id,
+            "session/close",
+            serde_json::json!({ "sessionId": id }),
+        );
+    }
+    {
+        let manager = app.state::<AcpSessionManager>();
+        if let Ok(mut sessions) = manager.sessions.lock() {
+            sessions.remove(&id);
+        }
+        if let Ok(mut pending) = manager.pending.lock() {
+            pending.retain(|(session_id, _), _| session_id != &id);
+        };
+    }
     {
         let monitor = app.state::<TerminalSessionMonitor>();
         let removed = monitor.watches.lock().map(|mut w| w.remove(&id));
@@ -1003,6 +2069,144 @@ mod tests {
 
     fn event(json: &str) -> RawEvent {
         serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn interaction_payloads_use_the_renderer_camel_case_contract() {
+        let permission = serde_json::to_value(TerminalSessionInteraction::Permission {
+            request_id: 0,
+            message: "Approve command".into(),
+            options: vec![TerminalSessionPermissionOption {
+                option_id: "allow_once".into(),
+                name: "Allow once".into(),
+                kind: "allow_once".into(),
+            }],
+        })
+        .unwrap();
+        assert_eq!(
+            permission,
+            serde_json::json!({
+                "kind": "permission",
+                "requestId": 0,
+                "message": "Approve command",
+                "options": [{
+                    "optionId": "allow_once",
+                    "name": "Allow once",
+                    "kind": "allow_once"
+                }]
+            })
+        );
+
+        let elicitation = serde_json::to_value(TerminalSessionInteraction::Elicitation {
+            request_id: 7,
+            mode: "form".into(),
+            message: "Choose one".into(),
+            requested_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": { "choice": { "type": "string" } }
+            })),
+            url: None,
+        })
+        .unwrap();
+        assert_eq!(elicitation["requestId"], 7);
+        assert!(elicitation.get("requestedSchema").is_some());
+        assert!(elicitation.get("request_id").is_none());
+        assert!(elicitation.get("requested_schema").is_none());
+    }
+
+    #[test]
+    fn renderer_responses_deserialize_with_camel_case_fields_and_zero_request_id() {
+        let permission: RespondTerminalSessionRequest = serde_json::from_value(serde_json::json!({
+            "kind": "permission",
+            "id": "session-1",
+            "requestId": 0,
+            "optionId": "allow_once"
+        }))
+        .unwrap();
+        match permission {
+            RespondTerminalSessionRequest::Permission {
+                id,
+                request_id,
+                option_id,
+            } => {
+                assert_eq!(id, "session-1");
+                assert_eq!(request_id, 0);
+                assert_eq!(option_id, "allow_once");
+            }
+            _ => panic!("expected permission response"),
+        }
+
+        let elicitation: RespondTerminalSessionRequest =
+            serde_json::from_value(serde_json::json!({
+                "kind": "elicitation",
+                "id": "session-2",
+                "requestId": 12,
+                "action": "accept",
+                "content": { "choice": "alpha" }
+            }))
+            .unwrap();
+        match elicitation {
+            RespondTerminalSessionRequest::Elicitation {
+                id,
+                request_id,
+                action,
+                content,
+            } => {
+                assert_eq!(id, "session-2");
+                assert_eq!(request_id, 12);
+                assert_eq!(action, "accept");
+                assert_eq!(content, Some(serde_json::json!({ "choice": "alpha" })));
+            }
+            _ => panic!("expected elicitation response"),
+        }
+    }
+
+    #[test]
+    fn pending_interactions_can_be_recovered_after_a_renderer_remount() {
+        let mut pending = HashMap::new();
+        pending.insert(
+            ("session-1".into(), 0),
+            TerminalSessionInteraction::Permission {
+                request_id: 0,
+                message: "Approve command".into(),
+                options: vec![TerminalSessionPermissionOption {
+                    option_id: "allow_once".into(),
+                    name: "Allow once".into(),
+                    kind: "allow_once".into(),
+                }],
+            },
+        );
+        pending.insert(
+            ("session-2".into(), 1),
+            TerminalSessionInteraction::Elicitation {
+                request_id: 1,
+                mode: "form".into(),
+                message: "Choose one".into(),
+                requested_schema: None,
+                url: None,
+            },
+        );
+        pending.insert(
+            ("session-1".into(), 2),
+            TerminalSessionInteraction::Permission {
+                request_id: 2,
+                message: "Approve later command".into(),
+                options: Vec::new(),
+            },
+        );
+
+        match pending_interaction_for_session(&pending, "session-1") {
+            Some(TerminalSessionInteraction::Permission {
+                request_id,
+                options,
+                ..
+            }) => {
+                assert_eq!(request_id, 0);
+                assert_eq!(options[0].option_id, "allow_once");
+            }
+            _ => panic!("expected the pending permission"),
+        }
+        assert!(pending_interaction_for_session(&pending, "missing").is_none());
     }
 
     #[test]

@@ -120,7 +120,7 @@ function Entry({ entry }: { entry: TerminalTimelineEntry }): React.JSX.Element |
         >
           <Body>{entry.description}</Body>
           <p className="text-xs text-muted-foreground">
-            {entry.resolution ?? 'Awaiting your answer in the terminal window.'}
+            {entry.resolution ?? 'Awaiting your answer.'}
           </p>
         </Row>
       )
@@ -147,11 +147,8 @@ function Entry({ entry }: { entry: TerminalTimelineEntry }): React.JSX.Element |
 }
 
 /**
- * Read-only rendering of a Copilot CLI session's history.
- *
- * The session runs in a terminal window the app does not own, so this view can only ever
- * observe it — there are deliberately no approve/reply controls here. When Copilot needs
- * an answer the user gives it in the terminal.
+ * Rendering of a Copilot CLI session's history. Interactive requests are handled by the
+ * shared session interaction panel below the timeline.
  */
 export function TerminalTimeline({
   entries,

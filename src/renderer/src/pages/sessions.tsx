@@ -16,9 +16,8 @@ export function SessionsHeaderControls(): React.JSX.Element {
 }
 
 /**
- * Sessions are Copilot CLI runs happening in their own terminal windows. The app mirrors
- * them by tailing the CLI's event log, so this page is a read-only record: pick a session
- * in the sidebar to see what it has been doing.
+ * Sessions are Copilot CLI runs managed by DevTrees over ACP. Pick a session in the
+ * sidebar to inspect its history, respond to questions, and continue the conversation.
  */
 export function SessionsPage(): React.JSX.Element {
   const { sessions, selectedId } = useTerminalSessions()
@@ -41,7 +40,7 @@ export function SessionsPage(): React.JSX.Element {
         </p>
         <p className="max-w-sm text-xs">
           {sessions.length === 0
-            ? 'Start Copilot from a repository, worktree, pull request, or task. It opens in its own terminal window and shows up here.'
+            ? 'Start Copilot from a repository, worktree, pull request, or task. The managed session appears here and stays interactive.'
             : 'Pick a session in the sidebar to see its history.'}
         </p>
       </div>

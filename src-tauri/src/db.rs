@@ -246,6 +246,13 @@ fn migrations() -> Vec<Migration> {
                  DROP TABLE IF EXISTS chat_conversations;",
             )
         },
+        // 0014 -> user_version 14: distinguish managed ACP sessions from legacy
+        // external-terminal watches so restart recovery never treats one as the other.
+        |db| {
+            db.execute_batch(
+                "ALTER TABLE terminal_sessions ADD COLUMN managed INTEGER NOT NULL DEFAULT 0;",
+            )
+        },
     ]
 }
 
@@ -381,7 +388,16 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
+
+        let managed_column: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('terminal_sessions') WHERE name = 'managed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(managed_column, 1);
 
         for table in [
             "chat_conversations",

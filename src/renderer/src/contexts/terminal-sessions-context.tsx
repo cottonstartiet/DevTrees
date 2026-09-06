@@ -4,7 +4,10 @@ import { toast } from 'sonner'
 
 import {
   isTerminalSessionFinished,
+  type RespondTerminalSessionRequest,
+  type StartTerminalSessionRequest,
   type TerminalSession,
+  type TerminalSessionInteraction,
   type TerminalSessionStatus,
   type TerminalTimelineEntry,
   type WatchTerminalSessionRequest
@@ -16,6 +19,9 @@ export interface TerminalSessionsContextValue {
   byId: Record<string, TerminalSession | undefined>
   /** Timeline entries per session, ordered by `seq`. Populated by `loadHistory`. */
   entriesById: Record<string, TerminalTimelineEntry[] | undefined>
+  interactionById: Record<string, TerminalSessionInteraction | undefined>
+  /** Local receipt time for each currently pending interaction. */
+  interactionRequestedAtById: Record<string, number | undefined>
   /**
    * Replay a session's event log into its timeline. Safe to call repeatedly; live
    * updates that arrive meanwhile are merged by `seq` rather than duplicated.
@@ -24,8 +30,14 @@ export interface TerminalSessionsContextValue {
   /** Session shown in the Sessions detail view, if any. */
   selectedId: string | null
   select: (id: string | null) => void
-  /** Start mirroring an externally launched Copilot CLI session. */
+  /** Legacy support for mirroring an externally launched Copilot CLI session. */
   watch: (req: WatchTerminalSessionRequest) => Promise<TerminalSession | null>
+  start: (req: StartTerminalSessionRequest) => Promise<TerminalSession | null>
+  prompt: (id: string, prompt: string) => Promise<void>
+  respond: (req: RespondTerminalSessionRequest) => Promise<void>
+  cancel: (id: string) => Promise<void>
+  /** Reconcile response controls with the backend after a missed or stale renderer event. */
+  refreshInteraction: (id: string) => Promise<TerminalSessionInteraction | null>
   /** Stop mirroring and remove a session from the list. */
   forget: (id: string) => Promise<void>
 }
@@ -33,8 +45,7 @@ export interface TerminalSessionsContextValue {
 const TerminalSessionsContext = React.createContext<TerminalSessionsContextValue | null>(null)
 
 /**
- * Statuses worth interrupting the user for. Copilot is running in a window the app does
- * not own, so these toasts are the only way the user learns they need to switch to it.
+ * Statuses worth interrupting the user for while they are working elsewhere in the app.
  */
 function notification(
   session: TerminalSession,
@@ -45,7 +56,7 @@ function notification(
   if (session.status === 'waiting-input') {
     return {
       kind: 'attention',
-      title: `${session.label} needs you in the terminal`,
+      title: `${session.label} needs your input`,
       description: session.pendingPrompt ?? 'Copilot is waiting for your response.'
     }
   }
@@ -64,7 +75,7 @@ function notification(
     return {
       kind: 'done',
       title: `${session.label} ended`,
-      description: 'The Copilot terminal was closed.'
+      description: 'The Copilot session ended.'
     }
   }
   return null
@@ -82,6 +93,17 @@ export function TerminalSessionsProvider({
   const [entriesById, setEntriesById] = React.useState<
     Record<string, TerminalTimelineEntry[] | undefined>
   >({})
+  const [interactionById, setInteractionById] = React.useState<
+    Record<string, TerminalSessionInteraction | undefined>
+  >({})
+  const [interactionRequestedAtById, setInteractionRequestedAtById] = React.useState<
+    Record<string, number | undefined>
+  >({})
+  const interactionRequestIdRef = React.useRef<Record<string, number | undefined>>({})
+  const interactionByIdRef = React.useRef<Record<string, TerminalSessionInteraction | undefined>>(
+    {}
+  )
+  const interactionRevisionRef = React.useRef<Record<string, number | undefined>>({})
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
 
   // Previous status per session, kept in a ref so toasts fire exactly once per
@@ -127,6 +149,51 @@ export function TerminalSessionsProvider({
     })
   }, [])
 
+  const applyInteraction = React.useCallback(
+    (update: { sessionId: string; interaction: TerminalSessionInteraction | null }): void => {
+      const previousRequestId = interactionRequestIdRef.current[update.sessionId]
+      if (update.interaction) {
+        interactionRequestIdRef.current[update.sessionId] = update.interaction.requestId
+        interactionByIdRef.current[update.sessionId] = update.interaction
+        if (previousRequestId !== update.interaction.requestId) {
+          setInteractionRequestedAtById((current) => ({
+            ...current,
+            [update.sessionId]: Date.now()
+          }))
+        }
+      } else {
+        delete interactionRequestIdRef.current[update.sessionId]
+        delete interactionByIdRef.current[update.sessionId]
+        setInteractionRequestedAtById((current) => {
+          const next = { ...current }
+          delete next[update.sessionId]
+          return next
+        })
+      }
+      setInteractionById((current) => {
+        const next = { ...current }
+        if (update.interaction) next[update.sessionId] = update.interaction
+        else delete next[update.sessionId]
+        return next
+      })
+    },
+    []
+  )
+
+  const refreshInteraction = React.useCallback(
+    async (id: string): Promise<TerminalSessionInteraction | null> => {
+      const revision = interactionRevisionRef.current[id] ?? 0
+      const interaction = await window.api.terminalSessions.interaction(id)
+      // A live event received during this request is newer than the snapshot.
+      if ((interactionRevisionRef.current[id] ?? 0) === revision) {
+        applyInteraction({ sessionId: id, interaction })
+        return interaction
+      }
+      return interactionByIdRef.current[id] ?? null
+    },
+    [applyInteraction]
+  )
+
   const loadHistory = React.useCallback(
     async (id: string): Promise<void> => {
       try {
@@ -140,29 +207,120 @@ export function TerminalSessionsProvider({
 
   React.useEffect(() => {
     let cancelled = false
+    let unsubscribe = (): void => {}
+    let unsubscribeInteraction = (): void => {}
 
-    void window.api.terminalSessions
-      .list()
-      .then((list) => {
+    const ingestLiveInteraction = (update: {
+      sessionId: string
+      interaction: TerminalSessionInteraction | null
+    }): void => {
+      if (cancelled) return
+      interactionRevisionRef.current[update.sessionId] =
+        (interactionRevisionRef.current[update.sessionId] ?? 0) + 1
+      applyInteraction(update)
+    }
+
+    void Promise.all([
+      window.api.terminalSessions.onUpdate((update) => {
+        if (cancelled) return
+        ingest(update.session, true)
+        mergeEntries(update.session.id, update.entries)
+      }),
+      window.api.terminalSessions.onInteraction(ingestLiveInteraction)
+    ])
+      .then(async ([stopUpdates, stopInteractions]) => {
+        if (cancelled) {
+          stopUpdates()
+          stopInteractions()
+          return
+        }
+        unsubscribe = stopUpdates
+        unsubscribeInteraction = stopInteractions
+
+        const list = await window.api.terminalSessions.list()
         if (cancelled) return
         // Seed silently: statuses restored from the database are history, not news.
         for (const session of list) ingest(session, false)
+
+        const interactions = await Promise.all(
+          list.map(async (session) => {
+            const revision = interactionRevisionRef.current[session.id] ?? 0
+            try {
+              return {
+                ok: true as const,
+                sessionId: session.id,
+                revision,
+                interaction: await window.api.terminalSessions.interaction(session.id)
+              }
+            } catch {
+              return {
+                ok: false as const,
+                sessionId: session.id,
+                revision
+              }
+            }
+          })
+        )
+        for (const update of interactions) {
+          if (
+            update.ok &&
+            (interactionRevisionRef.current[update.sessionId] ?? 0) === update.revision
+          ) {
+            applyInteraction(update)
+          }
+        }
       })
       .catch(() => {
-        // A failed initial load just means an empty list; live updates still work.
+        // Live events can still populate the provider if initial hydration fails.
       })
-
-    const unsubscribe = window.api.terminalSessions.onUpdate((update) => {
-      if (cancelled) return
-      ingest(update.session, true)
-      mergeEntries(update.session.id, update.entries)
-    })
 
     return () => {
       cancelled = true
       unsubscribe()
+      unsubscribeInteraction()
     }
-  }, [ingest, mergeEntries])
+  }, [applyInteraction, ingest, mergeEntries])
+
+  React.useEffect(() => {
+    const missingInteractionIds = Object.values(byId)
+      .filter(
+        (session): session is TerminalSession =>
+          Boolean(session) &&
+          session?.status === 'waiting-input' &&
+          !interactionByIdRef.current[session.id]
+      )
+      .map((session) => session.id)
+    if (missingInteractionIds.length === 0) return
+
+    let cancelled = false
+    const timers: ReturnType<typeof setTimeout>[] = []
+    const reconcile = (attempt: number): void => {
+      void Promise.all(
+        missingInteractionIds.map(async (id) => {
+          if (interactionByIdRef.current[id]) return
+          try {
+            await refreshInteraction(id)
+          } catch {
+            // The visible recovery control reports errors; background reconciliation stays quiet.
+          }
+        })
+      ).then(() => {
+        if (
+          !cancelled &&
+          attempt < 2 &&
+          missingInteractionIds.some((id) => !interactionByIdRef.current[id])
+        ) {
+          timers.push(setTimeout(() => reconcile(attempt + 1), 750 * (attempt + 1)))
+        }
+      })
+    }
+    reconcile(0)
+
+    return () => {
+      cancelled = true
+      for (const timer of timers) clearTimeout(timer)
+    }
+  }, [byId, refreshInteraction])
 
   const watch = React.useCallback(
     async (req: WatchTerminalSessionRequest): Promise<TerminalSession | null> => {
@@ -177,6 +335,31 @@ export function TerminalSessionsProvider({
     [ingest]
   )
 
+  const start = React.useCallback(
+    async (req: StartTerminalSessionRequest): Promise<TerminalSession | null> => {
+      const result = await window.api.terminalSessions.start(req)
+      if (!result.ok) {
+        toast.error(result.error)
+        return null
+      }
+      ingest(result.session, false)
+      return result.session
+    },
+    [ingest]
+  )
+
+  const prompt = React.useCallback(async (id: string, value: string): Promise<void> => {
+    await window.api.terminalSessions.prompt(id, value)
+  }, [])
+
+  const respond = React.useCallback(async (req: RespondTerminalSessionRequest): Promise<void> => {
+    await window.api.terminalSessions.respond(req)
+  }, [])
+
+  const cancel = React.useCallback(async (id: string): Promise<void> => {
+    await window.api.terminalSessions.cancel(id)
+  }, [])
+
   const forget = React.useCallback(async (id: string): Promise<void> => {
     await window.api.terminalSessions.forget(id)
     delete statusRef.current[id]
@@ -186,6 +369,19 @@ export function TerminalSessionsProvider({
       return next
     })
     setEntriesById((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+    setInteractionById((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+    delete interactionRequestIdRef.current[id]
+    delete interactionByIdRef.current[id]
+    delete interactionRevisionRef.current[id]
+    setInteractionRequestedAtById((current) => {
       const next = { ...current }
       delete next[id]
       return next
@@ -206,13 +402,35 @@ export function TerminalSessionsProvider({
       sessions,
       byId,
       entriesById,
+      interactionById,
+      interactionRequestedAtById,
       loadHistory,
       selectedId,
       select: setSelectedId,
       watch,
+      start,
+      prompt,
+      respond,
+      cancel,
+      refreshInteraction,
       forget
     }),
-    [sessions, byId, entriesById, loadHistory, selectedId, watch, forget]
+    [
+      sessions,
+      byId,
+      entriesById,
+      interactionById,
+      interactionRequestedAtById,
+      loadHistory,
+      selectedId,
+      watch,
+      start,
+      prompt,
+      respond,
+      cancel,
+      refreshInteraction,
+      forget
+    ]
   )
 
   return (

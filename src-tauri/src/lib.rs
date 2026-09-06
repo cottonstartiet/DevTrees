@@ -57,6 +57,7 @@ pub fn run() {
             let conn = db::init()?;
             app.manage(DbState(Mutex::new(conn)));
             app.manage(TerminalSessionMonitor::default());
+            app.manage(terminal_sessions::AcpSessionManager::default());
             // Resume mirroring any external Copilot terminal that outlived the last run.
             if let Err(e) = terminal_sessions::init(app.handle()) {
                 eprintln!("failed to restore terminal session watches: {e}");
@@ -132,6 +133,11 @@ pub fn run() {
             tasks::tasks_delete,
             tasks::tasks_set_copilot_session,
             terminal_sessions::terminal_sessions_list,
+            terminal_sessions::terminal_sessions_start,
+            terminal_sessions::terminal_sessions_prompt,
+            terminal_sessions::terminal_sessions_interaction,
+            terminal_sessions::terminal_sessions_respond,
+            terminal_sessions::terminal_sessions_cancel,
             terminal_sessions::terminal_sessions_history,
             terminal_sessions::terminal_sessions_watch,
             terminal_sessions::terminal_sessions_forget,

@@ -1,8 +1,6 @@
 import { useCallback } from 'react'
 
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
-import { launchCopilotCli, launchCopilotResume } from '@/lib/system'
-
 export type CopilotLaunchOptions = {
   folderPath: string
   /** Initial prompt for a fresh session. Ignored when `resumeSessionId` is set. */
@@ -28,39 +26,29 @@ function basename(path: string): string {
 }
 
 /**
- * Returns a `launch` function that opens Copilot in a new terminal window and registers a
- * monitor for it. Every Copilot launch site goes through this, so the app has a mirrored
- * session record for all of them.
+ * Returns a `launch` function that starts a Copilot ACP session owned by DevTrees.
+ * Every launch site goes through this so the session remains interactive in the app.
  */
 export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<CopilotLaunchResult> {
-  const { watch } = useTerminalSessions()
+  const { start } = useTerminalSessions()
 
   return useCallback(
     async (opts: CopilotLaunchOptions): Promise<CopilotLaunchResult> => {
       const { folderPath, prompt, resumeSessionId, label, branch, repository, taskId } = opts
       const resolvedLabel = label || basename(folderPath) || 'Copilot'
 
-      // Resuming reuses the existing session id, so the monitor simply re-attaches and its
-      // tail continues where it left off rather than replaying the whole log.
-      // Otherwise pin a fresh id before launching, so the app knows which CLI event log to
-      // tail; without it an external terminal is completely opaque to us.
-      const sessionId = resumeSessionId ?? crypto.randomUUID()
-
-      const result = resumeSessionId
-        ? await launchCopilotResume({ folderPath, sessionId: resumeSessionId })
-        : await launchCopilotCli({ folderPath, prompt: prompt ?? '', sessionId })
-      if (!result.ok) return { ok: false, error: result.error ?? 'Could not launch Copilot.' }
-
-      await watch({
-        id: sessionId,
+      const session = await start({
         folderPath,
+        prompt: prompt ?? '',
+        resumeSessionId,
         label: resolvedLabel,
         taskId,
         repository,
         branch
       })
-      return { ok: true, sessionId }
+      if (!session) return { ok: false, error: 'Could not start Copilot.' }
+      return { ok: true, sessionId: session.id }
     },
-    [watch]
+    [start]
   )
 }

@@ -7,6 +7,7 @@ import {
   TERMINAL_SESSION_STATUS_TONE
 } from '@/components/sessions/terminal-session-status'
 import { TerminalTimeline } from '@/components/sessions/terminal-timeline'
+import { SessionInteraction } from '@/components/sessions/session-interaction'
 import { Button } from '@/components/ui/button'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
@@ -42,14 +43,11 @@ export function TerminalSessionStatusBadge({
 }
 
 /**
- * Detail view for a Copilot session running in an external terminal.
- *
- * Everything here is read-only: the app tails the CLI's event log but cannot type into
- * the terminal. When a session has ended, it can be resumed — the CLI reopens the same
- * session id, so the history simply continues.
+ * Detail view for a Copilot ACP session. When a session has ended, it can be resumed with
+ * the same session id so its history continues.
  */
 export function TerminalSessionView({ session }: { session: TerminalSession }): React.JSX.Element {
-  const { entriesById, loadHistory } = useTerminalSessions()
+  const { entriesById, interactionById, loadHistory } = useTerminalSessions()
   const launch = useCopilotLauncher()
   const [resuming, setResuming] = React.useState(false)
 
@@ -58,6 +56,7 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
   }, [session.id, loadHistory])
 
   const entries = entriesById[session.id] ?? []
+  const interaction = interactionById[session.id]
   const finished = isTerminalSessionFinished(session.status)
 
   const handleResume = async (): Promise<void> => {
@@ -114,14 +113,26 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
         )}
       </header>
 
-      {session.status === 'waiting-input' && (
+      {session.status === 'waiting-input' && !interaction && (
         <div className="border-b bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
-          Copilot is waiting for you in its terminal window.
+          Copilot is waiting for your response.
           {session.pendingPrompt ? ` ${session.pendingPrompt}` : ''}
         </div>
       )}
 
       <TerminalTimeline entries={entries} />
+      {interaction ? (
+        <div className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-3 border-t px-4 py-3">
+          <span aria-hidden="true" />
+          <SessionInteraction
+            key={interaction.requestId}
+            session={session}
+            interaction={interaction}
+          />
+        </div>
+      ) : (
+        <SessionInteraction key="composer" session={session} />
+      )}
     </div>
   )
 }
