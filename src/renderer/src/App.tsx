@@ -329,7 +329,12 @@ function TasksPageContainer({
 
 function AppShell(): React.JSX.Element {
   useAutoUpdate()
-  const [view, setView] = useState<AppView>('dashboard')
+  const [view, setView] = useState<AppView>(() => {
+    const path = window.location.pathname.replace(/^\/+|\/+$/g, '')
+    return path === 'sessions' || path === 'settings' || path === 'tasks' || path === 'history'
+      ? path
+      : 'dashboard'
+  })
   const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null)
   const [reviewsRepositoryId, setReviewsRepositoryId] = useState<string | null>(null)
   const [dialogRepository, setDialogRepository] = useState<Repository | null>(null)

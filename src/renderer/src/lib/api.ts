@@ -1,18 +1,6 @@
-/**
- * Tauri backend bridge. Reconstructs the `window.api` surface the renderer historically got from the
- * Electron preload, but backed by Tauri commands via `invoke`. Keeping the same `window.api.<domain>`
- * shape means every existing call site keeps working unchanged after the Electron → Tauri migration.
- *
- * Two Tauri specifics are handled here:
- *  - Command arguments are passed as an object keyed by the Rust parameter name. Tauri converts the
- *    camelCase keys used here to the snake_case Rust params automatically.
- *  - `invoke` REJECTS when a Rust command returns `Err`. The commands model expected failures as
- *    resolved `{ ok: false, ... }` values, but unexpected errors (DB/lock/serialization) still reject.
- *    `result()` converts any such rejection into the discriminated-union failure the UI already
- *    handles, so a backend hiccup surfaces as an in-app error instead of an unhandled rejection.
- */
-import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+/** Browser bridge preserving the historical `window.api` contract over loopback HTTP. */
+import { hostEvents, type HostConnectionState } from './event-client'
+import { hostRequest } from './http-client'
 
 import type { AddRepositoryResult, Repository } from '@shared/repository'
 import type {
@@ -105,14 +93,31 @@ import type {
 } from '@shared/task'
 import {
   TERMINAL_SESSIONS_UPDATE_EVENT,
+  type TerminalSessionConnectionState,
   type TerminalSession,
   type TerminalSessionResult,
+  type TerminalSessionsSnapshot,
   type TerminalSessionUpdate,
   type TerminalTimelineEntry,
   type WatchTerminalSessionRequest
 } from '@shared/terminal-session'
+import type { HostSettings, HostStatus, UpdateStatus } from '@shared/settings'
 
 type Args = Record<string, unknown>
+
+function routeFor(command: string): string {
+  const prefixes = ['terminal_sessions', 'copilot_history']
+  const prefix = prefixes.find((candidate) => command.startsWith(`${candidate}_`))
+  if (prefix) {
+    return `${prefix.replaceAll('_', '-')}/${command.slice(prefix.length + 1).replaceAll('_', '-')}`
+  }
+  const separator = command.indexOf('_')
+  return `${command.slice(0, separator)}/${command.slice(separator + 1).replaceAll('_', '-')}`
+}
+
+function invoke<T>(command: string, args?: Args): Promise<T> {
+  return hostRequest<T>(routeFor(command), args ?? {})
+}
 
 function messageOf(err: unknown): string {
   if (typeof err === 'string') return err
@@ -370,16 +375,19 @@ const api = {
   terminalSessions: {
     list: (): Promise<TerminalSession[]> => invoke('terminal_sessions_list'),
     watch: (req: WatchTerminalSessionRequest): Promise<TerminalSessionResult> =>
-      result('terminal_sessions_watch', { req }, (error) => ({ ok: false, error })),
+      result('terminal_sessions_watch', { ...req }, (error) => ({ ok: false, error })),
     forget: (id: string): Promise<void> => invoke('terminal_sessions_forget', { id }),
     history: (id: string): Promise<TerminalTimelineEntry[]> =>
       invoke('terminal_sessions_history', { id }),
+    snapshot: (): Promise<TerminalSessionsSnapshot> => invoke('terminal_sessions_snapshot'),
     onUpdate: (cb: (update: TerminalSessionUpdate) => void): (() => void) => {
-      const unlisten = listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) =>
-        cb(event.payload)
-      )
-      return () => void unlisten.then((un) => un())
-    }
+      return hostEvents.subscribe<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, cb)
+    },
+    onConnectionState: (cb: (state: TerminalSessionConnectionState) => void): (() => void) =>
+      hostEvents.onState(cb as (state: HostConnectionState) => void),
+    onResyncRequired: (cb: () => void): (() => void) =>
+      hostEvents.subscribe('host:resync-required', cb),
+    markSnapshotRestored: (): void => hostEvents.markRestored()
   },
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),
@@ -413,6 +421,27 @@ const api = {
         error: 'unknown',
         message
       }))
+  },
+  settings: {
+    get: (): Promise<HostSettings> => invoke('settings_get'),
+    update: (settings: HostSettings): Promise<HostSettings> => invoke('settings_update', settings),
+    hostStatus: (): Promise<HostStatus> => invoke('system_host_status'),
+    openBrowser: (path = '/'): Promise<{ ok: true }> => invoke('system_open_browser', { path })
+  },
+  updater: {
+    status: (): Promise<UpdateStatus> => invoke('updater_status'),
+    check: (): Promise<UpdateStatus> => invoke('updater_check'),
+    install: async (): Promise<UpdateStatus> => {
+      const status = await invoke<UpdateStatus>('updater_install')
+      if (status.state === 'installing') {
+        // The prepare response is now acknowledged. The apply request is intentionally
+        // fire-and-forget because a successful Windows install terminates the host.
+        void invoke<UpdateStatus>('updater_apply').catch(() => undefined)
+      }
+      return status
+    },
+    onUpdate: (cb: (status: UpdateStatus) => void): (() => void) =>
+      hostEvents.subscribe<UpdateStatus>('updater:update', cb)
   }
 }
 

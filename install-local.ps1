@@ -14,6 +14,8 @@ $bundleDirectory = Join-Path $repoRoot 'src-tauri\target\release\bundle\nsis'
 $tauriCli = Join-Path $repoRoot 'node_modules\@tauri-apps\cli\tauri.js'
 $yarn = Get-Command 'yarn.cmd' -ErrorAction SilentlyContinue
 $cargo = Get-Command 'cargo.exe' -ErrorAction SilentlyContinue
+$copilot = Get-Command 'copilot' -ErrorAction SilentlyContinue
+$windowsTerminal = Get-Command 'wt' -ErrorAction SilentlyContinue
 
 if (-not $yarn) {
   throw 'Yarn was not found. Install Yarn 1.x, then run this script again.'
@@ -21,6 +23,14 @@ if (-not $yarn) {
 
 if (-not $cargo) {
   throw 'Cargo was not found. Install the Rust toolchain, then run this script again.'
+}
+
+if (-not $windowsTerminal) {
+  Write-Warning 'Windows Terminal (wt.exe) was not found. DevTrees will install, but terminal launches will be unavailable.'
+}
+
+if (-not $copilot) {
+  Write-Warning 'GitHub Copilot CLI was not found on PATH. Install and authenticate it before starting a session.'
 }
 
 if (-not (Test-Path -LiteralPath $tauriConfig -PathType Leaf)) {

@@ -102,5 +102,17 @@ export type TerminalSessionUpdate = {
   entries: TerminalTimelineEntry[]
 }
 
+export type TerminalSessionsSnapshot = {
+  sessions: TerminalSession[]
+  entriesById: Record<string, TerminalTimelineEntry[]>
+}
+
+export type TerminalSessionConnectionState =
+  | 'connecting'
+  | 'live'
+  | 'reconnecting'
+  | 'host-unavailable'
+  | 'restored-from-snapshot'
+
 /** Backend -> renderer event carrying a single updated session. */
 export const TERMINAL_SESSIONS_UPDATE_EVENT = 'terminal-sessions:update'

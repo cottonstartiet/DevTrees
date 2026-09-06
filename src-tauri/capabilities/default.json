@@ -1,14 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for the main DevTrees window.",
-  "windows": ["main"],
+  "description": "Capabilities retained for the windowless DevTrees tray host.",
+  "windows": [],
   "permissions": [
     "core:default",
     "opener:default",
     "dialog:default",
-    "process:default",
     "log:default",
-    "updater:default"
+    "updater:default",
+    "notification:default"
   ]
 }
