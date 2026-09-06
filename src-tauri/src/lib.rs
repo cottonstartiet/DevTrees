@@ -58,6 +58,7 @@ pub fn run() {
             let terminal_sessions = TerminalSessionMonitor::default();
             app.manage(db.clone());
             app.manage(terminal_sessions.clone());
+            app.manage(terminal_sessions::AcpSessionManager::default());
             app.manage(updater::UpdaterState::default());
             let settings = settings::SettingsStore::load()?;
             app.manage(AppState::new(

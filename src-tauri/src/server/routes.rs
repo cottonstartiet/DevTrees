@@ -352,6 +352,35 @@ pub async fn dispatch(
             "terminal-sessions/list" => {
                 json(terminal_sessions::terminal_sessions_list(app.state::<DbState>()).await)
             }
+            "terminal-sessions/start" => json(
+                terminal_sessions::terminal_sessions_start(
+                    app.clone(),
+                    serde_json::from_value(arg(&args, "req")?)?,
+                )
+                .await,
+            ),
+            "terminal-sessions/prompt" => json(
+                terminal_sessions::terminal_sessions_prompt(
+                    app.clone(),
+                    arg(&args, "id")?,
+                    arg(&args, "prompt")?,
+                )
+                .await,
+            ),
+            "terminal-sessions/interaction" => json(
+                terminal_sessions::terminal_sessions_interaction(app.clone(), arg(&args, "id")?)
+                    .await,
+            ),
+            "terminal-sessions/respond" => json(
+                terminal_sessions::terminal_sessions_respond(
+                    app.clone(),
+                    serde_json::from_value(arg(&args, "req")?)?,
+                )
+                .await,
+            ),
+            "terminal-sessions/cancel" => json(
+                terminal_sessions::terminal_sessions_cancel(app.clone(), arg(&args, "id")?).await,
+            ),
             "terminal-sessions/watch" => json(
                 terminal_sessions::terminal_sessions_watch(
                     app.clone(),
@@ -379,6 +408,7 @@ pub async fn dispatch(
                     arg(&args, "repositoryPath")?,
                     arg(&args, "worktreePath")?,
                     optional(&args, "worktreeBranch")?,
+                    optional(&args, "pendingWorktreeName")?,
                 )
                 .await,
             ),
@@ -393,6 +423,7 @@ pub async fn dispatch(
                     arg(&args, "repositoryPath")?,
                     arg(&args, "worktreePath")?,
                     optional(&args, "worktreeBranch")?,
+                    optional(&args, "pendingWorktreeName")?,
                 )
                 .await,
             ),

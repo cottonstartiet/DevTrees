@@ -1,17 +1,16 @@
 /**
- * Copilot CLI sessions that run in an **external terminal**.
+ * Copilot CLI sessions shown in DevTrees.
  *
- * DevTrees pins the session id when it launches Windows Terminal, then mirrors the
- * session by tailing the CLI's own event log. That gives the Sessions view live status
- * for work happening outside the app, and lets us notify the user when Copilot is
- * blocked on them or has finished a turn.
+ * Managed sessions use ACP for bidirectional prompts, approvals, elicitation, and live
+ * timeline updates. Legacy external-terminal sessions remain readable through the CLI's
+ * event log.
  */
 export type TerminalSessionStatus =
   /** Launched, but the CLI has not written its first event yet. */
   | 'starting'
   /** A model turn or tool call is in flight. */
   | 'working'
-  /** Copilot is blocked on the user: a permission prompt or a question. */
+  /** Copilot is blocked on permission, elicitation, or another user decision. */
   | 'waiting-input'
   /** The turn finished and the CLI is sitting at its prompt. */
   | 'idle'
@@ -51,6 +50,53 @@ export type TerminalSessionResult =
   | { ok: true; session: TerminalSession }
   | { ok: false; error: string }
 
+export type StartTerminalSessionRequest = Omit<WatchTerminalSessionRequest, 'id'> & {
+  prompt?: string
+  resumeSessionId?: string
+}
+
+export type TerminalSessionPermissionOption = {
+  optionId: string
+  name: string
+  kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always' | string
+}
+
+export type TerminalSessionInteraction =
+  | {
+      kind: 'permission'
+      requestId: number
+      message: string
+      options: TerminalSessionPermissionOption[]
+    }
+  | {
+      kind: 'elicitation'
+      requestId: number
+      mode: 'form' | 'url'
+      message: string
+      requestedSchema?: Record<string, unknown> | null
+      url?: string | null
+    }
+
+export type TerminalSessionInteractionUpdate = {
+  sessionId: string
+  interaction: TerminalSessionInteraction | null
+}
+
+export type RespondTerminalSessionRequest =
+  | {
+      id: string
+      requestId: number
+      kind: 'permission'
+      optionId: string
+    }
+  | {
+      id: string
+      requestId: number
+      kind: 'elicitation'
+      action: 'accept' | 'decline' | 'cancel'
+      content?: Record<string, unknown>
+    }
+
 /** Statuses where the session is over and no longer polled. */
 export const TERMINAL_SESSION_FINAL_STATUSES: readonly TerminalSessionStatus[] = ['done', 'error']
 
@@ -59,7 +105,7 @@ export function isTerminalSessionFinished(status: TerminalSessionStatus): boolea
 }
 
 /**
- * One row of a session's read-only history, reconstructed from the CLI's event log.
+ * One row of a session history, streamed over ACP or reconstructed from a legacy event log.
  *
  * `seq` is the source line index. It is stable across both delivery paths — the initial
  * history fetch and live updates — so entries are merged by `seq` rather than appended,
@@ -116,3 +162,4 @@ export type TerminalSessionConnectionState =
 
 /** Backend -> renderer event carrying a single updated session. */
 export const TERMINAL_SESSIONS_UPDATE_EVENT = 'terminal-sessions:update'
+export const TERMINAL_SESSIONS_INTERACTION_EVENT = 'terminal-sessions:interaction'

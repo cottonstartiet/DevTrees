@@ -59,7 +59,7 @@ interface TasksPageContainerProps {
   onOpenTask: (task: Task | null) => void
 }
 
-/** Owns the "Start task" action, launching Copilot in a terminal window for the task. */
+/** Owns the "Start task" action, launching a managed Copilot session for the task. */
 function TasksPageContainer({
   repositories,
   worktreesByRepositoryId,
@@ -213,9 +213,9 @@ function TasksPageContainer({
         )
       }
 
-      toast.success(
-        `Copilot launched for "${resolvedTask.title}" in a terminal. DevTrees will notify you when it needs you.`
-      )
+      if (resolvedTask.status === 'todo') await moveTask(resolvedTask.id, 'in_progress')
+
+      toast.success(`Copilot started for "${resolvedTask.title}".`)
     },
     [
       checkWorktreeStatus,

@@ -92,9 +92,14 @@ import type {
   UpdateTaskResult
 } from '@shared/task'
 import {
+  TERMINAL_SESSIONS_INTERACTION_EVENT,
   TERMINAL_SESSIONS_UPDATE_EVENT,
   type TerminalSessionConnectionState,
+  type RespondTerminalSessionRequest,
+  type StartTerminalSessionRequest,
   type TerminalSession,
+  type TerminalSessionInteraction,
+  type TerminalSessionInteractionUpdate,
   type TerminalSessionResult,
   type TerminalSessionsSnapshot,
   type TerminalSessionUpdate,
@@ -374,6 +379,15 @@ const api = {
   },
   terminalSessions: {
     list: (): Promise<TerminalSession[]> => invoke('terminal_sessions_list'),
+    start: (req: StartTerminalSessionRequest): Promise<TerminalSessionResult> =>
+      result('terminal_sessions_start', { req }, (error) => ({ ok: false, error })),
+    prompt: (id: string, prompt: string): Promise<void> =>
+      invoke('terminal_sessions_prompt', { id, prompt }),
+    interaction: (id: string): Promise<TerminalSessionInteraction | null> =>
+      invoke('terminal_sessions_interaction', { id }),
+    respond: (req: RespondTerminalSessionRequest): Promise<void> =>
+      invoke('terminal_sessions_respond', { req }),
+    cancel: (id: string): Promise<void> => invoke('terminal_sessions_cancel', { id }),
     watch: (req: WatchTerminalSessionRequest): Promise<TerminalSessionResult> =>
       result('terminal_sessions_watch', { ...req }, (error) => ({ ok: false, error })),
     forget: (id: string): Promise<void> => invoke('terminal_sessions_forget', { id }),
@@ -387,7 +401,12 @@ const api = {
       hostEvents.onState(cb as (state: HostConnectionState) => void),
     onResyncRequired: (cb: () => void): (() => void) =>
       hostEvents.subscribe('host:resync-required', cb),
-    markSnapshotRestored: (): void => hostEvents.markRestored()
+    markSnapshotRestored: (): void => hostEvents.markRestored(),
+    onInteraction: (cb: (update: TerminalSessionInteractionUpdate) => void): (() => void) =>
+      hostEvents.subscribe<TerminalSessionInteractionUpdate>(
+        TERMINAL_SESSIONS_INTERACTION_EVENT,
+        cb
+      )
   },
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),

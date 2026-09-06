@@ -25,6 +25,24 @@ fn db_path() -> AppResult<PathBuf> {
 
 type Migration = fn(&Connection) -> rusqlite::Result<()>;
 
+fn ensure_column(
+    db: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> rusqlite::Result<()> {
+    let mut statement = db.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
+    for existing in columns {
+        if existing? == column {
+            return Ok(());
+        }
+    }
+    db.execute_batch(&format!(
+        "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+    ))
+}
+
 /// Schema migrations, ported 1:1 from the Electron `db.ts`. The slot index drives
 /// `PRAGMA user_version`, so order and count must never change for existing DBs.
 fn migrations() -> Vec<Migration> {
@@ -247,8 +265,28 @@ fn migrations() -> Vec<Migration> {
                  DROP TABLE IF EXISTS chat_conversations;",
             )
         },
-        // 0014 -> user_version 14: tasks can defer creating a new worktree until started.
-        |db| db.execute_batch("ALTER TABLE tasks ADD COLUMN pending_worktree_name TEXT;"),
+        // 0014 -> user_version 14: both branches originally introduced one of these
+        // columns at this version, so add whichever columns are absent.
+        |db| {
+            ensure_column(db, "tasks", "pending_worktree_name", "TEXT")?;
+            ensure_column(
+                db,
+                "terminal_sessions",
+                "managed",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+        },
+        // 0015 -> user_version 15: repair databases that already reached version 14
+        // through either side of the previously divergent migration.
+        |db| {
+            ensure_column(db, "tasks", "pending_worktree_name", "TEXT")?;
+            ensure_column(
+                db,
+                "terminal_sessions",
+                "managed",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+        },
     ]
 }
 
@@ -384,7 +422,16 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
+
+        let managed_column: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('terminal_sessions') WHERE name = 'managed'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(managed_column, 1);
 
         for table in [
             "chat_conversations",
