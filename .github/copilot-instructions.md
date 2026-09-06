@@ -5,7 +5,7 @@
 This project has captured design context for frontend/UI work:
 
 - **PRODUCT.md** (root) — strategic context: register (`product`), platform
-  (`web`), target users, product purpose, brand personality
+  (`desktop`, with an embedded React/WebView2 renderer), target users, product purpose, brand personality
   (*fast, developer-native, AI-forward*), anti-references, and design principles.
 - **DESIGN.md** (root) — the visual system: OKLCH color tokens, two themes
   (light / dark), typography, flat + tonal-layering elevation, and
@@ -16,3 +16,6 @@ This project has captured design context for frontend/UI work:
 Read PRODUCT.md and DESIGN.md before designing or changing any UI so new screens
 stay on-brand. Use the `impeccable` skill (`.github/skills/impeccable`) for
 design work; it reads these files automatically.
+
+Keep DevTrees a desktop application. Use Tauri commands and events for renderer/backend
+communication, not a standalone browser UI or a local HTTP/WebSocket server.

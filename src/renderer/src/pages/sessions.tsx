@@ -5,28 +5,9 @@ import { TerminalSessionView } from '@/components/sessions/terminal-session-view
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 
 export function SessionsHeaderControls(): React.JSX.Element {
-  const { sessions, connectionState } = useTerminalSessions()
-  const connectionLabel = {
-    connecting: 'Connecting',
-    live: 'Live',
-    reconnecting: 'Reconnecting',
-    'host-unavailable': 'Host unavailable',
-    'restored-from-snapshot': 'Restored'
-  }[connectionState]
+  const { sessions } = useTerminalSessions()
   return (
     <div className="ml-auto flex items-center gap-3">
-      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span
-          className={`size-1.5 rounded-full ${
-            connectionState === 'live'
-              ? 'bg-emerald-500'
-              : connectionState === 'host-unavailable'
-                ? 'bg-destructive'
-                : 'bg-amber-500'
-          }`}
-        />
-        {connectionLabel}
-      </span>
       <span className="text-muted-foreground text-xs">
         {sessions.length} session{sessions.length === 1 ? '' : 's'}
       </span>

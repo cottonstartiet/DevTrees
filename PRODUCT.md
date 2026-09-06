@@ -6,7 +6,7 @@ product
 
 ## Platform
 
-web
+desktop (Windows, Tauri with an embedded React/WebView2 renderer)
 
 ## Users
 

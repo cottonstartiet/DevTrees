@@ -4,7 +4,6 @@ import { toast } from 'sonner'
 
 import {
   isTerminalSessionFinished,
-  type TerminalSessionConnectionState,
   type RespondTerminalSessionRequest,
   type StartTerminalSessionRequest,
   type TerminalSession,
@@ -15,7 +14,6 @@ import {
 } from '@shared/terminal-session'
 
 export interface TerminalSessionsContextValue {
-  connectionState: TerminalSessionConnectionState
   /** Newest first. Includes finished sessions until the user dismisses them. */
   sessions: TerminalSession[]
   byId: Record<string, TerminalSession | undefined>
@@ -107,14 +105,10 @@ export function TerminalSessionsProvider({
   )
   const interactionRevisionRef = React.useRef<Record<string, number | undefined>>({})
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
-  const [connectionState, setConnectionState] =
-    React.useState<TerminalSessionConnectionState>('connecting')
 
   // Previous status per session, kept in a ref so toasts fire exactly once per
   // transition even under StrictMode's double-invoked state updaters.
   const statusRef = React.useRef<Record<string, TerminalSessionStatus>>({})
-  const forgottenRef = React.useRef(new Set<string>())
-  const connectionRef = React.useRef<TerminalSessionConnectionState>('connecting')
   const navigateRef = React.useRef(onNavigateToSessions)
   React.useEffect(() => {
     navigateRef.current = onNavigateToSessions
@@ -211,84 +205,56 @@ export function TerminalSessionsProvider({
     [mergeEntries]
   )
 
-  const restoreSnapshot = React.useCallback(async (): Promise<void> => {
-    const requestedAt = Date.now()
-    const snapshot = await window.api.terminalSessions.snapshot()
-    const snapshotById = Object.fromEntries(
-      snapshot.sessions
-        .filter((session) => !forgottenRef.current.has(session.id))
-        .map((session) => [session.id, session])
-    )
-    setById((current) => {
-      const next: Record<string, TerminalSession | undefined> = {}
-      for (const [id, session] of Object.entries(snapshotById)) {
-        const live = current[id]
-        next[id] = live && live.updatedAt > session.updatedAt ? live : session
-      }
-      // Preserve sessions created or updated by live events while the snapshot request
-      // was in flight; all older absent rows are removed authoritatively.
-      for (const [id, session] of Object.entries(current)) {
-        if (
-          session &&
-          !next[id] &&
-          !forgottenRef.current.has(id) &&
-          session.updatedAt >= requestedAt
-        ) {
-          next[id] = session
-        }
-      }
-      statusRef.current = Object.fromEntries(
-        Object.values(next)
-          .filter((session): session is TerminalSession => Boolean(session))
-          .map((session) => [session.id, session.status])
-      )
-      return next
-    })
-    for (const [id, entries] of Object.entries(snapshot.entriesById)) {
-      mergeEntries(id, entries)
-    }
-    if (selectedId) {
-      mergeEntries(selectedId, await window.api.terminalSessions.history(selectedId))
-    }
-    window.api.terminalSessions.markSnapshotRestored()
-  }, [mergeEntries, selectedId])
-
   React.useEffect(() => {
     let cancelled = false
-    const unsubscribe = window.api.terminalSessions.onUpdate((update) => {
-      if (cancelled || forgottenRef.current.has(update.session.id)) return
-      ingest(update.session, true)
-      mergeEntries(update.session.id, update.entries)
-    })
-    const unsubscribeInteraction = window.api.terminalSessions.onInteraction((update) => {
-      if (cancelled || forgottenRef.current.has(update.sessionId)) return
+    let unsubscribe = (): void => {}
+    let unsubscribeInteraction = (): void => {}
+
+    const ingestLiveInteraction = (update: {
+      sessionId: string
+      interaction: TerminalSessionInteraction | null
+    }): void => {
+      if (cancelled) return
       interactionRevisionRef.current[update.sessionId] =
         (interactionRevisionRef.current[update.sessionId] ?? 0) + 1
       applyInteraction(update)
-    })
-    const unsubscribeState = window.api.terminalSessions.onConnectionState((state) => {
-      if (cancelled) return
-      const previous = connectionRef.current
-      connectionRef.current = state
-      setConnectionState(state)
-      if (state === 'live' && previous !== 'restored-from-snapshot') {
-        void restoreSnapshot().catch(() => {
-          if (!cancelled) setConnectionState('host-unavailable')
-        })
-      }
-    })
-    const unsubscribeResync = window.api.terminalSessions.onResyncRequired(() => {
-      void restoreSnapshot()
-    })
+    }
+
+    void Promise.all([
+      window.api.terminalSessions.onUpdate((update) => {
+        if (cancelled) return
+        ingest(update.session, true)
+        mergeEntries(update.session.id, update.entries)
+      }),
+      window.api.terminalSessions.onInteraction(ingestLiveInteraction)
+    ])
+      .then(async ([stopUpdates, stopInteractions]) => {
+        if (cancelled) {
+          stopUpdates()
+          stopInteractions()
+          return
+        }
+        unsubscribe = stopUpdates
+        unsubscribeInteraction = stopInteractions
+
+        const list = await window.api.terminalSessions.list()
+        if (cancelled) return
+        // Seed silently: statuses restored from the database are history, not news.
+        for (const session of list) ingest(session, false)
+
+        await Promise.all(list.map((session) => refreshInteraction(session.id)))
+      })
+      .catch((error) => {
+        console.error('[sessions] failed to initialize desktop session updates:', error)
+        if (!cancelled) toast.error('Could not load Copilot sessions. Please restart DevTrees.')
+      })
 
     return () => {
       cancelled = true
       unsubscribe()
       unsubscribeInteraction()
-      unsubscribeState()
-      unsubscribeResync()
     }
-  }, [applyInteraction, ingest, mergeEntries, restoreSnapshot])
+  }, [applyInteraction, ingest, mergeEntries, refreshInteraction])
 
   React.useEffect(() => {
     const missingInteractionIds = Object.values(byId)
@@ -338,7 +304,6 @@ export function TerminalSessionsProvider({
         toast.error(result.error)
         return null
       }
-      forgottenRef.current.delete(result.session.id)
       ingest(result.session, false)
       return result.session
     },
@@ -371,13 +336,7 @@ export function TerminalSessionsProvider({
   }, [])
 
   const forget = React.useCallback(async (id: string): Promise<void> => {
-    forgottenRef.current.add(id)
-    try {
-      await window.api.terminalSessions.forget(id)
-    } catch (error) {
-      forgottenRef.current.delete(id)
-      throw error
-    }
+    await window.api.terminalSessions.forget(id)
     delete statusRef.current[id]
     setById((current) => {
       const next = { ...current }
@@ -415,7 +374,6 @@ export function TerminalSessionsProvider({
 
   const value = React.useMemo<TerminalSessionsContextValue>(
     () => ({
-      connectionState,
       sessions,
       byId,
       entriesById,
@@ -433,7 +391,6 @@ export function TerminalSessionsProvider({
       forget
     }),
     [
-      connectionState,
       sessions,
       byId,
       entriesById,

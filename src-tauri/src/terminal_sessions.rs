@@ -14,15 +14,13 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::{ChildStdin, Command, Stdio};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::app_state::AppState;
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 
@@ -311,13 +309,6 @@ pub struct TerminalSessionUpdate {
     pub entries: Vec<TerminalTimelineEntry>,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalSessionsSnapshot {
-    pub sessions: Vec<TerminalSession>,
-    pub entries_by_id: HashMap<String, Vec<TerminalTimelineEntry>>,
-}
-
 // ----- Monitor state -----
 
 /// Per-session bookkeeping that only matters while tailing; not persisted except for
@@ -339,10 +330,10 @@ struct Watch {
     managed: bool,
 }
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct TerminalSessionMonitor {
-    watches: Arc<Mutex<HashMap<String, Watch>>>,
-    started: Arc<Mutex<bool>>,
+    watches: Mutex<HashMap<String, Watch>>,
+    started: Mutex<bool>,
 }
 
 /// Location of the Copilot CLI's per-session state folders.
@@ -838,9 +829,9 @@ fn emit_interaction(
     session_id: &str,
     interaction: Option<TerminalSessionInteraction>,
 ) {
-    app.state::<AppState>().broadcast(
+    let _ = app.emit(
         EVENT_INTERACTION,
-        &TerminalSessionInteractionUpdate {
+        TerminalSessionInteractionUpdate {
             session_id: session_id.to_string(),
             interaction,
         },
@@ -907,7 +898,7 @@ fn emit_managed_entry(app: &AppHandle, session_id: &str, entry: TerminalTimeline
         (watch.session.clone(), watch.cursor, watch.seq)
     };
     persist(app, &snapshot.0, snapshot.1, snapshot.2);
-    emit(app, &snapshot.0, vec![entry], None);
+    emit(app, &snapshot.0, vec![entry]);
 }
 
 fn content_text(content: &serde_json::Value) -> Option<&str> {
@@ -1343,42 +1334,14 @@ fn has_lock(dir: &PathBuf) -> bool {
 
 // ----- Polling loop -----
 
-fn emit(
-    app: &AppHandle,
-    session: &TerminalSession,
-    entries: Vec<TerminalTimelineEntry>,
-    previous_status: Option<TerminalSessionStatus>,
-) {
-    let update = TerminalSessionUpdate {
-        session: session.clone(),
-        entries,
-    };
-    let state = app.state::<AppState>();
-    state.broadcast(EVENT_UPDATE, &update);
-    if !state.has_browser_clients() && previous_status != Some(session.status) {
-        let message = match session.status {
-            TerminalSessionStatus::WaitingInput => Some((
-                format!("{} needs you in Windows Terminal", session.label),
-                session
-                    .pending_prompt
-                    .as_deref()
-                    .unwrap_or("Copilot is waiting for your response."),
-            )),
-            TerminalSessionStatus::Idle => Some((
-                format!("{} finished a turn", session.label),
-                session.last_activity.as_str(),
-            )),
-            TerminalSessionStatus::Error => Some((
-                format!("{} failed", session.label),
-                session.last_activity.as_str(),
-            )),
-            _ => None,
-        };
-        if let Some((title, body)) = message {
-            crate::notifications::show(app, title, body, "/sessions");
-        }
-    }
-    crate::tray::refresh_session_summary(app);
+fn emit(app: &AppHandle, session: &TerminalSession, entries: Vec<TerminalTimelineEntry>) {
+    let _ = app.emit(
+        EVENT_UPDATE,
+        TerminalSessionUpdate {
+            session: session.clone(),
+            entries,
+        },
+    );
 }
 
 fn persist(app: &AppHandle, session: &TerminalSession, cursor: u64, seq: u64) {
@@ -1387,25 +1350,6 @@ fn persist(app: &AppHandle, session: &TerminalSession, cursor: u64, seq: u64) {
             let _ = upsert(&db, session, cursor, seq);
         }
     }
-}
-
-fn persist_if_current(app: &AppHandle, session: &TerminalSession, cursor: u64, seq: u64) -> bool {
-    let monitor = app.state::<TerminalSessionMonitor>();
-    let Ok(watches) = monitor.watches.lock() else {
-        return false;
-    };
-    let is_current = watches
-        .get(&session.id)
-        .map(|watch| watch.session.updated_at == session.updated_at)
-        .unwrap_or(false);
-    if !is_current {
-        return false;
-    }
-    let state = app.state::<DbState>();
-    let Ok(db) = state.0.lock() else {
-        return false;
-    };
-    upsert(&db, session, cursor, seq).is_ok()
 }
 
 fn persist_managed_transport(app: &AppHandle, session_id: &str) {
@@ -1456,7 +1400,7 @@ fn set_managed_status(
         (watch.session.clone(), watch.cursor, watch.seq)
     };
     persist(app, &snapshot.0, snapshot.1, snapshot.2);
-    emit(app, &snapshot.0, Vec::new(), None);
+    emit(app, &snapshot.0, Vec::new());
 }
 
 /// One tick: advance every watched session, emitting and persisting the ones that moved.
@@ -1468,13 +1412,7 @@ fn poll_once(app: &AppHandle) {
         return;
     };
 
-    let mut changed: Vec<(
-        TerminalSession,
-        u64,
-        u64,
-        Vec<TerminalTimelineEntry>,
-        TerminalSessionStatus,
-    )> = Vec::new();
+    let mut changed: Vec<(TerminalSession, u64, u64, Vec<TerminalTimelineEntry>)> = Vec::new();
     {
         let Ok(mut watches) = monitor.watches.lock() else {
             return;
@@ -1483,7 +1421,6 @@ fn poll_once(app: &AppHandle) {
             if watch.session.status.is_final() {
                 continue;
             }
-            let previous_status = watch.session.status;
             if watch.managed {
                 continue;
             }
@@ -1496,13 +1433,7 @@ fn poll_once(app: &AppHandle) {
                     watch.session.status = TerminalSessionStatus::Done;
                     watch.session.last_activity = "Terminal closed before Copilot started".into();
                     watch.session.updated_at = now_ms();
-                    changed.push((
-                        watch.session.clone(),
-                        watch.cursor,
-                        watch.seq,
-                        Vec::new(),
-                        previous_status,
-                    ));
+                    changed.push((watch.session.clone(), watch.cursor, watch.seq, Vec::new()));
                 }
                 continue;
             }
@@ -1539,22 +1470,14 @@ fn poll_once(app: &AppHandle) {
 
             if dirty {
                 watch.session.updated_at = now_ms();
-                changed.push((
-                    watch.session.clone(),
-                    watch.cursor,
-                    watch.seq,
-                    entries,
-                    previous_status,
-                ));
+                changed.push((watch.session.clone(), watch.cursor, watch.seq, entries));
             }
         }
     }
 
-    for (session, cursor, seq, entries, previous_status) in changed {
-        if !persist_if_current(app, &session, cursor, seq) {
-            continue;
-        }
-        emit(app, &session, entries, Some(previous_status));
+    for (session, cursor, seq, entries) in changed {
+        persist(app, &session, cursor, seq);
+        emit(app, &session, entries);
     }
 }
 
@@ -1577,13 +1500,6 @@ fn ensure_polling(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(POLL_INTERVAL).await;
-            if handle
-                .state::<AppState>()
-                .shutting_down
-                .load(Ordering::Relaxed)
-            {
-                break;
-            }
             poll_once(&handle);
         }
     });
@@ -1701,8 +1617,8 @@ fn watch_terminal_session(
             },
         );
     }
-    ensure_polling(&app);
-    emit(&app, &session, Vec::new(), None);
+    ensure_polling(app);
+    emit(app, &session, Vec::new());
 
     Ok(TerminalSessionResult {
         ok: true,
@@ -2090,17 +2006,6 @@ pub async fn terminal_sessions_history(id: String) -> AppResult<Vec<TerminalTime
     Ok(entries.into())
 }
 
-pub async fn terminal_sessions_snapshot(app: AppHandle) -> AppResult<TerminalSessionsSnapshot> {
-    let sessions = terminal_sessions_list(app.state::<DbState>()).await?;
-    Ok(TerminalSessionsSnapshot {
-        sessions,
-        // Timelines are loaded on demand when a session is selected. Replaying every
-        // persisted events.jsonl here would make each browser reconnect scan all
-        // historical Copilot logs, which can be hundreds of megabytes apiece.
-        entries_by_id: HashMap::new(),
-    })
-}
-
 /// Stop mirroring a session and drop it from the list.
 #[tauri::command]
 pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<()> {
@@ -2138,22 +2043,7 @@ pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<(
         .lock()
         .map_err(|_| AppError::msg("database mutex poisoned"))?;
     db.execute("DELETE FROM terminal_sessions WHERE id = ?1", [&id])?;
-    drop(db);
-    crate::tray::refresh_session_summary(&app);
     Ok(())
-}
-
-pub fn active_session_count(app: &AppHandle) -> usize {
-    app.try_state::<AppState>()
-        .and_then(|state| {
-            state.terminal_sessions.watches.lock().ok().map(|watches| {
-                watches
-                    .values()
-                    .filter(|watch| !watch.session.status.is_final())
-                    .count()
-            })
-        })
-        .unwrap_or(0)
 }
 
 #[cfg(test)]
