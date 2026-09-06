@@ -7,13 +7,15 @@ import {
   TERMINAL_SESSION_STATUS_TONE
 } from '@/components/sessions/terminal-session-status'
 import { TerminalTimeline } from '@/components/sessions/terminal-timeline'
-import { SessionInteraction } from '@/components/sessions/session-interaction'
+import { PtyTerminalView } from '@/components/sessions/pty-terminal-view'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { cn } from '@/lib/utils'
 import {
   isTerminalSessionFinished,
+  terminalObservationIssue,
   type TerminalSession,
   type TerminalSessionStatus
 } from '@shared/terminal-session'
@@ -43,11 +45,11 @@ export function TerminalSessionStatusBadge({
 }
 
 /**
- * Detail view for a Copilot ACP session. When a session has ended, it can be resumed with
+ * Detail view for an embedded Copilot terminal. When a session has ended, it can be resumed with
  * the same session id so its history continues.
  */
 export function TerminalSessionView({ session }: { session: TerminalSession }): React.JSX.Element {
-  const { entriesById, interactionById, loadHistory } = useTerminalSessions()
+  const { entriesById, loadHistory, observationNow } = useTerminalSessions()
   const launch = useCopilotLauncher()
   const [resuming, setResuming] = React.useState(false)
 
@@ -56,8 +58,8 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
   }, [session.id, loadHistory])
 
   const entries = entriesById[session.id] ?? []
-  const interaction = interactionById[session.id]
   const finished = isTerminalSessionFinished(session.status)
+  const observationIssue = terminalObservationIssue(session, observationNow)
 
   const handleResume = async (): Promise<void> => {
     setResuming(true)
@@ -70,7 +72,7 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
         branch: session.branch ?? undefined,
         taskId: session.taskId ?? undefined
       })
-      if (result.ok) toast.success(`Resumed ${session.label} in a new terminal.`)
+      if (result.ok) toast.success(`Resumed ${session.label} in the embedded terminal.`)
       else toast.error(result.error)
     } finally {
       setResuming(false)
@@ -113,26 +115,40 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
         )}
       </header>
 
-      {session.status === 'waiting-input' && !interaction && (
-        <div className="border-b bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
-          Copilot is waiting for your response.
-          {session.pendingPrompt ? ` ${session.pendingPrompt}` : ''}
-        </div>
+      {observationIssue && !finished && (
+        <p className="bg-muted border-b px-4 py-2 text-xs" role="status">
+          {observationIssue} The terminal remains available.
+        </p>
       )}
-
-      <TerminalTimeline entries={entries} />
-      {interaction ? (
-        <div className="grid grid-cols-[1.5rem_minmax(0,1fr)] gap-3 border-t px-4 py-3">
-          <span aria-hidden="true" />
-          <SessionInteraction
-            key={interaction.requestId}
-            session={session}
-            interaction={interaction}
-          />
+      <Tabs
+        defaultValue="terminal"
+        className="min-h-0 flex-1 gap-0"
+        onValueChange={(value) => {
+          if (value === 'transcript') void loadHistory(session.id)
+        }}
+      >
+        <div className="border-b px-4 py-2">
+          <TabsList aria-label="Session view">
+            <TabsTrigger value="terminal">Terminal</TabsTrigger>
+            <TabsTrigger value="transcript">Transcript</TabsTrigger>
+          </TabsList>
         </div>
-      ) : (
-        <SessionInteraction key="composer" session={session} />
-      )}
+        <TabsContent
+          value="terminal"
+          className="flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
+        >
+          <PtyTerminalView session={session} />
+        </TabsContent>
+        <TabsContent
+          value="transcript"
+          className="flex min-h-0 flex-1 flex-col data-[state=inactive]:hidden"
+        >
+          <p className="text-muted-foreground border-b px-4 py-2 text-xs">
+            Read-only history. It may lag behind the terminal; respond in the Terminal view.
+          </p>
+          <TerminalTimeline entries={entries} />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

@@ -1,9 +1,8 @@
 //! Managed Copilot CLI sessions plus compatibility monitoring for legacy external terminals.
 //!
-//! New sessions run as `copilot --acp`, giving DevTrees a bidirectional JSON-RPC channel
-//! for prompts, structured elicitation, permission requests, plan transitions, status,
-//! and timeline updates. Older sessions launched in Windows Terminal can still be
-//! observed by tailing `~/.copilot/session-state/<session-id>/events.jsonl`.
+//! New sessions use the native Copilot TUI in an app-owned PTY. This module observes
+//! CLI event logs for attention and read-only history; pty_sessions owns live I/O.
+//! Legacy ACP helpers remain for existing command compatibility.
 //!
 //! The compatibility tail is driven by a single polling task. Each
 //! poll reads only the bytes appended since the last cursor, so watching a long-running
@@ -19,7 +18,7 @@ use std::time::Duration;
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
@@ -45,6 +44,16 @@ const MAX_ENTRY_TEXT: usize = 4_000;
 /// Most entries kept per session. A long session's log can hold tens of thousands of
 /// events, so the history read keeps only the most recent window.
 const MAX_ENTRIES: usize = 500;
+
+#[cfg(windows)]
+pub(crate) fn configure_no_window(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_no_window(_cmd: &mut Command) {}
 
 // ----- Types -----
 
@@ -112,6 +121,11 @@ pub struct TerminalSession {
     pub pending_prompt: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    pub transport: String,
+    pub generation: Option<String>,
+    pub revision: u64,
+    pub observed_at: Option<i64>,
+    pub observation_error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -328,6 +342,8 @@ struct Watch {
     missing_polls: u32,
     /// Managed ACP sessions stream updates directly and must not be tailed as terminals.
     managed: bool,
+    attention: crate::session_attention::Attention,
+    log_error: Option<String>,
 }
 
 #[derive(Default)]
@@ -376,8 +392,8 @@ fn upsert(db: &Connection, session: &TerminalSession, cursor: u64, seq: u64) -> 
     db.execute(
         "INSERT INTO terminal_sessions (
            id, task_id, folder_path, label, repository, branch,
-           status, last_activity, pending_prompt, cursor, created_at, updated_at, seq
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+           status, last_activity, pending_prompt, cursor, created_at, updated_at, seq, transport, generation, revision
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT(id) DO UPDATE SET
            task_id = excluded.task_id,
            folder_path = excluded.folder_path,
@@ -389,7 +405,10 @@ fn upsert(db: &Connection, session: &TerminalSession, cursor: u64, seq: u64) -> 
            pending_prompt = excluded.pending_prompt,
            cursor = excluded.cursor,
            updated_at = excluded.updated_at,
-           seq = excluded.seq",
+           seq = excluded.seq,
+           transport = excluded.transport,
+           generation = excluded.generation,
+           revision = excluded.revision",
         rusqlite::params![
             session.id,
             session.task_id,
@@ -404,6 +423,9 @@ fn upsert(db: &Connection, session: &TerminalSession, cursor: u64, seq: u64) -> 
             session.created_at,
             session.updated_at,
             seq as i64,
+            session.transport,
+            session.generation,
+            session.revision as i64,
         ],
     )?;
     Ok(())
@@ -411,7 +433,7 @@ fn upsert(db: &Connection, session: &TerminalSession, cursor: u64, seq: u64) -> 
 
 const SELECT_COLUMNS: &str =
     "id, task_id, folder_path, label, repository, branch, status, last_activity, \
-     pending_prompt, cursor, created_at, updated_at, seq, managed";
+     pending_prompt, cursor, created_at, updated_at, seq, managed, transport, generation, revision";
 
 fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
     let status: String = row.get(6)?;
@@ -430,6 +452,11 @@ fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
             pending_prompt: row.get(8)?,
             created_at: row.get(10)?,
             updated_at: row.get(11)?,
+            transport: row.get(14)?,
+            generation: row.get(15)?,
+            revision: row.get::<_, i64>(16)?.max(0) as u64,
+            observed_at: None,
+            observation_error: None,
         },
         cursor: cursor.max(0) as u64,
         seq: seq.max(0) as u64,
@@ -437,6 +464,8 @@ fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
         saw_lock: false,
         missing_polls: 0,
         managed: row.get::<_, i64>(13)? != 0,
+        attention: crate::session_attention::Attention::default(),
+        log_error: None,
     })
 }
 
@@ -675,8 +704,9 @@ fn apply_event(session: &mut TerminalSession, event: &RawEvent) -> bool {
     let before_pending = session.pending_prompt.clone();
 
     match event.event_type.as_str() {
-        "session.start" => {
+        "session.start" | "session.resume" => {
             session.status = TerminalSessionStatus::Idle;
+            session.pending_prompt = None;
             session.last_activity = "Session started".to_string();
         }
         "user.message" => {
@@ -732,7 +762,12 @@ fn apply_event(session: &mut TerminalSession, event: &RawEvent) -> bool {
             session.pending_prompt = None;
         }
         "session.error" => {
-            session.status = TerminalSessionStatus::Error;
+            // A CLI error may end a turn, not the process. Keep its terminal usable.
+            session.status = if session.transport == "pty" {
+                TerminalSessionStatus::Idle
+            } else {
+                TerminalSessionStatus::Error
+            };
             let message = event
                 .data
                 .get("message")
@@ -1287,39 +1322,61 @@ fn read_rpc_response(
 
 /// Read newly appended complete lines from `events.jsonl`, advancing `cursor` only past
 /// the final newline so a half-written line is re-read on the next poll.
-fn read_new_lines(path: &PathBuf, cursor: &mut u64) -> Vec<String> {
-    let Ok(mut file) = fs::File::open(path) else {
-        return Vec::new();
-    };
-    let Ok(metadata) = file.metadata() else {
-        return Vec::new();
-    };
+fn read_new_lines(path: &PathBuf, cursor: &mut u64) -> std::io::Result<Vec<String>> {
+    let mut file = fs::File::open(path)?;
+    let metadata = file.metadata()?;
     let len = metadata.len();
     // The log was truncated or replaced (e.g. the session folder was recreated).
     if len < *cursor {
-        *cursor = 0;
+        *cursor = len;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "CLI status log was truncated. Inspect the terminal; earlier waits cannot be reconstructed.",
+        ));
     }
     if len == *cursor {
-        return Vec::new();
+        return Ok(Vec::new());
     }
-    if file.seek(SeekFrom::Start(*cursor)).is_err() {
-        return Vec::new();
-    }
+    file.seek(SeekFrom::Start(*cursor))?;
     let take = (len - *cursor).min(MAX_READ_PER_POLL);
     let mut buf = vec![0u8; take as usize];
-    let Ok(read) = file.read(&mut buf) else {
-        return Vec::new();
-    };
+    let read = file.read(&mut buf)?;
     buf.truncate(read);
     let Some(last_newline) = buf.iter().rposition(|b| *b == b'\n') else {
-        return Vec::new();
+        if take == MAX_READ_PER_POLL {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Session status record exceeds the observation limit",
+            ));
+        }
+        return Ok(Vec::new());
     };
+    let text = std::str::from_utf8(&buf[..last_newline])
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     *cursor += (last_newline + 1) as u64;
-    String::from_utf8_lossy(&buf[..last_newline])
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.to_string())
-        .collect()
+    Ok(text.lines().map(|line| line.to_string()).collect())
+}
+
+fn history_cursor(path: &PathBuf) -> AppResult<(u64, u64)> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((0, 0)),
+        Err(error) => return Err(error.into()),
+    };
+    let mut cursor = 0;
+    let mut seq = 0;
+    let mut reader = BufReader::new(file);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let bytes = reader.read_until(b'\n', &mut line)?;
+        if bytes == 0 || line.last() != Some(&b'\n') {
+            break;
+        }
+        cursor += bytes as u64;
+        seq += 1;
+    }
+    Ok((cursor, seq))
 }
 
 /// True while the CLI holds the session folder open (`inuse.<pid>.lock`).
@@ -1397,6 +1454,7 @@ fn set_managed_status(
         watch.session.last_activity = activity;
         watch.session.pending_prompt = pending_prompt;
         watch.session.updated_at = now_ms();
+        watch.session.revision += 1;
         (watch.session.clone(), watch.cursor, watch.seq)
     };
     persist(app, &snapshot.0, snapshot.1, snapshot.2);
@@ -1421,12 +1479,23 @@ fn poll_once(app: &AppHandle) {
             if watch.session.status.is_final() {
                 continue;
             }
-            if watch.managed {
+            if watch.managed && watch.session.transport != "pty" {
                 continue;
             }
             let dir = root.join(&watch.session.id);
             if !dir.exists() {
                 watch.missing_polls += 1;
+                if watch.session.transport == "pty" {
+                    if watch.session.observation_error.is_none() {
+                        watch.session.observation_error = Some(
+                            "Waiting for the CLI status log. Open the terminal to inspect startup."
+                                .into(),
+                        );
+                        watch.session.revision += 1;
+                        changed.push((watch.session.clone(), watch.cursor, watch.seq, Vec::new()));
+                    }
+                    continue;
+                }
                 // ~2 minutes without the CLI ever creating its folder: the launch failed
                 // or the user closed the window before Copilot started.
                 if watch.missing_polls > 120 {
@@ -1441,16 +1510,62 @@ fn poll_once(app: &AppHandle) {
 
             let mut dirty = false;
             let mut entries: Vec<TerminalTimelineEntry> = Vec::new();
-            for line in read_new_lines(&dir.join("events.jsonl"), &mut watch.cursor) {
+            let log_path = dir.join("events.jsonl");
+            let lines = read_new_lines(&log_path, &mut watch.cursor);
+            if let Err(error) = &lines {
+                if error.kind() == std::io::ErrorKind::InvalidData {
+                    watch.log_error = Some(error.to_string());
+                }
+            }
+            let observation_error = lines
+                .as_ref()
+                .err()
+                .map(|error| format!("Session status unavailable: {error}"))
+                .or_else(|| watch.log_error.clone());
+            if watch.session.observation_error != observation_error {
+                watch.session.observation_error = observation_error;
+                dirty = true;
+            }
+            if watch.session.observation_error.is_none()
+                && now_ms() - watch.session.observed_at.unwrap_or(0) >= 5000
+            {
+                watch.session.observed_at = Some(now_ms());
+                dirty = true;
+            }
+            for line in lines.unwrap_or_default() {
                 let seq = watch.seq;
                 watch.seq += 1;
-                // Unknown or malformed lines are skipped: the log format is the CLI's,
-                // not ours, so tolerate anything we do not recognize.
+                // Unknown event types are forward-compatible; malformed records make
+                // observation explicitly unavailable rather than implying no wait.
+                if line.trim().is_empty() {
+                    continue;
+                }
                 if let Ok(event) = serde_json::from_str::<RawEvent>(&line) {
+                    let before_attention =
+                        (watch.session.status, watch.session.pending_prompt.clone());
                     dirty |= apply_event(&mut watch.session, &event);
+                    watch.attention.update(
+                        &event.event_type,
+                        &event.data,
+                        &describe_permission(&event.data),
+                    );
+                    if let Some(prompt) = watch.attention.prompt() {
+                        watch.session.status = TerminalSessionStatus::WaitingInput;
+                        watch.session.pending_prompt = Some(prompt.to_string());
+                    } else if watch.session.status == TerminalSessionStatus::WaitingInput {
+                        watch.session.status = TerminalSessionStatus::Working;
+                        watch.session.pending_prompt = None;
+                    }
+                    dirty |= before_attention
+                        != (watch.session.status, watch.session.pending_prompt.clone());
                     if let Some(entry) = timeline_entry(&event, seq, &mut watch.open_entries) {
                         entries.push(entry);
                     }
+                } else {
+                    watch.log_error =
+                        Some("A CLI status record could not be read. Inspect the terminal.".into());
+                    watch.session.observation_error = watch.log_error.clone();
+                    dirty = true;
                 }
             }
             if !entries.is_empty() {
@@ -1460,7 +1575,10 @@ fn poll_once(app: &AppHandle) {
             let locked = has_lock(&dir);
             if locked {
                 watch.saw_lock = true;
-            } else if watch.saw_lock && !watch.session.status.is_final() {
+            } else if watch.session.transport != "pty"
+                && watch.saw_lock
+                && !watch.session.status.is_final()
+            {
                 // The terminal window was closed. Whatever the last state was, the
                 // session is over.
                 watch.session.status = TerminalSessionStatus::Done;
@@ -1470,13 +1588,25 @@ fn poll_once(app: &AppHandle) {
 
             if dirty {
                 watch.session.updated_at = now_ms();
+                watch.session.revision += 1;
                 changed.push((watch.session.clone(), watch.cursor, watch.seq, entries));
             }
         }
     }
 
     for (session, cursor, seq, entries) in changed {
-        persist(app, &session, cursor, seq);
+        {
+            let Ok(watches) = monitor.watches.lock() else {
+                continue;
+            };
+            if !watches
+                .get(&session.id)
+                .is_some_and(|watch| watch.session.revision == session.revision)
+            {
+                continue;
+            }
+            persist(app, &session, cursor, seq);
+        }
         emit(app, &session, entries);
     }
 }
@@ -1523,11 +1653,14 @@ pub fn init(app: &AppHandle) -> AppResult<()> {
             .lock()
             .map_err(|_| AppError::msg("terminal session monitor mutex poisoned"))?;
         for mut watch in restored {
-            if watch.managed && !watch.session.status.is_final() {
+            if (watch.managed || watch.session.transport == "pty")
+                && !watch.session.status.is_final()
+            {
                 watch.session.status = TerminalSessionStatus::Done;
                 watch.session.pending_prompt = None;
                 watch.session.last_activity = "DevTrees closed the managed session".to_string();
                 watch.session.updated_at = now_ms();
+                watch.session.revision += 1;
                 persist(app, &watch.session, watch.cursor, watch.seq);
             }
             watches.insert(watch.session.id.clone(), watch);
@@ -1540,13 +1673,14 @@ pub fn init(app: &AppHandle) -> AppResult<()> {
 // ----- Commands -----
 
 #[tauri::command]
-pub async fn terminal_sessions_list(db: State<'_, DbState>) -> AppResult<Vec<TerminalSession>> {
-    let conn =
-        db.0.lock()
-            .map_err(|_| AppError::msg("database mutex poisoned"))?;
-    Ok(load_all(&conn)?
-        .into_iter()
-        .map(|watch| watch.session)
+pub async fn terminal_sessions_list(app: AppHandle) -> AppResult<Vec<TerminalSession>> {
+    Ok(app
+        .state::<TerminalSessionMonitor>()
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("session mutex poisoned"))?
+        .values()
+        .map(|watch| watch.session.clone())
         .collect())
 }
 
@@ -1595,6 +1729,13 @@ fn watch_terminal_session(
         pending_prompt: None,
         created_at,
         updated_at: now,
+        transport: "external".into(),
+        generation: None,
+        revision: existing
+            .as_ref()
+            .map_or(1, |watch| watch.session.revision + 1),
+        observed_at: None,
+        observation_error: None,
     };
 
     persist(app, &session, cursor, seq);
@@ -1614,6 +1755,8 @@ fn watch_terminal_session(
                 saw_lock: false,
                 missing_polls: 0,
                 managed: false,
+                attention: crate::session_attention::Attention::default(),
+                log_error: None,
             },
         );
     }
@@ -1635,6 +1778,133 @@ pub async fn terminal_sessions_watch(
     watch_terminal_session(&app, req)
 }
 
+pub fn watch_pty_session(
+    app: &AppHandle,
+    req: &StartTerminalSessionRequest,
+    id: &str,
+    generation: &str,
+) -> AppResult<TerminalSessionResult> {
+    {
+        let monitor = app.state::<TerminalSessionMonitor>();
+        let watches = monitor
+            .watches
+            .lock()
+            .map_err(|_| AppError::msg("session mutex poisoned"))?;
+        if watches
+            .get(id)
+            .is_some_and(|watch| !watch.session.status.is_final())
+        {
+            return Err(AppError::msg(
+                "This session is already live. End it before resuming.",
+            ));
+        }
+    }
+    let path = session_state_root()?.join(id).join("events.jsonl");
+    let (cursor, seq) = history_cursor(&path)?;
+    let session = {
+        let monitor = app.state::<TerminalSessionMonitor>();
+        let mut watches = monitor
+            .watches
+            .lock()
+            .map_err(|_| AppError::msg("session mutex poisoned"))?;
+        let previous = watches.get(id);
+        if previous.is_some_and(|watch| !watch.session.status.is_final()) {
+            return Err(AppError::msg(
+                "This session is already live. End it before resuming.",
+            ));
+        }
+        let now = now_ms();
+        let session = TerminalSession {
+            id: id.to_string(),
+            task_id: req
+                .task_id
+                .clone()
+                .or_else(|| previous.and_then(|watch| watch.session.task_id.clone())),
+            folder_path: req.folder_path.clone(),
+            label: req.label.clone(),
+            repository: req
+                .repository
+                .clone()
+                .or_else(|| previous.and_then(|watch| watch.session.repository.clone())),
+            branch: req
+                .branch
+                .clone()
+                .or_else(|| previous.and_then(|watch| watch.session.branch.clone())),
+            status: TerminalSessionStatus::Starting,
+            last_activity: "Starting Copilot in the embedded terminal".into(),
+            pending_prompt: None,
+            created_at: previous.map_or(now, |watch| watch.session.created_at),
+            updated_at: now,
+            transport: "pty".into(),
+            generation: Some(generation.into()),
+            revision: previous.map_or(1, |watch| watch.session.revision + 1),
+            observed_at: None,
+            observation_error: None,
+        };
+        // Publish the new generation and end-of-history cursor atomically. An
+        // intermediate external watch could replay an old unanswered question.
+        {
+            let db = app.state::<DbState>();
+            let conn =
+                db.0.lock()
+                    .map_err(|_| AppError::msg("database mutex poisoned"))?;
+            upsert(&conn, &session, cursor, seq)?;
+        }
+        watches.insert(
+            id.to_string(),
+            Watch {
+                session: session.clone(),
+                cursor,
+                seq,
+                open_entries: Vec::new(),
+                saw_lock: false,
+                missing_polls: 0,
+                managed: true,
+                attention: crate::session_attention::Attention::default(),
+                log_error: None,
+            },
+        );
+        session
+    };
+    ensure_polling(app);
+    emit(app, &session, Vec::new());
+    Ok(TerminalSessionResult {
+        ok: true,
+        session: Some(session),
+        error: None,
+    })
+}
+
+pub fn pty_exited(app: &AppHandle, id: &str, generation: &str, exit: Result<u32, String>) {
+    let snapshot = {
+        let monitor = app.state::<TerminalSessionMonitor>();
+        let Ok(mut watches) = monitor.watches.lock() else {
+            return;
+        };
+        let Some(watch) = watches.get_mut(id) else {
+            return;
+        };
+        if watch.session.generation.as_deref() != Some(generation) {
+            return;
+        }
+        watch.session.status = TerminalSessionStatus::Done;
+        watch.session.pending_prompt = None;
+        watch.session.updated_at = now_ms();
+        watch.session.revision += 1;
+        watch.session.last_activity = match exit {
+            Ok(code) => format!("Copilot terminal exited ({code})"),
+            Err(error) => {
+                watch.session.status = TerminalSessionStatus::Error;
+                format!("Could not observe Copilot exit: {error}")
+            }
+        };
+        (watch.session.clone(), watch.cursor, watch.seq)
+    };
+    persist(app, &snapshot.0, snapshot.1, snapshot.2);
+    emit(app, &snapshot.0, Vec::new());
+}
+
+#[allow(dead_code)]
 fn start_acp_session(
     app: AppHandle,
     req: StartTerminalSessionRequest,
@@ -1647,12 +1917,17 @@ fn start_acp_session(
         });
     }
 
-    let mut child = Command::new("copilot")
+    let mut command = Command::new("copilot");
+    command
         .arg("--acp")
         .current_dir(&req.folder_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    // Redirecting ACP streams does not prevent Windows from allocating a console.
+    configure_no_window(&mut command);
+
+    let mut child = command
         .spawn()
         .map_err(|error| AppError::msg(format!("Could not start Copilot ACP: {error}")))?;
     let stdin =
@@ -1837,7 +2112,7 @@ pub async fn terminal_sessions_start(
     app: AppHandle,
     req: StartTerminalSessionRequest,
 ) -> AppResult<TerminalSessionResult> {
-    tauri::async_runtime::spawn_blocking(move || start_acp_session(app, req))
+    tauri::async_runtime::spawn_blocking(move || crate::pty_sessions::start(app, req))
         .await
         .map_err(|error| AppError::msg(format!("Copilot session task failed: {error}")))?
 }
@@ -1981,14 +2256,16 @@ pub async fn terminal_sessions_history(id: String) -> AppResult<Vec<TerminalTime
         return Ok(Vec::new());
     }
     let path = session_state_root()?.join(&id).join("events.jsonl");
-    let Ok(file) = fs::File::open(&path) else {
-        return Ok(Vec::new());
+    let file = match fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
     };
 
     let mut entries: VecDeque<TerminalTimelineEntry> = VecDeque::new();
     let mut open: Vec<TerminalTimelineEntry> = Vec::new();
     for (seq, line) in BufReader::new(file).lines().enumerate() {
-        let Ok(line) = line else { break };
+        let line = line?;
         if line.trim().is_empty() {
             continue;
         }
@@ -2009,6 +2286,8 @@ pub async fn terminal_sessions_history(id: String) -> AppResult<Vec<TerminalTime
 /// Stop mirroring a session and drop it from the list.
 #[tauri::command]
 pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<()> {
+    app.state::<crate::pty_sessions::PtySessionManager>()
+        .stop_session(&id)?;
     if app
         .state::<AcpSessionManager>()
         .sessions
@@ -2050,6 +2329,44 @@ pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<(
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
+    #[test]
+    fn no_window_child_has_no_console_window_and_preserves_piped_output() {
+        const PROBE_ENV: &str = "DEVTREES_TEST_NO_WINDOW_CHILD";
+        if std::env::var_os(PROBE_ENV).is_some() {
+            #[link(name = "kernel32")]
+            unsafe extern "system" {
+                fn GetConsoleWindow() -> *mut std::ffi::c_void;
+            }
+            // A headless console may still have a code page, but must not have a window.
+            assert!(unsafe { GetConsoleWindow() }.is_null());
+            println!("pipe-ready");
+            return;
+        }
+
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "terminal_sessions::tests::no_window_child_has_no_console_window_and_preserves_piped_output",
+                "--nocapture",
+            ])
+            .env(PROBE_ENV, "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_no_window(&mut command);
+
+        let output = command.output().expect("Could not start console probe");
+        assert!(
+            output.status.success(),
+            "Console probe failed: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("pipe-ready"));
+    }
+
     fn session() -> TerminalSession {
         TerminalSession {
             id: "s1".into(),
@@ -2063,6 +2380,11 @@ mod tests {
             pending_prompt: None,
             created_at: 0,
             updated_at: 0,
+            transport: "external".into(),
+            generation: None,
+            revision: 0,
+            observed_at: None,
+            observation_error: None,
         }
     }
 
@@ -2252,6 +2574,65 @@ mod tests {
     }
 
     #[test]
+    fn resumed_and_recoverable_pty_errors_leave_the_terminal_usable() {
+        let mut s = session();
+        s.transport = "pty".into();
+        s.status = TerminalSessionStatus::WaitingInput;
+        s.pending_prompt = Some("old question".into());
+        apply_event(&mut s, &event(r#"{"type":"session.resume","data":{}}"#));
+        assert_eq!(s.status, TerminalSessionStatus::Idle);
+        assert!(s.pending_prompt.is_none());
+        apply_event(
+            &mut s,
+            &event(r#"{"type":"session.error","data":{"message":"turn failed"}}"#),
+        );
+        assert!(!s.status.is_final());
+        assert_eq!(s.last_activity, "turn failed");
+    }
+
+    #[test]
+    fn resume_cursor_excludes_old_questions_and_preserves_line_identity() {
+        let dir = std::env::temp_dir().join(format!("devtrees-resume-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("events.jsonl");
+        fs::write(&path, "\n{\"type\":\"tool.execution_start\",\"data\":{\"toolName\":\"ask_user\",\"toolCallId\":\"old\"}}\n").unwrap();
+        let (mut cursor, seq) = history_cursor(&path).unwrap();
+        assert_eq!(seq, 2);
+        assert!(read_new_lines(&path, &mut cursor).unwrap().is_empty());
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\"type\":\"session.resume\",\"data\":{}}\n")
+            .unwrap();
+        let lines = read_new_lines(&path, &mut cursor).unwrap();
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("session.resume"));
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn status_read_errors_and_truncation_are_not_successful_empty_observations() {
+        let dir =
+            std::env::temp_dir().join(format!("devtrees-log-errors-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("events.jsonl");
+        let mut cursor = 0;
+        assert!(read_new_lines(&path, &mut cursor).is_err());
+        fs::write(&path, b"\xff\n").unwrap();
+        assert!(read_new_lines(&path, &mut cursor).is_err());
+        assert_eq!(cursor, 0);
+        fs::write(&path, b"old event\n").unwrap();
+        read_new_lines(&path, &mut cursor).unwrap();
+        fs::write(&path, b"new\n").unwrap();
+        assert!(read_new_lines(&path, &mut cursor).is_err());
+        assert!(read_new_lines(&path, &mut cursor).unwrap().is_empty());
+        fs::remove_file(path).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
     fn tail_only_returns_complete_lines_and_resumes_from_the_cursor() {
         let dir = std::env::temp_dir().join(format!("devtrees-tail-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
@@ -2259,14 +2640,14 @@ mod tests {
         fs::write(&path, "{\"a\":1}\n{\"b\":2}\n{\"partial\"").unwrap();
 
         let mut cursor = 0u64;
-        let first = read_new_lines(&path, &mut cursor);
+        let first = read_new_lines(&path, &mut cursor).unwrap();
         assert_eq!(first.len(), 2);
 
         // The partial line is only delivered once its newline arrives.
         let mut existing = fs::read_to_string(&path).unwrap();
         existing.push_str(":3}\n");
         fs::write(&path, existing).unwrap();
-        let second = read_new_lines(&path, &mut cursor);
+        let second = read_new_lines(&path, &mut cursor).unwrap();
         assert_eq!(second, vec!["{\"partial\":3}".to_string()]);
 
         fs::remove_dir_all(&dir).ok();
@@ -2295,7 +2676,7 @@ mod tests {
 
         let mut s = session();
         let mut cursor = 0u64;
-        for line in read_new_lines(&path, &mut cursor) {
+        for line in read_new_lines(&path, &mut cursor).unwrap() {
             let event: RawEvent = serde_json::from_str(&line).unwrap();
             apply_event(&mut s, &event);
         }

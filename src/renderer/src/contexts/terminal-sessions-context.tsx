@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from 'react'
 import { toast } from 'sonner'
+import { retainTerminals, syncTerminals } from '@/lib/pty-terminal'
 
 import {
   isTerminalSessionFinished,
@@ -29,6 +30,8 @@ export interface TerminalSessionsContextValue {
   loadHistory: (id: string) => Promise<void>
   /** Session shown in the Sessions detail view, if any. */
   selectedId: string | null
+  selectionRevision: number
+  observationNow: number
   select: (id: string | null) => void
   /** Legacy support for mirroring an externally launched Copilot CLI session. */
   watch: (req: WatchTerminalSessionRequest) => Promise<TerminalSession | null>
@@ -105,6 +108,14 @@ export function TerminalSessionsProvider({
   )
   const interactionRevisionRef = React.useRef<Record<string, number | undefined>>({})
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [selectionRevision, setSelectionRevision] = React.useState(0)
+  const [observationNow, setObservationNow] = React.useState(Date.now)
+  const revisionsRef = React.useRef<Record<string, number>>({})
+  const forgottenRef = React.useRef(new Set<string>())
+  const select = React.useCallback((id: string | null): void => {
+    setSelectedId(id)
+    setSelectionRevision((current) => current + 1)
+  }, [])
 
   // Previous status per session, kept in a ref so toasts fire exactly once per
   // transition even under StrictMode's double-invoked state updaters.
@@ -114,27 +125,39 @@ export function TerminalSessionsProvider({
     navigateRef.current = onNavigateToSessions
   }, [onNavigateToSessions])
 
-  const ingest = React.useCallback((session: TerminalSession, notify: boolean): void => {
-    const previous = statusRef.current[session.id]
-    statusRef.current[session.id] = session.status
+  const ingest = React.useCallback(
+    (session: TerminalSession, notify: boolean): void => {
+      if (forgottenRef.current.has(session.id)) return
+      if ((revisionsRef.current[session.id] ?? -1) > session.revision) return
+      revisionsRef.current[session.id] = session.revision
+      const previous = statusRef.current[session.id]
+      statusRef.current[session.id] = session.status
 
-    if (notify) {
-      const message = notification(session, previous)
-      if (message) {
-        const options = {
-          description: message.description,
-          action: navigateRef.current
-            ? { label: 'Open Sessions', onClick: () => navigateRef.current?.() }
-            : undefined
+      if (notify) {
+        const message = notification(session, previous)
+        if (message) {
+          const options = {
+            description: message.description,
+            action: navigateRef.current
+              ? {
+                  label: 'Open session',
+                  onClick: () => {
+                    select(session.id)
+                    navigateRef.current?.()
+                  }
+                }
+              : undefined
+          }
+          if (message.kind === 'attention') toast.warning(message.title, options)
+          else if (message.kind === 'error') toast.error(message.title, options)
+          else toast.success(message.title, options)
         }
-        if (message.kind === 'attention') toast.warning(message.title, options)
-        else if (message.kind === 'error') toast.error(message.title, options)
-        else toast.success(message.title, options)
       }
-    }
 
-    setById((current) => ({ ...current, [session.id]: session }))
-  }, [])
+      setById((current) => ({ ...current, [session.id]: session }))
+    },
+    [select]
+  )
 
   const mergeEntries = React.useCallback((id: string, incoming: TerminalTimelineEntry[]): void => {
     if (incoming.length === 0) return
@@ -198,8 +221,9 @@ export function TerminalSessionsProvider({
     async (id: string): Promise<void> => {
       try {
         mergeEntries(id, await window.api.terminalSessions.history(id))
-      } catch {
-        // No log yet (or an unreadable one) simply means an empty timeline.
+      } catch (error) {
+        console.error('[sessions] transcript load failed:', error)
+        toast.error('Could not load the read-only transcript. The terminal is still available.')
       }
     },
     [mergeEntries]
@@ -242,7 +266,11 @@ export function TerminalSessionsProvider({
         // Seed silently: statuses restored from the database are history, not news.
         for (const session of list) ingest(session, false)
 
-        await Promise.all(list.map((session) => refreshInteraction(session.id)))
+        await Promise.all(
+          list
+            .filter((session) => session.transport === 'acp')
+            .map((session) => refreshInteraction(session.id))
+        )
       })
       .catch((error) => {
         console.error('[sessions] failed to initialize desktop session updates:', error)
@@ -262,6 +290,7 @@ export function TerminalSessionsProvider({
         (session): session is TerminalSession =>
           Boolean(session) &&
           session?.status === 'waiting-input' &&
+          session?.transport === 'acp' &&
           !interactionByIdRef.current[session.id]
       )
       .map((session) => session.id)
@@ -304,6 +333,7 @@ export function TerminalSessionsProvider({
         toast.error(result.error)
         return null
       }
+      forgottenRef.current.delete(result.session.id)
       ingest(result.session, false)
       return result.session
     },
@@ -317,10 +347,13 @@ export function TerminalSessionsProvider({
         toast.error(result.error)
         return null
       }
+      forgottenRef.current.delete(result.session.id)
       ingest(result.session, false)
+      select(result.session.id)
+      navigateRef.current?.()
       return result.session
     },
-    [ingest]
+    [ingest, select]
   )
 
   const prompt = React.useCallback(async (id: string, value: string): Promise<void> => {
@@ -337,7 +370,9 @@ export function TerminalSessionsProvider({
 
   const forget = React.useCallback(async (id: string): Promise<void> => {
     await window.api.terminalSessions.forget(id)
+    forgottenRef.current.add(id)
     delete statusRef.current[id]
+    delete revisionsRef.current[id]
     setById((current) => {
       const next = { ...current }
       delete next[id]
@@ -372,6 +407,42 @@ export function TerminalSessionsProvider({
     [byId]
   )
 
+  React.useEffect(() => {
+    syncTerminals(sessions)
+  }, [sessions])
+
+  React.useEffect(() => retainTerminals(), [])
+
+  React.useEffect(() => {
+    let active = true
+    let pending = false
+    const reconcile = async (): Promise<void> => {
+      if (pending) return
+      pending = true
+      try {
+        const list = await window.api.terminalSessions.list()
+        if (active) for (const session of list) ingest(session, true)
+      } catch (error) {
+        console.error('[sessions] status reconciliation failed:', error)
+      } finally {
+        pending = false
+      }
+    }
+    const timer = setInterval(() => {
+      setObservationNow(Date.now())
+      void reconcile()
+    }, 5000)
+    const onFocus = (): void => {
+      void reconcile()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => {
+      active = false
+      clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+    }
+  }, [ingest])
+
   const value = React.useMemo<TerminalSessionsContextValue>(
     () => ({
       sessions,
@@ -381,7 +452,9 @@ export function TerminalSessionsProvider({
       interactionRequestedAtById,
       loadHistory,
       selectedId,
-      select: setSelectedId,
+      selectionRevision,
+      observationNow,
+      select,
       watch,
       start,
       prompt,
@@ -398,6 +471,9 @@ export function TerminalSessionsProvider({
       interactionRequestedAtById,
       loadHistory,
       selectedId,
+      selectionRevision,
+      observationNow,
+      select,
       watch,
       start,
       prompt,

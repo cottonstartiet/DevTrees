@@ -16,17 +16,19 @@ export function SessionsHeaderControls(): React.JSX.Element {
 }
 
 /**
- * Sessions are Copilot CLI runs managed by DevTrees over ACP. Pick a session in the
- * sidebar to inspect its history, respond to questions, and continue the conversation.
+ * Pick an app-owned Copilot terminal or its optional read-only transcript.
  */
 export function SessionsPage(): React.JSX.Element {
-  const { sessions, selectedId } = useTerminalSessions()
+  const { sessions, selectedId, selectionRevision } = useTerminalSessions()
   const selected = sessions.find((session) => session.id === selectedId) ?? null
 
   if (selected) {
     return (
       <div className="flex min-h-0 flex-1 flex-col">
-        <TerminalSessionView key={selected.id} session={selected} />
+        <TerminalSessionView
+          key={`${selected.id}:${selected.generation}:${selectionRevision}`}
+          session={selected}
+        />
       </div>
     )
   }

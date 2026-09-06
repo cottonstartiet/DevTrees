@@ -11,7 +11,8 @@
  *    `result()` converts any such rejection into the discriminated-union failure the UI already
  *    handles, so a backend hiccup surfaces as an in-app error instead of an unhandled rejection.
  */
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
+import type { TerminalCheckpoint, TerminalOutput, TerminalTarget } from '@shared/terminal-session'
 import { listen } from '@tauri-apps/api/event'
 
 import type { AddRepositoryResult, Repository } from '@shared/repository'
@@ -373,6 +374,27 @@ const api = {
       }))
   },
   terminalSessions: {
+    attach: async (
+      target: TerminalTarget,
+      attachment: string,
+      onOutput: (output: TerminalOutput) => void
+    ): Promise<void> => {
+      const channel = new Channel<TerminalOutput>(onOutput)
+      await invoke('pty_attach', { target, attachment, channel })
+    },
+    acknowledge: (
+      target: TerminalTarget,
+      attachment: string,
+      seq: number,
+      checkpoint?: TerminalCheckpoint
+    ): Promise<void> => invoke('pty_ack', { target, attachment, seq, checkpoint }),
+    detach: (target: TerminalTarget, attachment: string): Promise<void> =>
+      invoke('pty_detach', { target, attachment }),
+    write: (target: TerminalTarget, data: number[]): Promise<void> =>
+      invoke('pty_write', { target, data }),
+    resize: (target: TerminalTarget, rows: number, cols: number): Promise<void> =>
+      invoke('pty_resize', { target, rows, cols }),
+    stop: (target: TerminalTarget): Promise<void> => invoke('pty_stop', { target }),
     list: (): Promise<TerminalSession[]> => invoke('terminal_sessions_list'),
     start: (req: StartTerminalSessionRequest): Promise<TerminalSessionResult> =>
       result('terminal_sessions_start', { req }, (error) => ({ ok: false, error })),
@@ -389,9 +411,7 @@ const api = {
     history: (id: string): Promise<TerminalTimelineEntry[]> =>
       invoke('terminal_sessions_history', { id }),
     onUpdate: (cb: (update: TerminalSessionUpdate) => void): Promise<() => void> =>
-      listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) =>
-        cb(event.payload)
-      ),
+      listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) => cb(event.payload)),
     onInteraction: (cb: (update: TerminalSessionInteractionUpdate) => void): Promise<() => void> =>
       listen<TerminalSessionInteractionUpdate>(TERMINAL_SESSIONS_INTERACTION_EVENT, (event) =>
         cb(event.payload)

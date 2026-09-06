@@ -26,7 +26,7 @@ function basename(path: string): string {
 }
 
 /**
- * Returns a `launch` function that starts a Copilot ACP session owned by DevTrees.
+ * Returns a `launch` function that starts an interactive Copilot PTY owned by DevTrees.
  * Every launch site goes through this so the session remains interactive in the app.
  */
 export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<CopilotLaunchResult> {

@@ -189,6 +189,11 @@ floated on a soft drop-shadow.
 ### Status Bar (signature)
 A slim bottom bar surfacing repo/branch/PR state and background task progress — the cockpit's primary readout. Compact `text-xs`, muted foreground, with color only for live/error status.
 
+### Embedded Terminal
+The Copilot terminal uses a black background with light default text in both app
+themes. Its padding and viewport share the same background, and native CLI ANSI
+colors remain intact. Terminal tabs, toolbar, and transcript follow the app theme.
+
 ## 6. Do's and Don'ts
 
 ### Do:

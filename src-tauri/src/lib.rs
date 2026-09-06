@@ -7,9 +7,11 @@ mod gh;
 mod git;
 mod github;
 mod pr_review;
+mod pty_sessions;
 mod repo;
 mod repositories;
 mod reviews;
+mod session_attention;
 mod system;
 mod tasks;
 mod terminal_sessions;
@@ -55,6 +57,7 @@ pub fn run() {
             app.manage(DbState(Mutex::new(conn)));
             app.manage(TerminalSessionMonitor::default());
             app.manage(terminal_sessions::AcpSessionManager::default());
+            app.manage(pty_sessions::PtySessionManager::default());
             // Resume mirroring any external Copilot terminal that outlived the last run.
             if let Err(e) = terminal_sessions::init(app.handle()) {
                 eprintln!("failed to restore terminal session watches: {e}");
@@ -138,8 +141,18 @@ pub fn run() {
             terminal_sessions::terminal_sessions_history,
             terminal_sessions::terminal_sessions_watch,
             terminal_sessions::terminal_sessions_forget,
+            pty_sessions::pty_attach,
+            pty_sessions::pty_ack,
+            pty_sessions::pty_detach,
+            pty_sessions::pty_write,
+            pty_sessions::pty_resize,
+            pty_sessions::pty_stop,
         ])
         .build(tauri::generate_context!())
         .expect("error while building DevTrees")
-        .run(|_, _| {});
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<pty_sessions::PtySessionManager>().shutdown();
+            }
+        });
 }

@@ -9,7 +9,6 @@ import {
 } from 'lucide-react'
 
 import { DashboardCard } from '@/components/detail/dashboard-card'
-import { SessionInteraction } from '@/components/sessions/session-interaction'
 import {
   TERMINAL_SESSION_STATUS_ICON,
   TERMINAL_SESSION_STATUS_LABEL,
@@ -21,6 +20,7 @@ import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { cn } from '@/lib/utils'
 import {
   isTerminalSessionFinished,
+  terminalObservationIssue,
   type TerminalSession,
   type TerminalSessionInteraction
 } from '@shared/terminal-session'
@@ -70,7 +70,8 @@ export function DashboardPage({
   onNavigateToSessions: () => void
   onNavigateToReviews: () => void
 }): React.JSX.Element {
-  const { sessions, interactionById, interactionRequestedAtById, select } = useTerminalSessions()
+  const { sessions, interactionById, interactionRequestedAtById, select, observationNow } =
+    useTerminalSessions()
   const { items, errors, isLoading, refresh } = useDashboard()
   const liveSessions = React.useMemo(
     () =>
@@ -191,7 +192,9 @@ export function DashboardPage({
                             needsAction ? 'text-foreground' : 'text-muted-foreground'
                           )}
                         >
-                          {session.pendingPrompt || session.lastActivity}
+                          {terminalObservationIssue(session, observationNow) ||
+                            session.pendingPrompt ||
+                            session.lastActivity}
                         </p>
                       </div>
                       <span className="text-muted-foreground flex shrink-0 items-center gap-1 pt-0.5 text-[10px]">
@@ -199,23 +202,6 @@ export function DashboardPage({
                         <ArrowUpRightIcon className="size-3" />
                       </span>
                     </button>
-                    {needsAction && interaction ? (
-                      <div className="bg-card border-t px-3 py-3">
-                        <SessionInteraction
-                          key={interaction.requestId}
-                          session={session}
-                          interaction={interaction}
-                          onOpenSession={() => openSession(session.id)}
-                        />
-                      </div>
-                    ) : session.status === 'idle' || session.status === 'waiting-input' ? (
-                      <SessionInteraction
-                        key="composer"
-                        session={session}
-                        compact
-                        onOpenSession={() => openSession(session.id)}
-                      />
-                    ) : null}
                   </div>
                 )
               })}

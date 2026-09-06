@@ -1,9 +1,8 @@
 /**
  * Copilot CLI sessions shown in DevTrees.
  *
- * Managed sessions use ACP for bidirectional prompts, approvals, elicitation, and live
- * timeline updates. Legacy external-terminal sessions remain readable through the CLI's
- * event log.
+ * Managed sessions use an embedded PTY for all interaction. Session attention and
+ * read-only history are observed independently from the CLI event log.
  */
 export type TerminalSessionStatus =
   /** Launched, but the CLI has not written its first event yet. */
@@ -35,6 +34,41 @@ export type TerminalSession = {
   pendingPrompt?: string | null
   createdAt: number
   updatedAt: number
+  transport: 'acp' | 'pty' | 'external'
+  generation?: string | null
+  revision: number
+  observedAt?: number | null
+  observationError?: string | null
+}
+
+export type TerminalTarget = { id: string; generation: string }
+
+export type TerminalOutput = {
+  attachment: string
+  generation: string
+  seq: number
+  reset: boolean
+  replay: boolean
+  ready: boolean
+  checkpointable: boolean
+  rows: number
+  cols: number
+  data: number[]
+  ended: boolean
+}
+
+export type TerminalCheckpoint = { data: string; rows: number; cols: number }
+
+export function terminalObservationIssue(
+  session: TerminalSession,
+  now = Date.now()
+): string | null {
+  if (session.transport !== 'pty' || isTerminalSessionFinished(session.status)) return null
+  if (session.observationError) return session.observationError
+  if (!session.observedAt || now - session.observedAt > 15_000) {
+    return 'Session status is unavailable. Open the terminal to inspect Copilot.'
+  }
+  return null
 }
 
 export type WatchTerminalSessionRequest = {

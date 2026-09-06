@@ -65,6 +65,26 @@ pub struct DbState(pub Mutex<Connection>);
 fn initialize_schema(conn: &Connection) -> AppResult<()> {
     let tx = conn.unchecked_transaction()?;
     tx.execute_batch(SCHEMA)?;
+    let columns = {
+        let mut statement = tx.prepare("PRAGMA table_info(terminal_sessions)")?;
+        let values = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        values
+    };
+    for (name, definition) in [
+        ("transport", "TEXT NOT NULL DEFAULT 'external'"),
+        ("generation", "TEXT"),
+        ("revision", "INTEGER NOT NULL DEFAULT 0"),
+    ] {
+        if !columns.iter().any(|column| column == name) {
+            tx.execute_batch(&format!(
+                "ALTER TABLE terminal_sessions ADD COLUMN {name} {definition};"
+            ))?;
+        }
+    }
+    tx.execute("UPDATE terminal_sessions SET transport = 'acp' WHERE managed = 1 AND transport = 'external'", [])?;
+    tx.execute_batch("PRAGMA user_version = 2;")?;
     tx.commit()?;
     Ok(())
 }
@@ -96,7 +116,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -115,6 +135,34 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 0);
         }
+    }
+
+    #[test]
+    fn version_one_sessions_migrate_without_converting_pty_records_on_reopen() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute_batch(
+            "INSERT INTO terminal_sessions
+             (id, label, folder_path, status, managed, cursor, seq, created_at, updated_at)
+             VALUES ('legacy', 'Old session', 'repo', 'idle', 1, 123, 7, 1, 1);",
+        )
+        .unwrap();
+        initialize_schema(&conn).unwrap();
+        let transport: String = conn
+            .query_row(
+                "SELECT transport FROM terminal_sessions WHERE id='legacy'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(transport, "acp");
+        conn.execute("UPDATE terminal_sessions SET transport='pty', generation='new-process', revision=5 WHERE id='legacy'", []).unwrap();
+        initialize_schema(&conn).unwrap();
+        let record: (String, String, i64, i64, i64) = conn.query_row(
+            "SELECT transport, generation, revision, cursor, seq FROM terminal_sessions WHERE id='legacy'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        ).unwrap();
+        assert_eq!(record, ("pty".into(), "new-process".into(), 5, 123, 7));
     }
 
     #[test]

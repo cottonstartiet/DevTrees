@@ -33,6 +33,9 @@ yarn build        # tauri build (signed NSIS installer + updater artifacts)
 ```
 
 Validate the Rust backend with `cargo build` / `cargo clippy` from `src-tauri/`.
+Session regression checks use `cargo test --manifest-path src-tauri/Cargo.toml --lib`
+and `node --test scripts/pty-terminal.test.mjs` (the installed xterm parser with a
+mocked desktop transport; no browser server).
 
 The `*:web` scripts and `dist-web` directory build the embedded desktop renderer,
 not a standalone web application. Use `yarn dev` to run the complete app.
@@ -40,11 +43,29 @@ not a standalone web application. Use `yarn dev` to run the complete app.
 ## Tasks and Copilot sessions
 
 Tasks can target the main working copy, an existing worktree, or a planned worktree
-created when work starts. Managed Copilot sessions run through the installed
-`copilot --acp` executable and support prompts, permissions, and structured input
-inside the desktop app. Existing external Windows Terminal sessions can still be
-monitored, and the Copilot CLI history and pull-request review features remain
-available.
+created when work starts. Managed Copilot sessions run the installed interactive
+Copilot CLI in an embedded PTY terminal. Answer questions, approve or reject tools,
+and enter prompts directly in **Terminal**. It has a black background in both app
+themes. **Transcript** is optional, read-only event-log history; it can lag behind
+the terminal and never contains live approval controls.
+
+Dashboard shows attention and opens the corresponding session's Terminal tab.
+Question and permission status comes from correlated CLI log events, independently
+of the visible page. Missing, unreadable, or stale observations show a warning;
+the terminal remains usable. CLI-only dialogs such as authentication and setup
+may require inspecting the terminal even without a structured attention event.
+
+Switching pages or sessions keeps each process and terminal alive. Closing
+DevTrees ends its owned processes, including child tools on Windows. After reopening,
+**Resume** explicitly starts a new process using the same CLI history ID; DevTrees
+does not replay an old prompt, permission, or answer. A renderer reconnect restores
+the current terminal screen without restarting Copilot. Local scrollback survives
+navigation, while a full renderer reload restores the screen rather than all
+scrollback. Output replay is bounded and backpressured rather than silently dropped.
+
+No auto-approval flags are added; existing user-controlled CLI permissions remain
+in effect. External Windows Terminal sessions remain monitor-only and cannot be
+attached to the embedded terminal. History and pull-request review remain available.
 
 Install and authenticate the Copilot CLI before starting a session. GitHub
 operations use `gh`; Azure DevOps operations use Azure CLI with its DevOps extension.
@@ -52,8 +73,10 @@ No Copilot SDK or CLI payload is bundled in the installer.
 
 ## App data
 
-The desktop app starts with a single version-1 SQLite schema: repositories, tasks,
-and terminal sessions. There are no database migrations or legacy JSON imports.
+The desktop app uses a version-2 SQLite schema: repositories, tasks, and terminal
+sessions. Version-1 records are migrated in place to record session transport and
+process generation without losing history or task associations. There are no
+legacy JSON imports.
 On Windows, its database is `%APPDATA%\com.ritekode.devtrees\devtrees.db`.
 The previous prototype's `%APPDATA%\devtrees` data is left untouched and is not loaded,
 so the first launch starts with no repositories, tasks, or tracked sessions.
