@@ -10,6 +10,7 @@ import { TerminalTimeline } from '@/components/sessions/terminal-timeline'
 import { Button } from '@/components/ui/button'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
+import { openInWindowsTerminal } from '@/lib/system'
 import { cn } from '@/lib/utils'
 import {
   isTerminalSessionFinished,
@@ -78,6 +79,11 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
     }
   }
 
+  const handleOpenTerminal = async (): Promise<void> => {
+    const result = await openInWindowsTerminal(session.folderPath)
+    if (!result.ok) toast.error(result.error)
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
@@ -102,22 +108,31 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
             <span className="truncate font-mono">{session.folderPath}</span>
           </div>
         </div>
-        {finished && (
-          <Button size="sm" onClick={() => void handleResume()} disabled={resuming}>
-            {resuming ? (
-              <Loader2Icon className="size-3.5 animate-spin" />
-            ) : (
+        <div className="flex items-center gap-2">
+          {session.status === 'waiting-input' && (
+            <Button variant="outline" size="sm" onClick={() => void handleOpenTerminal()}>
               <ExternalLinkIcon className="size-3.5" />
-            )}
-            Resume
-          </Button>
-        )}
+              Open folder terminal
+            </Button>
+          )}
+          {finished && (
+            <Button size="sm" onClick={() => void handleResume()} disabled={resuming}>
+              {resuming ? (
+                <Loader2Icon className="size-3.5 animate-spin" />
+              ) : (
+                <ExternalLinkIcon className="size-3.5" />
+              )}
+              Resume
+            </Button>
+          )}
+        </div>
       </header>
 
       {session.status === 'waiting-input' && (
         <div className="border-b bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
           Copilot is waiting for you in its terminal window.
           {session.pendingPrompt ? ` ${session.pendingPrompt}` : ''}
+          {' Find the existing Copilot tab in Windows Terminal to respond.'}
         </div>
       )}
 

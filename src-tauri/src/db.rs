@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -14,7 +14,8 @@ const LEGACY_JSON_FILE: &str = "workspaces.json";
 /// Tauri-managed application state wrapping the single SQLite connection. The
 /// Electron build used a `better-sqlite3` singleton; here we serialize access with
 /// a mutex (rusqlite operations are short and synchronous).
-pub struct DbState(pub Mutex<Connection>);
+#[derive(Clone)]
+pub struct DbState(pub Arc<Mutex<Connection>>);
 
 fn db_path() -> AppResult<PathBuf> {
     let dir = legacy_user_data_dir()?;

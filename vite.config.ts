@@ -3,15 +3,14 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// Standard Vite config for the Tauri build. The React renderer lives in src/renderer
-// (unchanged from the Electron layout); Tauri serves it from the dev server in
-// development and from the static `dist-web` build in production.
+// In development the browser loads Vite directly. Native/API traffic is proxied to
+// the windowless Rust tray host on its stable development port.
 const host = process.env.TAURI_DEV_HOST
+const hostServer = process.env.DEVTREES_HOST_URL ?? 'http://127.0.0.1:1430'
 
 export default defineConfig({
   root: resolve(__dirname, 'src/renderer'),
-  // Tauri expects a relative base so assets resolve under the custom app protocol.
-  base: './',
+  base: '/',
   resolve: {
     alias: {
       '@renderer': resolve(__dirname, 'src/renderer/src'),
@@ -28,8 +27,12 @@ export default defineConfig({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    host: host || '127.0.0.1',
     hmr: host ? { protocol: 'ws', host, port: 1421 } : undefined,
+    proxy: {
+      '/api': { target: hostServer, changeOrigin: false },
+      '/events': { target: hostServer, changeOrigin: false, ws: true }
+    },
     watch: {
       // Don't watch the Rust source tree from the Vite dev server.
       ignored: ['**/src-tauri/**']

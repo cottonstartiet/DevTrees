@@ -10,18 +10,7 @@
     "frontendDist": "../dist-web"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "DevTrees",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 500,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

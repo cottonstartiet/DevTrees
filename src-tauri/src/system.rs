@@ -5,9 +5,10 @@ use std::sync::OnceLock;
 use base64::Engine as _;
 use regex::Regex;
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::app_state::AppState;
 use crate::error::AppResult;
 
 // Friendly product name shown in the UI. Kept separate from the package name so the
@@ -45,6 +46,23 @@ pub struct AppInfo {
     pub version: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolAvailability {
+    pub available: bool,
+    pub version: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostStatus {
+    pub local_url: Option<String>,
+    pub browser_clients: usize,
+    pub windows_terminal: ToolAvailability,
+    pub copilot_cli: ToolAvailability,
+}
+
 #[cfg(windows)]
 fn configure_no_window(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -67,6 +85,51 @@ fn launch_detached(program: &str, args: &[String]) -> LaunchResult {
     match cmd.spawn() {
         Ok(_) => LaunchResult::ok(),
         Err(e) => LaunchResult::err(e.to_string()),
+    }
+}
+
+fn tool_availability(program: &str, version_args: &[&str]) -> ToolAvailability {
+    #[cfg(windows)]
+    let mut command = if program == "copilot" {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(program).args(version_args);
+        command
+    } else {
+        let mut command = Command::new("where.exe");
+        command.arg(program);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = Command::new(program);
+        command.args(version_args);
+        command
+    };
+    command
+        .stdin(Stdio::null())
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped());
+    configure_no_window(&mut command);
+    match command.output() {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            ToolAvailability {
+                available: true,
+                version: Some(if stdout.is_empty() { stderr } else { stdout }),
+                error: None,
+            }
+        }
+        Ok(output) => ToolAvailability {
+            available: false,
+            version: None,
+            error: Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+        },
+        Err(error) => ToolAvailability {
+            available: false,
+            version: None,
+            error: Some(error.to_string()),
+        },
     }
 }
 
@@ -164,6 +227,16 @@ fn launch_copilot_cli(folder_path: &str, prompt: &str, session_id: Option<&str>)
     if folder_path.trim().is_empty() {
         return LaunchResult::err("folderPath is required.");
     }
+    if !tool_availability("wt", &[]).available {
+        return LaunchResult::err(
+            "Windows Terminal was not found. Install it and restart DevTrees.",
+        );
+    }
+    if !tool_availability("copilot", &["--version"]).available {
+        return LaunchResult::err(
+            "GitHub Copilot CLI was not found on PATH. Install and authenticate it, then restart DevTrees.",
+        );
+    }
     // Pinning the session id up front (`--session-id` also *sets* the UUID for a new
     // session) is what lets the app find and tail this session's event log afterwards.
     let id_arg = match session_id {
@@ -221,6 +294,16 @@ fn launch_copilot_resume(folder_path: &str, session_id: &str) -> LaunchResult {
         return LaunchResult::err(format!(
             "This session's folder no longer exists:\n{folder_path}"
         ));
+    }
+    if !tool_availability("wt", &[]).available {
+        return LaunchResult::err(
+            "Windows Terminal was not found. Install it and restart DevTrees.",
+        );
+    }
+    if !tool_availability("copilot", &["--version"]).available {
+        return LaunchResult::err(
+            "GitHub Copilot CLI was not found on PATH. Install and authenticate it, then restart DevTrees.",
+        );
     }
     let ps_command = format!("copilot --allow-all-tools --session-id={session_id}");
     let encoded = encode_ps_command(&ps_command);
@@ -298,5 +381,17 @@ pub async fn system_get_app_info(app: AppHandle) -> AppResult<AppInfo> {
     Ok(AppInfo {
         name: APP_DISPLAY_NAME.to_string(),
         version: app.package_info().version.to_string(),
+    })
+}
+
+pub async fn system_get_host_status(app: AppHandle) -> AppResult<HostStatus> {
+    let state = app.state::<AppState>();
+    Ok(HostStatus {
+        local_url: state.base_url(),
+        browser_clients: state
+            .browser_clients
+            .load(std::sync::atomic::Ordering::Relaxed),
+        windows_terminal: tool_availability("wt", &[]),
+        copilot_cli: tool_availability("copilot", &["--version"]),
     })
 }
