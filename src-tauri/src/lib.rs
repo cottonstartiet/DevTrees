@@ -15,6 +15,7 @@ mod repositories;
 mod reviews;
 mod session_attention;
 mod session_interactions;
+mod session_permissions;
 mod system;
 mod tasks;
 mod terminal_sessions;

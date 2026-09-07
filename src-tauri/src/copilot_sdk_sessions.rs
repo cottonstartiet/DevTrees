@@ -31,6 +31,7 @@ use crate::{
     session_interactions::{
         check_schema, InteractionAnswer, InteractionRequest, NativeInteraction,
     },
+    session_permissions,
     terminal_sessions::{
         self, StartTerminalSessionRequest, TerminalSession, TerminalSessionResult,
         TerminalSessionStatus as Status, TerminalTimelineEntry as Entry,
@@ -464,28 +465,42 @@ impl PermissionHandler for Handlers {
         _: RequestId,
         data: PermissionRequestData,
     ) -> PermissionResult {
-        // Only allow-once is enabled until a live session-scope acceptance fixture passes.
-        let scoped: Option<(String, PermissionDecision)> = None;
-        let detail = serde_json::to_string_pretty(&data).unwrap_or_else(|_| format!("{:?}", data));
-        let request = InteractionRequest::Permission {
-            message: "Copilot needs permission".into(),
-            detail,
-            session_approval: scoped.as_ref().map(|(label, _)| label.clone()),
-        };
-        match self.0.ask(request).await {
-            InteractionAnswer::Permission { action } if action == "allow-once" => {
-                use github_copilot_sdk::rpc::PermissionDecisionApproveOnce;
-                PermissionDecision::ApproveOnce(PermissionDecisionApproveOnce {
-                    approved_interactively: Some(true),
-                    ..Default::default()
-                })
-                .into()
+        let location_key = match self.0.state.lock() {
+            Ok(state) => state.session.folder_path.clone(),
+            Err(_) => {
+                return PermissionResult::reject(Some(
+                    "DevTrees could not read the session state to scope this approval.".into(),
+                ))
             }
-            InteractionAnswer::Permission { action } if action == "allow-session" => scoped
-                .map(|(_, decision)| decision.into())
-                .unwrap_or_else(|| {
-                    PermissionResult::reject(Some("Session approval is unavailable.".into()))
-                }),
+        };
+        let plan = session_permissions::plan(&data, &location_key);
+        let (session, location) = (plan.session, plan.location);
+        match self.0.ask(plan.request).await {
+            InteractionAnswer::Permission { action } => match action.as_str() {
+                session_permissions::ALLOW_ONCE => {
+                    use github_copilot_sdk::rpc::PermissionDecisionApproveOnce;
+                    PermissionDecision::ApproveOnce(PermissionDecisionApproveOnce {
+                        approved_interactively: Some(true),
+                        ..Default::default()
+                    })
+                    .into()
+                }
+                session_permissions::ALLOW_SESSION => {
+                    session.map(Into::into).unwrap_or_else(|| {
+                        PermissionResult::reject(Some(
+                            "Session approval is unavailable for this request.".into(),
+                        ))
+                    })
+                }
+                session_permissions::ALLOW_ALWAYS => {
+                    location.map(Into::into).unwrap_or_else(|| {
+                        PermissionResult::reject(Some(
+                            "Persistent approval is unavailable for this request.".into(),
+                        ))
+                    })
+                }
+                _ => PermissionResult::reject(Some("The user declined the request.".into())),
+            },
             _ => {
                 PermissionResult::reject(Some("The user declined or cancelled the request.".into()))
             }

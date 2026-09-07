@@ -1,14 +1,17 @@
 /**
- * Aggregated analytics computed from the Copilot CLI's own store at
- * `~/.copilot/session-store.db`. Read-only, same source as `copilot-history.ts`, but rolled up
- * across sessions/turns/model-usage-events/touched-files instead of listed per session.
+ * Read-only local analytics over Copilot CLI's session-store.db.
+ * Prompt coaching is deterministic; no model calls or external uploads are involved.
  */
 
 /** Per-model token/cost roll-up within the selected window. */
 export type CopilotModelUsage = {
   model: string
-  /** Number of assistant turns/requests billed to this model. */
+  source: AnalyticsSource
+  /** Model calls, not user turns. */
   events: number
+  creditRecords: number
+  inputRecords: number
+  outputRecords: number
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
@@ -20,9 +23,10 @@ export type CopilotModelUsage = {
 /** One day's activity, used to draw the usage-over-time chart. Always present for every day in
  *  the window, even if zero, so the chart has no gaps. */
 export type CopilotDailyUsage = {
-  /** `YYYY-MM-DD`, UTC. */
+  /** `YYYY-MM-DD`, in the desktop machine's local timezone. */
   date: string
   sessions: number
+  turns: number
   events: number
   inputTokens: number
   outputTokens: number
@@ -33,6 +37,7 @@ export type CopilotDailyUsage = {
 export type CopilotRepositoryUsage = {
   repository: string
   sessions: number
+  turns: number
   events: number
   costNanoAiu: number
 }
@@ -40,6 +45,7 @@ export type CopilotRepositoryUsage = {
 /** A file Copilot touched within the selected window. */
 export type CopilotFileActivity = {
   path: string
+  repository: string
   creates: number
   edits: number
   touches: number
@@ -49,33 +55,139 @@ export type CopilotAnalyticsTotals = {
   /** Sessions with any recorded activity (turns or model usage) in the window. */
   sessions: number
   turns: number
-  /** Distinct calendar days (UTC) with at least one recorded turn. */
+  /** Distinct local calendar days with a turn or usage record. */
   activeDays: number
   inputTokens: number
   outputTokens: number
   cacheReadTokens: number
   cacheWriteTokens: number
   costNanoAiu: number
-  /** Average per-request latency in ms, across all model calls; null when there's no usage data. */
+  /** Average model-call latency; null when timings are missing. */
   avgResponseMs: number | null
   /** Average time to first streamed token in ms; null when there's no usage data. */
   avgTimeToFirstTokenMs: number | null
   filesCreated: number
   filesEdited: number
+  uniqueFiles: number
+  usageRecords: number
+  creditRecords: number
+  p50ResponseMs: number | null
+  p95ResponseMs: number | null
+}
+
+export type AnalyticsSource = 'cli'
+
+export type AnalyticsCoverageSource = {
+  source: AnalyticsSource
+  sessions: number
+  turns: number
+  sessionsWithUsage: number
+  usageRecords: number
+  tokenRecords: number
+  creditRecords: number
+  timedRecords: number
+  avgResponseMs: number | null
+}
+
+export type AnalyticsCadence = {
+  weekendTurns: number
+  lateNightTurns: number
+  activeStreak: number
+  longestStreak: number
+  longestBreak: number
+  medianPromptGapMinutes: number | null
+  continuityPercent: number | null
+  observedBlockMinutes: number
+  longestBlockMinutes: number
+  longSessions: number
+  singleTurnSessions: number
+  sessionsWithTurns: number
+}
+
+export type AnalyticsExample = {
+  sessionId: string
+  turnIndex: number
+  source: AnalyticsSource
+  repository: string
+  date: string
+  text: string
+  issues: string[]
+}
+
+export type AnalyticsFinding = {
+  id: string
+  title: string
+  severity: 'suggestion' | 'opportunity'
+  observation: string
+  recommendation: string
+  evidenceCount: number
+  sampleSize: number
+}
+
+export type AnalyticsWorkflow = {
+  id: string
+  occurrences: number
+  sessions: number
+  repositories: string[]
+  sources: AnalyticsSource[]
+  examples: AnalyticsExample[]
+  draft: string
+}
+
+export type AnalyticsPractices = {
+  analyzedPrompts: number
+  availablePrompts: number
+  excludedPrompts: number
+  sampled: boolean
+  truncatedPrompts: number
+  score: number | null
+  grade: string | null
+  dimensions: { name: string; score: number; explanation: string }[]
+  trend: { date: string; score: number; prompts: number }[]
+  intents: { name: string; sessions: number }[]
+  classifiedSessions: number
+  specEligibleSessions: number
+  specDrivenSessions: number
+  findings: AnalyticsFinding[]
+  examples: AnalyticsExample[]
+  unstructuredExamples: AnalyticsExample[]
+  workflows: AnalyticsWorkflow[]
 }
 
 export type CopilotAnalyticsSummary = {
   windowDays: number
+  source: AnalyticsSource
+  repository: string | null
+  repositories: string[]
+  calculatedAt: string
+  fromDate: string
+  toDate: string
   totals: CopilotAnalyticsTotals
+  previous: CopilotAnalyticsTotals
   daily: CopilotDailyUsage[]
   models: CopilotModelUsage[]
   topRepositories: CopilotRepositoryUsage[]
   topFiles: CopilotFileActivity[]
+  coverage: {
+    usageAvailable: boolean
+    filesAvailable: boolean
+    promptsAvailable: boolean
+    sources: AnalyticsCoverageSource[]
+    warnings: string[]
+  }
+  flow: {
+    current: AnalyticsCadence
+    previous: AnalyticsCadence
+    heatmap: { weekday: number; hour: number; turns: number }[]
+    peakHour: number | null
+    tips: string[]
+  }
+  practices: AnalyticsPractices
 }
 
 /**
- * Mirrors `CopilotHistoryListResult`: distinguishes an empty-but-healthy store (`missing`) from
- * one that couldn't be read (`unreadable`), so the UI can show an actionable error.
+ * A missing source produces a successful report with availability warnings. The legacy missing
+ * variant remains accepted by the bridge; unreadable indicates a failed selected-source report.
  */
 export type CopilotAnalyticsResult =
   | { ok: true; summary: CopilotAnalyticsSummary }

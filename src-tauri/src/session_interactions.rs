@@ -13,6 +13,15 @@ pub struct NativeInteraction {
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionScope {
+    /// The `action` the renderer sends back to pick this scope.
+    pub action: String,
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Clone, Serialize)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -21,8 +30,20 @@ pub struct NativeInteraction {
 pub enum InteractionRequest {
     Permission {
         message: String,
+        /// Wire `kind` of the prompt: `read`, `write`, `commands`, `url`, ...
+        permission_kind: String,
+        /// The path, command, URL, or tool the request is about.
+        target: Option<String>,
+        /// Copilot's stated reason for the request.
+        intention: Option<String>,
+        /// Unified diff, for write prompts.
+        diff: Option<String>,
+        /// Pretty-printed prompt payload, shown behind a disclosure.
         detail: String,
-        session_approval: Option<String>,
+        /// True when managed policy requires a per-request human decision.
+        managed: bool,
+        /// Approval scopes broader than allow-once, in display order.
+        scopes: Vec<PermissionScope>,
     },
     Elicitation {
         message: String,
@@ -58,14 +79,9 @@ impl InteractionRequest {
 
     pub fn validate(&self, answer: &InteractionAnswer) -> AppResult<()> {
         let valid = match (self, answer) {
-            (
-                Self::Permission {
-                    session_approval, ..
-                },
-                InteractionAnswer::Permission { action },
-            ) => {
+            (Self::Permission { scopes, .. }, InteractionAnswer::Permission { action }) => {
                 matches!(action.as_str(), "allow-once" | "deny")
-                    || (action == "allow-session" && session_approval.is_some())
+                    || scopes.iter().any(|scope| scope.action == *action)
             }
             (
                 Self::Elicitation {
@@ -543,12 +559,50 @@ mod tests {
     fn cannot_invent_a_session_approval_or_plan_action() {
         let permission = InteractionRequest::Permission {
             message: "Run command".into(),
+            permission_kind: "commands".into(),
+            target: None,
+            intention: None,
+            diff: None,
             detail: String::new(),
-            session_approval: None,
+            managed: false,
+            scopes: Vec::new(),
         };
-        assert!(permission
+        for action in ["allow-session", "allow-always"] {
+            assert!(permission
+                .validate(&InteractionAnswer::Permission {
+                    action: action.into()
+                })
+                .is_err());
+        }
+        for action in ["allow-once", "deny"] {
+            assert!(permission
+                .validate(&InteractionAnswer::Permission {
+                    action: action.into()
+                })
+                .is_ok());
+        }
+        let offered = InteractionRequest::Permission {
+            message: "Read file".into(),
+            permission_kind: "read".into(),
+            target: None,
+            intention: None,
+            diff: None,
+            detail: String::new(),
+            managed: false,
+            scopes: vec![PermissionScope {
+                action: "allow-session".into(),
+                label: "Allow for this session".into(),
+                description: String::new(),
+            }],
+        };
+        assert!(offered
             .validate(&InteractionAnswer::Permission {
                 action: "allow-session".into()
+            })
+            .is_ok());
+        assert!(offered
+            .validate(&InteractionAnswer::Permission {
+                action: "allow-always".into()
             })
             .is_err());
         let plan = InteractionRequest::Plan {

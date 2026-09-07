@@ -376,8 +376,8 @@ const api = {
       }))
   },
   copilotAnalytics: {
-    summary: (windowDays?: number): Promise<CopilotAnalyticsResult> =>
-      result('copilot_analytics_summary', { windowDays }, (message) => ({
+    summary: (windowDays?: number, repository?: string): Promise<CopilotAnalyticsResult> =>
+      result('copilot_analytics_summary', { windowDays, repository }, (message) => ({
         ok: false,
         reason: 'unreadable',
         message

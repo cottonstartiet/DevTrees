@@ -803,7 +803,10 @@ function AppShell(): React.JSX.Element {
   ])
 
   return (
-    <TerminalSessionsProvider onNavigateToSessions={handleNavigateToSessions}>
+    <TerminalSessionsProvider
+      onNavigateToSessions={handleNavigateToSessions}
+      suppressNotifications={view === 'dashboard' || view === 'sessions'}
+    >
       <DashboardProvider repositories={repositories}>
         <SidebarProvider className="flex h-svh flex-col">
           <div className="flex min-h-0 w-full flex-1">

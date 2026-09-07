@@ -1,7 +1,19 @@
 import type { TerminalSession, TerminalTimelineEntry } from './terminal-session'
 
+export type PermissionScope = { action: string; label: string; description: string }
+
 export type NativeInteraction = { id: string; createdAt: number } & (
-  | { kind: 'permission'; message: string; detail: string; sessionApproval: string | null }
+  | {
+      kind: 'permission'
+      message: string
+      permissionKind: string
+      target: string | null
+      intention: string | null
+      diff: string | null
+      detail: string
+      managed: boolean
+      scopes: PermissionScope[]
+    }
   | {
       kind: 'elicitation'
       message: string
@@ -15,7 +27,7 @@ export type NativeInteraction = { id: string; createdAt: number } & (
 )
 
 export type NativeAnswer =
-  | { kind: 'permission'; action: 'allow-once' | 'deny' | 'allow-session' }
+  | { kind: 'permission'; action: string }
   | {
       kind: 'elicitation'
       action: 'accept' | 'decline' | 'cancel'

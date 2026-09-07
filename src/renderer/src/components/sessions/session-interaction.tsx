@@ -182,6 +182,7 @@ export function SessionInteraction({
   }
   const large =
     interaction.kind === 'plan' ||
+    (interaction.kind === 'permission' && Boolean(interaction.diff)) ||
     (interaction.kind === 'elicitation' &&
       (parsed.fields.length !== 1 ||
         interaction.url ||
@@ -214,12 +215,31 @@ export function SessionInteraction({
         <fieldset disabled={busy} className="min-w-0 space-y-3">
           {interaction.kind === 'permission' && (
             <>
-              <p className="text-muted-foreground break-all font-mono text-xs">
+              {interaction.intention && (
+                <p className="text-muted-foreground text-sm">{interaction.intention}</p>
+              )}
+              {interaction.target && (
+                <pre className="bg-muted max-h-32 overflow-auto rounded-md p-3 font-mono text-xs break-words whitespace-pre-wrap">
+                  {interaction.target}
+                </pre>
+              )}
+              {interaction.diff && (
+                <pre className="bg-muted max-h-64 overflow-auto rounded-md p-3 font-mono text-xs break-words whitespace-pre-wrap">
+                  {interaction.diff}
+                </pre>
+              )}
+              <p className="text-muted-foreground font-mono text-xs break-all">
                 {session.folderPath}
               </p>
-              <pre className="bg-muted max-h-48 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap break-words">
-                {interaction.detail}
-              </pre>
+              <details className="group">
+                <summary className="text-muted-foreground hover:text-foreground focus-visible:ring-ring cursor-pointer list-none rounded-md text-xs focus-visible:ring-3 focus-visible:outline-none">
+                  <span className="group-open:hidden">Show request details</span>
+                  <span className="hidden group-open:inline">Hide request details</span>
+                </summary>
+                <pre className="bg-muted mt-2 max-h-48 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap">
+                  {interaction.detail}
+                </pre>
+              </details>
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="button"
@@ -236,20 +256,33 @@ export function SessionInteraction({
                 >
                   Allow once
                 </Button>
-                {interaction.sessionApproval && (
+                {interaction.scopes.map((scope) => (
                   <Button
+                    key={scope.action}
                     type="button"
                     size="sm"
                     variant="outline"
-                    title={interaction.sessionApproval}
-                    onClick={() => submit({ kind: 'permission', action: 'allow-session' })}
+                    title={scope.description}
+                    onClick={() => submit({ kind: 'permission', action: scope.action })}
                   >
-                    Allow for this session
+                    {scope.label}
                   </Button>
-                )}
+                ))}
               </div>
-              {interaction.sessionApproval && (
-                <p className="text-muted-foreground text-xs">{interaction.sessionApproval}</p>
+              {interaction.scopes.length > 0 ? (
+                <ul className="text-muted-foreground space-y-1 text-xs">
+                  {interaction.scopes.map((scope) => (
+                    <li key={scope.action}>
+                      <span className="font-medium">{scope.label}:</span> {scope.description}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-muted-foreground text-xs">
+                  {interaction.managed
+                    ? 'Managed policy requires a decision on every one of these requests.'
+                    : 'Copilot did not offer a broader scope for this request.'}
+                </p>
               )}
             </>
           )}

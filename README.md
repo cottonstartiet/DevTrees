@@ -107,6 +107,37 @@ Developer and CI Cargo builds use `.cargo/config.toml` to force
 Keep both settings: disabling bundling alone does not disable the SDK build-time
 runtime download. Normal Cargo crate dependencies are still restored when needed.
 
+## Local Copilot analytics
+
+**Analytics** analyzes **Copilot CLI** history, with repository and 7/30/90-day filters.
+It retains the colourful usage graph, token-mix donut and cost-by-model bars, alongside:
+
+- **Overview:** activity trends, preceding-period comparisons, model/token/credit
+  records, latency percentiles, file observations and explicit source coverage.
+- **Flow:** local-hour and calendar heatmaps, weekend/night activity, streaks,
+  breaks, prompt cadence and long/single-turn session observations.
+- **Practices:** explainable prompt-structure dimensions, session intent,
+  spec-like task starts, evidence-based suggestions and recurring prompt workflows.
+  Expand a pattern to inspect examples and copy a draft; nothing is installed automatically.
+
+Rust reads `~/.copilot/session-store.db` read-only. Repository paths map to recorded
+repository labels only when an unambiguous working-directory mapping exists.
+VS Code chat history is not scanned; its analytics integration is deferred.
+
+Reports are calculated locally through Tauri, without uploading prompts, calling
+an LLM, or writing analytics to disk. Prompt excerpts are hidden until expanded.
+English-keyword coaching uses up to the latest 5,000 current-period turns in the
+repository selection, each limited to 8,000 characters. Activity counts still cover
+the full selection. Missing optional fields produce visible warnings; oversized
+reports ask for a smaller selection. Refresh reads saved history again.
+
+Today is partial and comparisons use the preceding full local-calendar period.
+Model calls and user turns remain separate metrics. Recorded credits are not an
+invoice or complete account-wide billing history. Cadence is not hours worked, concentration,
+burnout or productivity; prompt structure is not a judgment of engineering skill.
+The separate **Copilot CLI commands** area explicitly launches CLI sessions and
+may use AI credits; its repository target does not change the report filter.
+
 ## App data
 
 The desktop app uses a version-2 SQLite schema: repositories, tasks, and terminal

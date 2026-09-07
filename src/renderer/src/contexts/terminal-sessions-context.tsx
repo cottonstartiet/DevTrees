@@ -90,11 +90,14 @@ function notification(
 
 export function TerminalSessionsProvider({
   children,
-  onNavigateToSessions
+  onNavigateToSessions,
+  suppressNotifications = false
 }: {
   children: React.ReactNode
   /** Lets a toast jump the user to the Sessions view. */
   onNavigateToSessions?: () => void
+  /** Skip session toasts while the user is already viewing session status (Dashboard/Sessions). */
+  suppressNotifications?: boolean
 }): React.JSX.Element {
   const [byId, setById] = React.useState<Record<string, TerminalSession | undefined>>({})
   const [entriesById, setEntriesById] = React.useState<
@@ -131,6 +134,10 @@ export function TerminalSessionsProvider({
   React.useEffect(() => {
     navigateRef.current = onNavigateToSessions
   }, [onNavigateToSessions])
+  const suppressNotificationsRef = React.useRef(suppressNotifications)
+  React.useEffect(() => {
+    suppressNotificationsRef.current = suppressNotifications
+  }, [suppressNotifications])
 
   const ingest = React.useCallback(
     (session: TerminalSession, notify: boolean): void => {
@@ -140,7 +147,11 @@ export function TerminalSessionsProvider({
       const previous = statusRef.current[session.id]
       statusRef.current[session.id] = session.status
 
-      if (notify && !(session.transport === 'sdk' && session.status === 'waiting-input')) {
+      if (
+        notify &&
+        !suppressNotificationsRef.current &&
+        !(session.transport === 'sdk' && session.status === 'waiting-input')
+      ) {
         const message = notification(session, previous)
         if (message) {
           const options = {
@@ -168,6 +179,7 @@ export function TerminalSessionsProvider({
 
   const notifyNativeInteraction = React.useCallback(
     (session: TerminalSession, requestId: string, message: string): void => {
+      if (suppressNotificationsRef.current) return
       toast.warning(`${session.label} needs your input`, {
         description: message,
         action: navigateRef.current

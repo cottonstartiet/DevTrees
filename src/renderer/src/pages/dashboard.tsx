@@ -48,7 +48,10 @@ function compareActiveSessions(
       const bRequestedAt = interactionRequestedAtById[b.id] ?? b.updatedAt
       return aRequestedAt - bRequestedAt
     }
-    return b.updatedAt - a.updatedAt
+    // Keep a stable order (session start order) so cards don't reshuffle on
+    // every status/activity update — only the needs-action grouping above
+    // should ever move a card.
+    return a.createdAt - b.createdAt
   }
 }
 
