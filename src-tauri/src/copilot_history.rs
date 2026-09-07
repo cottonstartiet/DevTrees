@@ -61,8 +61,29 @@ impl CopilotHistoryListResult {
     }
 }
 
-fn store_path() -> Option<std::path::PathBuf> {
+pub(crate) fn store_path() -> Option<std::path::PathBuf> {
     dirs::home_dir().map(|h| h.join(".copilot").join("session-store.db"))
+}
+
+/// Open the CLI's session store strictly read-only. Shared by `copilot_history` and
+/// `copilot_analytics` since both only ever read from this file.
+pub(crate) fn open_store_readonly() -> Result<Connection, (&'static str, String)> {
+    let Some(path) = store_path() else {
+        return Err(("missing", "No Copilot sessions have been recorded yet.".to_string()));
+    };
+    if !path.exists() {
+        return Err(("missing", "No Copilot sessions have been recorded yet.".to_string()));
+    }
+    match Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+        Ok(conn) => {
+            let _ = conn.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS));
+            Ok(conn)
+        }
+        Err(err) => {
+            eprintln!("[copilot-store] failed to open session store: {err}");
+            Err(("unreadable", "Could not read the Copilot session store.".to_string()))
+        }
+    }
 }
 
 fn cutoff_iso() -> String {

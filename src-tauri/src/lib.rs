@@ -1,6 +1,8 @@
 mod ado;
 mod az;
+mod copilot_analytics;
 mod copilot_history;
+mod copilot_sdk_sessions;
 mod db;
 mod error;
 mod gh;
@@ -12,6 +14,7 @@ mod repo;
 mod repositories;
 mod reviews;
 mod session_attention;
+mod session_interactions;
 mod system;
 mod tasks;
 mod terminal_sessions;
@@ -58,6 +61,7 @@ pub fn run() {
             app.manage(TerminalSessionMonitor::default());
             app.manage(terminal_sessions::AcpSessionManager::default());
             app.manage(pty_sessions::PtySessionManager::default());
+            app.manage(copilot_sdk_sessions::NativeSessionManager::default());
             // Resume mirroring any external Copilot terminal that outlived the last run.
             if let Err(e) = terminal_sessions::init(app.handle()) {
                 eprintln!("failed to restore terminal session watches: {e}");
@@ -74,6 +78,7 @@ pub fn run() {
             worktrees::worktrees_delete,
             worktrees::worktrees_status,
             copilot_history::copilot_history_list,
+            copilot_analytics::copilot_analytics_summary,
             system::system_open_in_vscode,
             system::system_open_in_vscode_scm,
             system::system_open_in_windows_terminal,
@@ -134,6 +139,7 @@ pub fn run() {
             tasks::tasks_set_copilot_session,
             terminal_sessions::terminal_sessions_list,
             terminal_sessions::terminal_sessions_start,
+            terminal_sessions::terminal_sessions_switch,
             terminal_sessions::terminal_sessions_prompt,
             terminal_sessions::terminal_sessions_interaction,
             terminal_sessions::terminal_sessions_respond,
@@ -141,6 +147,11 @@ pub fn run() {
             terminal_sessions::terminal_sessions_history,
             terminal_sessions::terminal_sessions_watch,
             terminal_sessions::terminal_sessions_forget,
+            copilot_sdk_sessions::native_session_snapshot,
+            copilot_sdk_sessions::native_session_respond,
+            copilot_sdk_sessions::native_session_prompt,
+            copilot_sdk_sessions::native_session_cancel,
+            copilot_sdk_sessions::native_session_end,
             pty_sessions::pty_attach,
             pty_sessions::pty_ack,
             pty_sessions::pty_detach,
@@ -152,6 +163,7 @@ pub fn run() {
         .expect("error while building DevTrees")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                tauri::async_runtime::block_on(copilot_sdk_sessions::shutdown(app));
                 app.state::<pty_sessions::PtySessionManager>().shutdown();
             }
         });

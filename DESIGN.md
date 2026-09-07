@@ -194,6 +194,22 @@ The Copilot terminal uses a black background with light default text in both app
 themes. Its padding and viewport share the same background, and native CLI ANSI
 colors remain intact. Terminal tabs, toolbar, and transcript follow the app theme.
 
+### Native Copilot Sessions
+Native sessions use the same compact transcript rows, followed by an inline
+request region and idle-only composer. The mode is explicit in the session
+header; Stop turn, End session, Resume and transport switching are distinct.
+Do not style this surface as a consumer chat app or introduce approval modals.
+
+Permission details precede Deny and Allow once. Approval must never be the
+default action of a form or receive automatic focus. Structured fields have
+labels, explicit choices, typed values and visible errors; do not silently pick
+the first option. Pending request and composer drafts are shared across Session
+and Dashboard. Only explicit navigation to a request moves focus.
+
+Dashboard offers compact responses without nested cards; complex forms link to
+the exact request. Transport handoff uses an inline confirmation explaining that
+the old runtime ends and pending requests cannot be transferred.
+
 ## 6. Do's and Don'ts
 
 ### Do:

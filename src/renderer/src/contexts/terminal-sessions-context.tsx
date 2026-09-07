@@ -2,6 +2,7 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 import { retainTerminals, syncTerminals } from '@/lib/pty-terminal'
+import { useNativeSessions, type NativeSessionsContextValue } from './use-native-sessions'
 
 import {
   isTerminalSessionFinished,
@@ -14,7 +15,7 @@ import {
   type WatchTerminalSessionRequest
 } from '@shared/terminal-session'
 
-export interface TerminalSessionsContextValue {
+export interface TerminalSessionsContextValue extends NativeSessionsContextValue {
   /** Newest first. Includes finished sessions until the user dismisses them. */
   sessions: TerminalSession[]
   byId: Record<string, TerminalSession | undefined>
@@ -30,9 +31,12 @@ export interface TerminalSessionsContextValue {
   loadHistory: (id: string) => Promise<void>
   /** Session shown in the Sessions detail view, if any. */
   selectedId: string | null
+  selectedInteractionId: string | null
   selectionRevision: number
   observationNow: number
-  select: (id: string | null) => void
+  select: (id: string | null, interactionId?: string) => void
+  launchTransport: 'sdk' | 'pty'
+  setLaunchTransport: (transport: 'sdk' | 'pty') => void
   /** Legacy support for mirroring an externally launched Copilot CLI session. */
   watch: (req: WatchTerminalSessionRequest) => Promise<TerminalSession | null>
   start: (req: StartTerminalSessionRequest) => Promise<TerminalSession | null>
@@ -108,12 +112,15 @@ export function TerminalSessionsProvider({
   )
   const interactionRevisionRef = React.useRef<Record<string, number | undefined>>({})
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
+  const [selectedInteractionId, setSelectedInteractionId] = React.useState<string | null>(null)
+  const [launchTransport, setLaunchTransport] = React.useState<'sdk' | 'pty'>('sdk')
   const [selectionRevision, setSelectionRevision] = React.useState(0)
   const [observationNow, setObservationNow] = React.useState(Date.now)
   const revisionsRef = React.useRef<Record<string, number>>({})
   const forgottenRef = React.useRef(new Set<string>())
-  const select = React.useCallback((id: string | null): void => {
+  const select = React.useCallback((id: string | null, interactionId?: string): void => {
     setSelectedId(id)
+    setSelectedInteractionId(interactionId ?? null)
     setSelectionRevision((current) => current + 1)
   }, [])
 
@@ -133,7 +140,7 @@ export function TerminalSessionsProvider({
       const previous = statusRef.current[session.id]
       statusRef.current[session.id] = session.status
 
-      if (notify) {
+      if (notify && !(session.transport === 'sdk' && session.status === 'waiting-input')) {
         const message = notification(session, previous)
         if (message) {
           const options = {
@@ -158,6 +165,26 @@ export function TerminalSessionsProvider({
     },
     [select]
   )
+
+  const notifyNativeInteraction = React.useCallback(
+    (session: TerminalSession, requestId: string, message: string): void => {
+      toast.warning(`${session.label} needs your input`, {
+        description: message,
+        action: navigateRef.current
+          ? {
+              label: 'Open request',
+              onClick: () => {
+                select(session.id, requestId)
+                navigateRef.current?.()
+              }
+            }
+          : undefined
+      })
+    },
+    [select]
+  )
+  const native = useNativeSessions(byId, ingest, notifyNativeInteraction)
+  const { registerNative, forgetNative } = native
 
   const mergeEntries = React.useCallback((id: string, incoming: TerminalTimelineEntry[]): void => {
     if (incoming.length === 0) return
@@ -334,10 +361,11 @@ export function TerminalSessionsProvider({
         return null
       }
       forgottenRef.current.delete(result.session.id)
+      registerNative(result.session.id)
       ingest(result.session, false)
       return result.session
     },
-    [ingest]
+    [ingest, registerNative]
   )
 
   const start = React.useCallback(
@@ -348,12 +376,13 @@ export function TerminalSessionsProvider({
         return null
       }
       forgottenRef.current.delete(result.session.id)
+      registerNative(result.session.id)
       ingest(result.session, false)
       select(result.session.id)
       navigateRef.current?.()
       return result.session
     },
-    [ingest, select]
+    [ingest, select, registerNative]
   )
 
   const prompt = React.useCallback(async (id: string, value: string): Promise<void> => {
@@ -368,36 +397,40 @@ export function TerminalSessionsProvider({
     await window.api.terminalSessions.cancel(id)
   }, [])
 
-  const forget = React.useCallback(async (id: string): Promise<void> => {
-    await window.api.terminalSessions.forget(id)
-    forgottenRef.current.add(id)
-    delete statusRef.current[id]
-    delete revisionsRef.current[id]
-    setById((current) => {
-      const next = { ...current }
-      delete next[id]
-      return next
-    })
-    setEntriesById((current) => {
-      const next = { ...current }
-      delete next[id]
-      return next
-    })
-    setInteractionById((current) => {
-      const next = { ...current }
-      delete next[id]
-      return next
-    })
-    delete interactionRequestIdRef.current[id]
-    delete interactionByIdRef.current[id]
-    delete interactionRevisionRef.current[id]
-    setInteractionRequestedAtById((current) => {
-      const next = { ...current }
-      delete next[id]
-      return next
-    })
-    setSelectedId((current) => (current === id ? null : current))
-  }, [])
+  const forget = React.useCallback(
+    async (id: string): Promise<void> => {
+      await window.api.terminalSessions.forget(id)
+      forgottenRef.current.add(id)
+      forgetNative(id)
+      delete statusRef.current[id]
+      delete revisionsRef.current[id]
+      setById((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+      setEntriesById((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+      setInteractionById((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+      delete interactionRequestIdRef.current[id]
+      delete interactionByIdRef.current[id]
+      delete interactionRevisionRef.current[id]
+      setInteractionRequestedAtById((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+      setSelectedId((current) => (current === id ? null : current))
+    },
+    [forgetNative]
+  )
 
   const sessions = React.useMemo(
     () =>
@@ -445,6 +478,7 @@ export function TerminalSessionsProvider({
 
   const value = React.useMemo<TerminalSessionsContextValue>(
     () => ({
+      ...native,
       sessions,
       byId,
       entriesById,
@@ -452,6 +486,9 @@ export function TerminalSessionsProvider({
       interactionRequestedAtById,
       loadHistory,
       selectedId,
+      selectedInteractionId,
+      launchTransport,
+      setLaunchTransport,
       selectionRevision,
       observationNow,
       select,
@@ -464,6 +501,7 @@ export function TerminalSessionsProvider({
       forget
     }),
     [
+      native,
       sessions,
       byId,
       entriesById,
@@ -471,6 +509,8 @@ export function TerminalSessionsProvider({
       interactionRequestedAtById,
       loadHistory,
       selectedId,
+      selectedInteractionId,
+      launchTransport,
       selectionRevision,
       observationNow,
       select,

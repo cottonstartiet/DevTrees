@@ -112,6 +112,7 @@ export type AppView =
   | 'reviews'
   | 'sessions'
   | 'history'
+  | 'analytics'
   | 'settings'
 
 interface AppSidebarProps {

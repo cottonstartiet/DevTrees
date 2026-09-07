@@ -1,8 +1,8 @@
 /**
  * Copilot CLI sessions shown in DevTrees.
  *
- * Managed sessions use an embedded PTY for all interaction. Session attention and
- * read-only history are observed independently from the CLI event log.
+ * Native sessions use SDK callbacks. Terminal sessions use an embedded PTY with
+ * attention and read-only history observed independently from the CLI event log.
  */
 export type TerminalSessionStatus =
   /** Launched, but the CLI has not written its first event yet. */
@@ -34,7 +34,7 @@ export type TerminalSession = {
   pendingPrompt?: string | null
   createdAt: number
   updatedAt: number
-  transport: 'acp' | 'pty' | 'external'
+  transport: 'sdk' | 'acp' | 'pty' | 'external'
   generation?: string | null
   revision: number
   observedAt?: number | null
@@ -87,6 +87,7 @@ export type TerminalSessionResult =
 export type StartTerminalSessionRequest = Omit<WatchTerminalSessionRequest, 'id'> & {
   prompt?: string
   resumeSessionId?: string
+  transport?: 'sdk' | 'pty'
 }
 
 export type TerminalSessionPermissionOption = {
@@ -139,11 +140,11 @@ export function isTerminalSessionFinished(status: TerminalSessionStatus): boolea
 }
 
 /**
- * One row of a session history, streamed over ACP or reconstructed from a legacy event log.
+ * One row of a session history, streamed natively or reconstructed from an event log.
  *
- * `seq` is the source line index. It is stable across both delivery paths — the initial
- * history fetch and live updates — so entries are merged by `seq` rather than appended,
- * which is also how a completed tool call replaces its own in-flight row.
+ * File-backed history uses the source line index as `seq`. Native snapshots have their
+ * own sequence space, scoped to the runtime generation; never merge those with file
+ * history by sequence. Within either source, tool completion replaces its in-flight row.
  */
 export type TerminalTimelineEntry =
   | { kind: 'userMessage'; seq: number; timestamp?: string | null; text: string }

@@ -9,6 +9,7 @@ import {
 } from 'lucide-react'
 
 import { DashboardCard } from '@/components/detail/dashboard-card'
+import { NativeSessionControls } from '@/components/sessions/session-interaction'
 import {
   TERMINAL_SESSION_STATUS_ICON,
   TERMINAL_SESSION_STATUS_LABEL,
@@ -202,6 +203,16 @@ export function DashboardPage({
                         <ArrowUpRightIcon className="size-3" />
                       </span>
                     </button>
+                    {session.transport === 'sdk' && (
+                      <NativeSessionControls
+                        session={session}
+                        compact
+                        onOpenSession={(requestId) => {
+                          select(session.id, requestId)
+                          onNavigateToSessions()
+                        }}
+                      />
+                    )}
                   </div>
                 )
               })}

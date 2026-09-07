@@ -157,6 +157,15 @@ pub struct StartTerminalSessionRequest {
     pub repository: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
+    #[serde(default)]
+    pub transport: Option<SessionTransport>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionTransport {
+    Sdk,
+    Pty,
 }
 
 #[derive(Serialize)]
@@ -303,7 +312,7 @@ pub enum TerminalTimelineEntry {
 
 impl TerminalTimelineEntry {
     #[cfg_attr(not(test), allow(dead_code))]
-    fn seq(&self) -> u64 {
+    pub(crate) fn seq(&self) -> u64 {
         match self {
             Self::UserMessage { seq, .. }
             | Self::AssistantMessage { seq, .. }
@@ -1653,7 +1662,7 @@ pub fn init(app: &AppHandle) -> AppResult<()> {
             .lock()
             .map_err(|_| AppError::msg("terminal session monitor mutex poisoned"))?;
         for mut watch in restored {
-            if (watch.managed || watch.session.transport == "pty")
+            if (watch.managed || matches!(watch.session.transport.as_str(), "pty" | "sdk"))
                 && !watch.session.status.is_final()
             {
                 watch.session.status = TerminalSessionStatus::Done;
@@ -1784,6 +1793,16 @@ pub fn watch_pty_session(
     id: &str,
     generation: &str,
 ) -> AppResult<TerminalSessionResult> {
+    watch_managed_session(app, req, id, generation, "pty")
+}
+
+pub(crate) fn watch_managed_session(
+    app: &AppHandle,
+    req: &StartTerminalSessionRequest,
+    id: &str,
+    generation: &str,
+    transport: &str,
+) -> AppResult<TerminalSessionResult> {
     {
         let monitor = app.state::<TerminalSessionMonitor>();
         let watches = monitor
@@ -1831,11 +1850,15 @@ pub fn watch_pty_session(
                 .clone()
                 .or_else(|| previous.and_then(|watch| watch.session.branch.clone())),
             status: TerminalSessionStatus::Starting,
-            last_activity: "Starting Copilot in the embedded terminal".into(),
+            last_activity: if transport == "sdk" {
+                "Starting native Copilot session".into()
+            } else {
+                "Starting Copilot in the embedded terminal".into()
+            },
             pending_prompt: None,
             created_at: previous.map_or(now, |watch| watch.session.created_at),
             updated_at: now,
-            transport: "pty".into(),
+            transport: transport.into(),
             generation: Some(generation.into()),
             revision: previous.map_or(1, |watch| watch.session.revision + 1),
             observed_at: None,
@@ -1873,6 +1896,105 @@ pub fn watch_pty_session(
         session: Some(session),
         error: None,
     })
+}
+
+pub(crate) fn publish_native_session(app: &AppHandle, session: &TerminalSession) -> AppResult<()> {
+    let monitor = app.state::<TerminalSessionMonitor>();
+    let mut watches = monitor
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("Session mutex poisoned."))?;
+    let watch = watches
+        .get_mut(&session.id)
+        .ok_or_else(|| AppError::msg("This session was removed."))?;
+    if watch.session.generation != session.generation {
+        return Err(AppError::msg(
+            "This update belongs to a previous session process.",
+        ));
+    }
+
+    if session.revision < watch.session.revision {
+        return Err(AppError::msg("This session update is stale."));
+    }
+    if watch.session.status != session.status
+        || watch.session.pending_prompt != session.pending_prompt
+        || watch.session.last_activity != session.last_activity
+    {
+        let state = app.state::<DbState>();
+        let db = state
+            .0
+            .lock()
+            .map_err(|_| AppError::msg("Database mutex poisoned."))?;
+        upsert(&db, session, watch.cursor, watch.seq)?;
+    }
+    watch.session = session.clone();
+    drop(watches);
+    app.emit(
+        EVENT_UPDATE,
+        TerminalSessionUpdate {
+            session: session.clone(),
+            entries: Vec::new(),
+        },
+    )
+    .map_err(|error| AppError::msg(error.to_string()))
+}
+
+#[tauri::command]
+pub async fn terminal_sessions_switch(
+    app: AppHandle,
+    id: String,
+    generation: String,
+    transport: SessionTransport,
+) -> AppResult<TerminalSessionResult> {
+    let session = {
+        let monitor = app.state::<TerminalSessionMonitor>();
+        let watches = monitor
+            .watches
+            .lock()
+            .map_err(|_| AppError::msg("Session mutex poisoned."))?;
+        let session = &watches
+            .get(&id)
+            .ok_or_else(|| AppError::msg("This session was removed."))?
+            .session;
+        if session.generation.as_deref() != Some(&generation) {
+            return Err(AppError::msg(
+                "The session owner changed. Refresh before switching modes.",
+            ));
+        }
+        session.clone()
+    };
+    if !session.status.is_final() {
+        match session.transport.as_str() {
+            "sdk" => {
+                crate::copilot_sdk_sessions::native_session_end(
+                    app.clone(),
+                    crate::copilot_sdk_sessions::NativeTarget {
+                        id: id.clone(),
+                        generation: generation.clone(),
+                    },
+                )
+                .await?
+            }
+            "pty" => crate::pty_sessions::stop_and_wait(&app, &id, &generation).await?,
+            _ => return Err(AppError::msg(
+                "An external session must be ended in its owning terminal before resuming here.",
+            )),
+        }
+    }
+    terminal_sessions_start(
+        app,
+        StartTerminalSessionRequest {
+            folder_path: session.folder_path,
+            prompt: None,
+            resume_session_id: Some(id),
+            label: session.label,
+            task_id: session.task_id,
+            repository: session.repository,
+            branch: session.branch,
+            transport: Some(transport),
+        },
+    )
+    .await
 }
 
 pub fn pty_exited(app: &AppHandle, id: &str, generation: &str, exit: Result<u32, String>) {
@@ -2112,6 +2234,9 @@ pub async fn terminal_sessions_start(
     app: AppHandle,
     req: StartTerminalSessionRequest,
 ) -> AppResult<TerminalSessionResult> {
+    if matches!(req.transport, Some(SessionTransport::Sdk)) {
+        return crate::copilot_sdk_sessions::start(app, req).await;
+    }
     tauri::async_runtime::spawn_blocking(move || crate::pty_sessions::start(app, req))
         .await
         .map_err(|error| AppError::msg(format!("Copilot session task failed: {error}")))?
@@ -2286,6 +2411,7 @@ pub async fn terminal_sessions_history(id: String) -> AppResult<Vec<TerminalTime
 /// Stop mirroring a session and drop it from the list.
 #[tauri::command]
 pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<()> {
+    crate::copilot_sdk_sessions::forget(&app, &id).await?;
     app.state::<crate::pty_sessions::PtySessionManager>()
         .stop_session(&id)?;
     if app

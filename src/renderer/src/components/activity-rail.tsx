@@ -5,6 +5,7 @@ import {
   GitPullRequestIcon,
   HistoryIcon,
   KanbanSquareIcon,
+  LineChartIcon,
   SettingsIcon,
   SquareTerminalIcon
 } from 'lucide-react'
@@ -22,7 +23,8 @@ const TOP_ITEMS: ReadonlyArray<{
   { view: 'repositories', label: 'Repos', Icon: FolderGit2Icon },
   { view: 'reviews', label: 'Reviews', Icon: GitPullRequestIcon },
   { view: 'sessions', label: 'Sessions', Icon: SquareTerminalIcon },
-  { view: 'history', label: 'History', Icon: HistoryIcon }
+  { view: 'history', label: 'History', Icon: HistoryIcon },
+  { view: 'analytics', label: 'Analytics', Icon: LineChartIcon }
 ]
 
 function RailButton({

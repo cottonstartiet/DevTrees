@@ -29,6 +29,7 @@ import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
 import { DashboardPage } from '@/pages/dashboard'
 import { HistoryPage } from '@/pages/history'
+import { AnalyticsPage } from '@/pages/analytics'
 import { ReviewsPage } from '@/pages/reviews'
 import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
@@ -514,15 +515,17 @@ function AppShell(): React.JSX.Element {
             ? 'Settings'
             : view === 'history'
               ? 'History'
-              : view === 'sessions'
-                ? 'Sessions'
-                : activeWorktree
-                  ? worktreeLabel(activeWorktree.path)
-                  : activeRepository
-                    ? activeRepository.name
-                    : view === 'repositories'
-                      ? 'Repositories'
-                      : 'DevTrees'
+              : view === 'analytics'
+                ? 'Analytics'
+                : view === 'sessions'
+                  ? 'Sessions'
+                  : activeWorktree
+                    ? worktreeLabel(activeWorktree.path)
+                    : activeRepository
+                      ? activeRepository.name
+                      : view === 'repositories'
+                        ? 'Repositories'
+                        : 'DevTrees'
 
   const repo = useRepoStatus(activeRepository?.path ?? null, view === 'repositories')
 
@@ -884,6 +887,8 @@ function AppShell(): React.JSX.Element {
                   </div>
                 ) : view === 'history' ? (
                   <HistoryPage />
+                ) : view === 'analytics' ? (
+                  <AnalyticsPage repositories={repositories} />
                 ) : view === 'reviews' ? (
                   <ReviewsPage repository={reviewsRepository} />
                 ) : view === 'sessions' ? (

@@ -738,6 +738,30 @@ pub fn pty_stop(app: AppHandle, target: TerminalTarget) -> AppResult<()> {
         .stop()
 }
 
+pub async fn stop_and_wait(app: &AppHandle, id: &str, generation: &str) -> AppResult<()> {
+    app.state::<PtySessionManager>()
+        .get(id, generation)?
+        .stop()?;
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            {
+                let manager = app.state::<PtySessionManager>();
+                let sessions = manager.sessions.lock().map_err(failure)?;
+                match sessions.get(id) {
+                    None => return Ok(()),
+                    Some(session) if session.generation != generation => {
+                        return Err(failure("The terminal owner changed during shutdown."));
+                    }
+                    _ => {}
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .map_err(|_| failure("The terminal has not released this session. Wait before resuming."))?
+}
+
 #[cfg(windows)]
 struct WindowsJob(winapi::um::winnt::HANDLE);
 // The handle remains open for the owner's lifetime; Windows synchronizes job operations.
@@ -881,6 +905,7 @@ mod tests {
             task_id: None,
             repository: None,
             branch: None,
+            transport: None,
         };
         let cmd = command(&request, "test-id");
         let args: Vec<_> = cmd
@@ -905,6 +930,7 @@ mod tests {
             prompt: Some("This is an isolated terminal integration test. First use ask_user to ask 'Choose a fixture' with exactly two choices alpha and beta. After I answer, use powershell to create ONLY a new file pty-permission-marker.txt containing fixture-ok in the current directory. Do not read any files, run other tools, or access any network. If permission is rejected, say rejected and stop.".into()),
             resume_session_id: None, label: "PTY fixture".into(),
             task_id: None, repository: None, branch: None,
+            transport: None,
         };
         let mut cmd = command(&request, &id);
         cmd.args(["--model", "gpt-5.4-mini", "--disable-builtin-mcps"]);

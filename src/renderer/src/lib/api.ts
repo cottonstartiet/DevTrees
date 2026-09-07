@@ -13,6 +13,7 @@
  */
 import { Channel, invoke } from '@tauri-apps/api/core'
 import type { TerminalCheckpoint, TerminalOutput, TerminalTarget } from '@shared/terminal-session'
+import type { NativeAnswer, NativeSnapshot } from '@shared/native-session'
 import { listen } from '@tauri-apps/api/event'
 
 import type { AddRepositoryResult, Repository } from '@shared/repository'
@@ -92,6 +93,7 @@ import type {
   LaunchResult
 } from '@shared/system'
 import type { CopilotHistoryListResult } from '@shared/copilot-history'
+import type { CopilotAnalyticsResult } from '@shared/copilot-analytics'
 import type {
   CreateTaskRequest,
   CreateTaskResult,
@@ -373,6 +375,30 @@ const api = {
         message
       }))
   },
+  copilotAnalytics: {
+    summary: (windowDays?: number): Promise<CopilotAnalyticsResult> =>
+      result('copilot_analytics_summary', { windowDays }, (message) => ({
+        ok: false,
+        reason: 'unreadable',
+        message
+      }))
+  },
+  nativeSessions: {
+    snapshot: (target: TerminalTarget): Promise<NativeSnapshot> =>
+      invoke('native_session_snapshot', { target }),
+    respond: (
+      target: TerminalTarget,
+      interactionId: string,
+      answer: NativeAnswer
+    ): Promise<NativeSnapshot> =>
+      invoke('native_session_respond', { target, interactionId, answer }),
+    prompt: (target: TerminalTarget, prompt: string): Promise<void> =>
+      invoke('native_session_prompt', { target, prompt }),
+    cancel: (target: TerminalTarget): Promise<void> => invoke('native_session_cancel', { target }),
+    end: (target: TerminalTarget): Promise<void> => invoke('native_session_end', { target }),
+    onUpdate: (cb: (snapshot: NativeSnapshot) => void): Promise<() => void> =>
+      listen<NativeSnapshot>('native-sessions:update', (event) => cb(event.payload))
+  },
   terminalSessions: {
     attach: async (
       target: TerminalTarget,
@@ -398,6 +424,11 @@ const api = {
     list: (): Promise<TerminalSession[]> => invoke('terminal_sessions_list'),
     start: (req: StartTerminalSessionRequest): Promise<TerminalSessionResult> =>
       result('terminal_sessions_start', { req }, (error) => ({ ok: false, error })),
+    switch: (target: TerminalTarget, transport: 'sdk' | 'pty'): Promise<TerminalSessionResult> =>
+      result('terminal_sessions_switch', { ...target, transport }, (error) => ({
+        ok: false,
+        error
+      })),
     prompt: (id: string, prompt: string): Promise<void> =>
       invoke('terminal_sessions_prompt', { id, prompt }),
     interaction: (id: string): Promise<TerminalSessionInteraction | null> =>

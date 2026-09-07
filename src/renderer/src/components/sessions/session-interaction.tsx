@@ -1,54 +1,141 @@
 import * as React from 'react'
-import { CircleAlertIcon, Loader2Icon, RefreshCwIcon, SendIcon, SquareIcon } from 'lucide-react'
-import { toast } from 'sonner'
-
+import { ArrowUpRightIcon, SendIcon, ShieldQuestionIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { MarkdownBody } from '@/components/pr-review/markdown-body'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
-import { cn } from '@/lib/utils'
-import type { TerminalSession, TerminalSessionInteraction } from '@shared/terminal-session'
+import { nativeError } from '@/contexts/use-native-sessions'
+import {
+  initialNativeDraft,
+  nativeFields,
+  nativeFormContent,
+  nativeKey,
+  type NativeAnswer,
+  type NativeField,
+  type NativeInteraction
+} from '@shared/native-session'
+import { isTerminalSessionFinished, type TerminalSession } from '@shared/terminal-session'
 
-type SchemaProperty = {
-  type?: string
-  title?: string
-  description?: string
-  default?: unknown
-  enum?: string[]
-  oneOf?: Array<{ const?: unknown; title?: string }>
-  items?: {
-    enum?: string[]
-    anyOf?: Array<{ const?: unknown; title?: string }>
+const selectStyle =
+  'bg-background border-input focus-visible:ring-ring w-full min-w-0 rounded-md border px-2 py-2 text-sm focus-visible:outline-none focus-visible:ring-3'
+
+function Field({
+  field,
+  value,
+  onChange,
+  prefix
+}: {
+  field: NativeField
+  value: string | boolean | string[] | undefined
+  onChange: (value: string | boolean | string[] | undefined) => void
+  prefix: string
+}): React.JSX.Element {
+  const id = `${prefix}-${field.name}`
+  const helpId = field.description ? `${id}-help` : undefined
+  let control: React.ReactNode
+  if (field.type === 'array') {
+    control = (
+      <div className="flex flex-wrap gap-x-4 gap-y-2">
+        {field.choices?.map((option) => (
+          <label key={option.value} className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="accent-primary focus-visible:ring-ring size-4 focus-visible:ring-3"
+              checked={Array.isArray(value) && value.includes(option.value)}
+              onChange={(event) => {
+                const selected = Array.isArray(value) ? value : []
+                onChange(
+                  event.target.checked
+                    ? [...selected, option.value]
+                    : selected.filter((item) => item !== option.value)
+                )
+              }}
+            />
+            {option.label}
+          </label>
+        ))}
+      </div>
+    )
+  } else if (field.choices || field.type === 'boolean') {
+    const options = field.choices ?? [
+      { value: 'true', label: 'Yes' },
+      { value: 'false', label: 'No' }
+    ]
+    const selected =
+      value === undefined
+        ? ''
+        : String(options.findIndex((option) => option.value === String(value)))
+    control = (
+      <select
+        id={id}
+        className={selectStyle}
+        required={field.required}
+        aria-describedby={helpId}
+        value={selected}
+        onChange={(event) => {
+          const choice =
+            event.target.value === '' ? undefined : options[Number(event.target.value)]?.value
+          onChange(
+            choice === undefined ? undefined : field.type === 'boolean' ? choice === 'true' : choice
+          )
+        }}
+      >
+        <option value="">Choose an answer</option>
+        {options.map((option, index) => (
+          <option key={option.value} value={index}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    )
+  } else {
+    control = (
+      <Input
+        id={id}
+        aria-describedby={helpId}
+        value={typeof value === 'string' ? value : ''}
+        required={field.required}
+        type={field.type === 'string' ? 'text' : 'number'}
+        step={field.type === 'integer' ? 1 : 'any'}
+        min={field.minimum}
+        max={field.maximum}
+        minLength={field.minLength}
+        maxLength={field.maxLength}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    )
   }
-}
-
-function schemaProperties(
-  interaction: Extract<TerminalSessionInteraction, { kind: 'elicitation' }>
-): Record<string, SchemaProperty> {
-  const properties = interaction.requestedSchema?.properties
-  return properties && typeof properties === 'object'
-    ? (properties as Record<string, SchemaProperty>)
-    : {}
-}
-
-function initialValues(properties: Record<string, SchemaProperty>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(properties).map(([key, property]) => [
-      key,
-      property.default ??
-        (property.type === 'boolean'
-          ? false
-          : property.type === 'array'
-            ? []
-            : (property.oneOf?.[0]?.const ?? property.enum?.[0] ?? ''))
-    ])
+  if (field.type === 'array') {
+    return (
+      <fieldset className="space-y-2" aria-describedby={helpId}>
+        <legend className="text-sm font-medium">
+          {field.title}
+          {field.required && ' (required)'}
+        </legend>
+        {field.description && (
+          <p id={helpId} className="text-muted-foreground text-xs">
+            {field.description}
+          </p>
+        )}
+        {control}
+      </fieldset>
+    )
+  }
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="text-sm font-medium">
+        {field.title}
+        {field.required && ' (required)'}
+      </label>
+      {field.description && (
+        <p id={helpId} className="text-muted-foreground text-xs">
+          {field.description}
+        </p>
+      )}
+      {control}
+    </div>
   )
-}
-
-function responseErrorMessage(error: unknown): string {
-  if (typeof error === 'string' && error.trim()) return error
-  if (error instanceof Error && error.message.trim()) return error.message
-  return 'Could not send the response.'
 }
 
 export function SessionInteraction({
@@ -58,411 +145,475 @@ export function SessionInteraction({
   onOpenSession
 }: {
   session: TerminalSession
-  interaction?: TerminalSessionInteraction
+  interaction: NativeInteraction
   compact?: boolean
-  onOpenSession?: () => void
-}): React.JSX.Element | null {
-  const { prompt, respond, cancel, refreshInteraction } = useTerminalSessions()
-  const [value, setValue] = React.useState('')
-  const [values, setValues] = React.useState<Record<string, unknown>>(() =>
-    interaction?.kind === 'elicitation' && interaction.mode === 'form'
-      ? initialValues(schemaProperties(interaction))
-      : {}
-  )
-  const [submitting, setSubmitting] = React.useState(false)
-
-  const run = async (action: () => Promise<void>, success?: string): Promise<void> => {
-    setSubmitting(true)
+  onOpenSession?: (requestId: string) => void
+}): React.JSX.Element {
+  const { nativeDrafts, setNativeDraft, nativeBusy, respondNative } = useTerminalSessions()
+  const key = nativeKey(session, interaction.id)
+  const busy = nativeBusy[key] === true
+  const [validationError, setValidationError] = React.useState<string | null>(null)
+  const prefix = React.useId()
+  const parsed = React.useMemo(() => {
+    if (interaction.kind !== 'elicitation' || interaction.url || interaction.unsupported)
+      return { fields: [] }
     try {
-      await action()
-      if (success) toast.success(success)
+      return { fields: nativeFields(interaction.schema) }
     } catch (error) {
-      toast.error(responseErrorMessage(error))
-    } finally {
-      setSubmitting(false)
+      return { fields: [], error: nativeError(error) }
     }
+  }, [interaction])
+  const draft = nativeDrafts[key] ?? initialNativeDraft(parsed.fields)
+  const setValue = (name: string, value: string | boolean | string[] | undefined): void => {
+    const next = { ...draft }
+    if (value === undefined) delete next[name]
+    else
+      Object.defineProperty(next, name, {
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true
+      })
+    setNativeDraft(key, next)
   }
-
-  if (interaction?.kind === 'permission') {
-    return (
-      <div className={cn('space-y-2', compact && 'border-t px-3 py-2')}>
-        <p className="text-xs font-medium">{interaction.message}</p>
-        <div className="flex flex-wrap gap-2">
-          {interaction.options.map((option) => (
-            <Button
-              key={option.optionId}
-              size="sm"
-              variant={option.kind.startsWith('reject') ? 'outline' : 'default'}
-              disabled={submitting}
-              onClick={() =>
-                void run(() =>
-                  respond({
-                    id: session.id,
-                    requestId: interaction.requestId,
-                    kind: 'permission',
-                    optionId: option.optionId
-                  })
-                )
-              }
-            >
-              {submitting && <Loader2Icon className="size-3.5 animate-spin" />}
-              {option.name}
-            </Button>
-          ))}
-        </div>
-      </div>
-    )
+  const submit = (answer: NativeAnswer, prepare?: () => Promise<void>): void => {
+    setValidationError(null)
+    void respondNative(session, interaction.id, answer, prepare)
   }
-
-  if (interaction?.kind === 'elicitation') {
-    if (interaction.mode === 'url') {
-      return (
-        <div className={cn('space-y-2', compact && 'border-t px-3 py-2')}>
-          <p className="text-xs font-medium">{interaction.message}</p>
-          {interaction.url && (
-            <p className="text-muted-foreground break-all text-[11px]">{interaction.url}</p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              disabled={submitting || !interaction.url}
-              onClick={() =>
-                void run(async () => {
-                  if (!interaction.url) return
-                  const result = await window.api.system.openExternal(interaction.url)
-                  if (!result.ok) throw new Error(result.error)
-                  await respond({
-                    id: session.id,
-                    requestId: interaction.requestId,
-                    kind: 'elicitation',
-                    action: 'accept'
-                  })
-                })
-              }
-            >
-              Open link
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={submitting}
-              onClick={() =>
-                void run(() =>
-                  respond({
-                    id: session.id,
-                    requestId: interaction.requestId,
-                    kind: 'elicitation',
-                    action: 'decline'
-                  })
-                )
-              }
-            >
-              Decline
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={submitting}
-              onClick={() =>
-                void run(() =>
-                  respond({
-                    id: session.id,
-                    requestId: interaction.requestId,
-                    kind: 'elicitation',
-                    action: 'cancel'
-                  })
-                )
-              }
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )
-    }
-
-    const properties = schemaProperties(interaction)
-    if (compact && Object.keys(properties).length > 1) {
-      return (
-        <div className="flex items-center gap-2 border-t px-3 py-2">
-          <p className="min-w-0 flex-1 truncate text-xs">{interaction.message}</p>
-          <Button size="sm" onClick={onOpenSession}>
-            Respond
-          </Button>
-        </div>
-      )
-    }
-
-    return (
-      <form
-        className={cn('space-y-3', compact && 'border-t px-3 py-2')}
-        onSubmit={(event) => {
-          event.preventDefault()
-          void run(() =>
-            respond({
-              id: session.id,
-              requestId: interaction.requestId,
-              kind: 'elicitation',
-              action: 'accept',
-              content: values
-            })
-          )
-        }}
-      >
-        <p className="text-xs font-medium">{interaction.message}</p>
-        {Object.entries(properties).map(([key, property]) => {
-          const options =
-            property.oneOf?.map((option) => ({
-              value: String(option.const ?? ''),
-              label: option.title ?? String(option.const ?? '')
-            })) ?? property.enum?.map((option) => ({ value: option, label: option }))
-          const arrayOptions =
-            property.items?.anyOf?.map((option) => ({
-              value: String(option.const ?? ''),
-              label: option.title ?? String(option.const ?? '')
-            })) ?? property.items?.enum?.map((option) => ({ value: option, label: option }))
-          const label = property.title ?? key
-          const inputId = `session-${session.id}-${interaction.requestId}-${key}`
-          return (
-            <div key={key} className="space-y-1">
-              <label className="block text-xs font-medium" htmlFor={inputId}>
-                {label}
-              </label>
-              {property.type === 'array' && arrayOptions ? (
-                <div id={inputId} className="flex flex-wrap gap-2">
-                  {arrayOptions.map((option) => {
-                    const selected = Array.isArray(values[key])
-                      ? (values[key] as unknown[]).map(String)
-                      : []
-                    return (
-                      <label
-                        key={option.value}
-                        className="hover:bg-accent flex min-h-9 items-center gap-2 rounded-md border px-3 text-xs"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selected.includes(option.value)}
-                          onChange={(event) =>
-                            setValues((current) => ({
-                              ...current,
-                              [key]: event.target.checked
-                                ? [...selected, option.value]
-                                : selected.filter((value) => value !== option.value)
-                            }))
-                          }
-                        />
-                        {option.label}
-                      </label>
-                    )
-                  })}
-                </div>
-              ) : options ? (
-                <select
-                  id={inputId}
-                  className="border-input bg-background focus-visible:border-ring focus-visible:ring-ring/50 h-9 w-full rounded-md border px-3 text-sm shadow-xs outline-none focus-visible:ring-[3px]"
-                  value={String(values[key] ?? '')}
-                  onChange={(event) =>
-                    setValues((current) => ({ ...current, [key]: event.target.value }))
-                  }
-                >
-                  {options.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              ) : property.type === 'boolean' ? (
-                <span className="hover:bg-accent flex min-h-9 items-center gap-2 rounded-md border px-3 text-xs">
-                  <input
-                    id={inputId}
-                    type="checkbox"
-                    checked={Boolean(values[key])}
-                    onChange={(event) =>
-                      setValues((current) => ({ ...current, [key]: event.target.checked }))
-                    }
-                  />
-                  {property.description ?? `Enable ${label}`}
-                </span>
-              ) : (
-                <Input
-                  id={inputId}
-                  type={
-                    property.type === 'number' || property.type === 'integer' ? 'number' : 'text'
-                  }
-                  value={String(values[key] ?? '')}
-                  onChange={(event) =>
-                    setValues((current) => ({
-                      ...current,
-                      [key]:
-                        property.type === 'number' || property.type === 'integer'
-                          ? event.target.value === ''
-                            ? ''
-                            : event.target.valueAsNumber
-                          : event.target.value
-                    }))
-                  }
-                />
-              )}
-              {property.description && (
-                <span className="text-muted-foreground block text-[11px]">
-                  {property.description}
-                </span>
-              )}
-            </div>
-          )
-        })}
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" type="submit" disabled={submitting}>
-            {submitting && <Loader2Icon className="size-3.5 animate-spin" />}
-            Send response
-          </Button>
-          <Button
-            size="sm"
-            type="button"
-            variant="outline"
-            disabled={submitting}
-            onClick={() =>
-              void run(() =>
-                respond({
-                  id: session.id,
-                  requestId: interaction.requestId,
-                  kind: 'elicitation',
-                  action: 'decline'
-                })
-              )
-            }
-          >
-            Decline
-          </Button>
-          <Button
-            size="sm"
-            type="button"
-            variant="ghost"
-            disabled={submitting}
-            onClick={() =>
-              void run(() =>
-                respond({
-                  id: session.id,
-                  requestId: interaction.requestId,
-                  kind: 'elicitation',
-                  action: 'cancel'
-                })
-              )
-            }
-          >
-            Cancel
-          </Button>
-        </div>
-      </form>
-    )
-  }
-
-  if (session.status === 'waiting-input') {
-    return (
-      <div
-        className={cn(
-          'flex items-start gap-3 border-t bg-amber-500/[0.035] px-4 py-3',
-          compact && 'px-3 py-2'
-        )}
-        role="status"
-      >
-        <CircleAlertIcon className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium">Response controls are reconnecting</p>
-          <p className="text-muted-foreground mt-0.5 text-[11px] leading-relaxed">
-            {session.pendingPrompt ??
-              'Copilot is waiting, but the app has not received the response options yet.'}
-          </p>
-        </div>
-        <div className="flex shrink-0 gap-2">
-          {compact && onOpenSession ? (
-            <Button size="sm" variant="outline" onClick={onOpenSession}>
-              Open session
-            </Button>
-          ) : null}
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={submitting}
-            onClick={() =>
-              void run(async () => {
-                const recovered = await refreshInteraction(session.id)
-                if (!recovered) {
-                  throw new Error(
-                    'Response controls are still unavailable. If this session was opened in an external terminal, respond there.'
-                  )
-                }
-              })
-            }
-          >
-            {submitting ? (
-              <Loader2Icon className="size-3.5 animate-spin" />
-            ) : (
-              <RefreshCwIcon className="size-3.5" />
-            )}
-            Retry
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  if (session.status === 'working' || session.status === 'starting') {
-    if (compact) return null
-    return (
-      <div className="flex items-center justify-between gap-3 border-t px-4 py-3">
-        <p className="text-muted-foreground text-xs">Copilot is working.</p>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={submitting}
-          onClick={() => void run(() => cancel(session.id))}
-        >
-          <SquareIcon className="size-3" />
-          Stop
-        </Button>
-      </div>
-    )
-  }
-
-  if (session.status === 'done' || session.status === 'error') return null
+  const large =
+    interaction.kind === 'plan' ||
+    (interaction.kind === 'elicitation' &&
+      (parsed.fields.length !== 1 ||
+        interaction.url ||
+        interaction.unsupported ||
+        parsed.error ||
+        (!parsed.fields[0]?.choices && parsed.fields[0]?.type !== 'boolean') ||
+        (parsed.fields[0]?.choices?.length ?? 0) > 6)) ||
+    (interaction.kind === 'question' && interaction.choices.length > 6)
 
   return (
-    <form
-      className={cn('flex items-end gap-2 border-t px-4 py-3', compact && 'px-3 py-2')}
-      onSubmit={(event) => {
-        event.preventDefault()
-        const next = value.trim()
-        if (!next) return
-        void run(async () => {
-          await prompt(session.id, next)
-          setValue('')
-        })
-      }}
+    <section
+      id={`native-request-${interaction.id}`}
+      tabIndex={-1}
+      className="focus-visible:ring-ring space-y-3 outline-none focus-visible:ring-3"
+      aria-label="Copilot request"
     >
-      <label className="min-w-0 flex-1 space-y-1">
-        {!compact && <span className="text-xs font-medium">Message Copilot</span>}
-        <Textarea
-          rows={compact ? 1 : 2}
-          className={cn('min-h-9 resize-none', compact && 'h-9 min-h-9 py-2')}
-          value={value}
-          placeholder="Continue the session…"
-          onChange={(event) => setValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              event.currentTarget.form?.requestSubmit()
-            }
-          }}
-        />
-      </label>
-      <Button size="icon" type="submit" disabled={submitting || !value.trim()} aria-label="Send">
-        {submitting ? (
-          <Loader2Icon className="size-4 animate-spin" />
-        ) : (
-          <SendIcon className="size-4" />
+      <div className="flex items-start gap-2">
+        {interaction.kind === 'permission' && (
+          <ShieldQuestionIcon className="mt-0.5 size-4 shrink-0" />
         )}
-      </Button>
-    </form>
+        <p className="min-w-0 whitespace-pre-wrap break-words text-sm font-medium">
+          {interaction.message}
+        </p>
+      </div>
+      {compact && large ? (
+        <Button size="sm" variant="outline" onClick={() => onOpenSession?.(interaction.id)}>
+          Answer in session <ArrowUpRightIcon className="size-3.5" />
+        </Button>
+      ) : (
+        <fieldset disabled={busy} className="min-w-0 space-y-3">
+          {interaction.kind === 'permission' && (
+            <>
+              <p className="text-muted-foreground break-all font-mono text-xs">
+                {session.folderPath}
+              </p>
+              <pre className="bg-muted max-h-48 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap break-words">
+                {interaction.detail}
+              </pre>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => submit({ kind: 'permission', action: 'deny' })}
+                >
+                  Deny
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => submit({ kind: 'permission', action: 'allow-once' })}
+                >
+                  Allow once
+                </Button>
+                {interaction.sessionApproval && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    title={interaction.sessionApproval}
+                    onClick={() => submit({ kind: 'permission', action: 'allow-session' })}
+                  >
+                    Allow for this session
+                  </Button>
+                )}
+              </div>
+              {interaction.sessionApproval && (
+                <p className="text-muted-foreground text-xs">{interaction.sessionApproval}</p>
+              )}
+            </>
+          )}
+          {interaction.kind === 'elicitation' && (
+            <>
+              {interaction.unsupported || parsed.error ? (
+                <p role="alert" className="text-destructive text-sm">
+                  {interaction.unsupported || parsed.error} Cancel this request or switch to
+                  Terminal.
+                </p>
+              ) : interaction.url ? (
+                <div className="space-y-2">
+                  <p className="break-all font-mono text-xs">{interaction.url}</p>
+                  <p className="text-muted-foreground text-xs">
+                    Opens your browser. Consent to open is not a confirmation that sign-in has
+                    completed.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      submit({ kind: 'elicitation', action: 'accept' }, async () => {
+                        const result = await window.api.system.openExternal(interaction.url!)
+                        if (!result.ok) throw new Error(result.error)
+                      })
+                    }
+                  >
+                    Open link and continue
+                  </Button>
+                </div>
+              ) : (
+                <form
+                  className="space-y-3"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    try {
+                      submit({
+                        kind: 'elicitation',
+                        action: 'accept',
+                        content: nativeFormContent(parsed.fields, draft)
+                      })
+                    } catch (error) {
+                      setValidationError(nativeError(error))
+                    }
+                  }}
+                >
+                  {parsed.fields.map((field) => (
+                    <Field
+                      key={field.name}
+                      field={field}
+                      prefix={prefix}
+                      value={Object.hasOwn(draft, field.name) ? draft[field.name] : undefined}
+                      onChange={(value) => setValue(field.name, value)}
+                    />
+                  ))}
+                  <Button type="submit" size="sm">
+                    {busy ? 'Sending...' : 'Submit answer'}
+                  </Button>
+                </form>
+              )}
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => submit({ kind: 'elicitation', action: 'decline' })}
+                >
+                  Decline
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => submit({ kind: 'elicitation', action: 'cancel' })}
+                >
+                  Cancel request
+                </Button>
+              </div>
+            </>
+          )}
+          {interaction.kind === 'question' && (
+            <>
+              <div className="flex flex-wrap gap-2">
+                {interaction.choices.map((choice) => (
+                  <Button
+                    key={choice}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-auto min-h-8 whitespace-normal text-left"
+                    onClick={() => submit({ kind: 'question', answer: choice, wasFreeform: false })}
+                  >
+                    {choice}
+                  </Button>
+                ))}
+              </div>
+              {interaction.allowFreeform && (
+                <form
+                  className="space-y-2"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    submit({
+                      kind: 'question',
+                      answer: String(draft.answer ?? ''),
+                      wasFreeform: true
+                    })
+                  }}
+                >
+                  <Textarea
+                    aria-label="Your answer"
+                    value={String(draft.answer ?? '')}
+                    onChange={(event) => setValue('answer', event.target.value)}
+                    required
+                  />
+                  <Button type="submit" size="sm" disabled={!String(draft.answer ?? '').trim()}>
+                    Send answer
+                  </Button>
+                </form>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => submit({ kind: 'cancel' })}
+              >
+                Cancel request
+              </Button>
+            </>
+          )}
+          {interaction.kind === 'plan' && (
+            <>
+              {interaction.plan && (
+                <div className="max-h-72 overflow-auto">
+                  <MarkdownBody text={interaction.plan} />
+                </div>
+              )}
+              <Textarea
+                aria-label="Plan feedback"
+                placeholder="Feedback (optional)"
+                value={String(draft.feedback ?? '')}
+                onChange={(event) => setValue('feedback', event.target.value)}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    submit({
+                      kind: 'plan',
+                      approved: false,
+                      feedback: String(draft.feedback ?? '')
+                    })
+                  }
+                >
+                  Request changes
+                </Button>
+                {interaction.actions.map((action) => (
+                  <Button
+                    key={action}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      submit({
+                        kind: 'plan',
+                        approved: true,
+                        selectedAction: action,
+                        feedback: String(draft.feedback ?? '')
+                      })
+                    }
+                  >
+                    Approve: {action.replaceAll('_', ' ')}
+                  </Button>
+                ))}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => submit({ kind: 'cancel' })}
+                >
+                  Cancel request
+                </Button>
+              </div>
+            </>
+          )}
+          {interaction.kind === 'autoMode' && (
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => submit({ kind: 'autoMode', approved: false })}
+              >
+                Keep current model
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => submit({ kind: 'autoMode', approved: true })}
+              >
+                Switch to Auto once
+              </Button>
+            </div>
+          )}
+        </fieldset>
+      )}
+      {validationError && (
+        <p role="alert" className="text-destructive text-sm">
+          {validationError}
+        </p>
+      )}
+      {busy && (
+        <p role="status" className="text-muted-foreground text-xs">
+          Sending response...
+        </p>
+      )}
+    </section>
+  )
+}
+
+export function NativeSessionControls({
+  session,
+  compact = false,
+  onOpenSession
+}: {
+  session: TerminalSession
+  compact?: boolean
+  onOpenSession?: (requestId: string) => void
+}): React.JSX.Element | null {
+  const {
+    nativeById,
+    nativeDrafts,
+    nativeBusy,
+    nativeErrors,
+    setNativeDraft,
+    promptNative,
+    refreshNative
+  } = useTerminalSessions()
+  const snapshot = nativeById[session.id]
+  const current = snapshot?.session.generation === session.generation ? snapshot : undefined
+  const key = nativeKey(session)
+  const draft = nativeDrafts[key] ?? {}
+  const pending = current?.interactions ?? []
+  const finished = isTerminalSessionFinished(session.status)
+  const errors = Object.entries(nativeErrors).filter(
+    ([identity, error]) =>
+      error &&
+      (identity === 'connection' || identity.startsWith(key.slice(0, key.lastIndexOf(','))))
+  )
+  if (finished && !current?.error && errors.length === 0) return null
+  return (
+    <div
+      className={
+        compact
+          ? 'space-y-3 border-t p-3'
+          : 'max-h-[60%] shrink-0 space-y-3 overflow-y-auto border-t p-4'
+      }
+    >
+      {current?.error && (
+        <p className="text-destructive text-sm" role="alert">
+          {current.error}
+        </p>
+      )}
+      {errors.map(([identity, error]) => (
+        <p key={identity} role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
+      ))}
+      {!finished && !current && (
+        <div className="flex flex-wrap items-center gap-2">
+          <p role="status" className="text-sm">
+            Native controls are not synchronized.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              void refreshNative(session).catch((error) =>
+                console.error('[native sessions] refresh:', error)
+              )
+            }}
+          >
+            Refresh controls
+          </Button>
+        </div>
+      )}
+      {pending.length > 0 && (
+        <p role="status" className="text-muted-foreground text-xs">
+          {pending.length} pending request{pending.length === 1 ? '' : 's'}
+        </p>
+      )}
+      <div className="divide-y">
+        {(compact ? pending.slice(0, 1) : pending).map((interaction) => (
+          <div key={interaction.id} className="py-3 first:pt-0 last:pb-0">
+            <SessionInteraction
+              session={session}
+              interaction={interaction}
+              compact={compact}
+              onOpenSession={onOpenSession}
+            />
+          </div>
+        ))}
+      </div>
+      {compact && pending.length > 1 && (
+        <Button size="sm" variant="ghost" onClick={() => onOpenSession?.(pending[1].id)}>
+          View {pending.length - 1} more requests
+        </Button>
+      )}
+      {!finished && (!compact || pending.length === 0) && (
+        <form
+          className="space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault()
+            void promptNative(session, String(draft.message ?? ''))
+          }}
+        >
+          <label className="sr-only" htmlFor={`composer-${session.id}`}>
+            Message Copilot
+          </label>
+          <Textarea
+            id={`composer-${session.id}`}
+            rows={compact ? 2 : 3}
+            placeholder={
+              session.status === 'idle'
+                ? 'Message Copilot...'
+                : 'Draft your next instruction while Copilot works...'
+            }
+            value={String(draft.message ?? '')}
+            onChange={(event) => setNativeDraft(key, { message: event.target.value })}
+          />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-muted-foreground text-xs">
+              {session.status === 'idle'
+                ? 'Your next instruction continues this conversation.'
+                : 'Send when this turn has finished. Your draft is kept here.'}
+            </p>
+            {!compact && (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={session.status !== 'idle' || nativeBusy[key]}
+                onClick={() => void promptNative(session, '/plan', false)}
+              >
+                Enter plan mode
+              </Button>
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={
+                session.status !== 'idle' ||
+                !current ||
+                nativeBusy[key] ||
+                !String(draft.message ?? '').trim()
+              }
+            >
+              <SendIcon className="size-3.5" /> {nativeBusy[key] ? 'Sending...' : 'Send'}
+            </Button>
+          </div>
+        </form>
+      )}
+    </div>
   )
 }
