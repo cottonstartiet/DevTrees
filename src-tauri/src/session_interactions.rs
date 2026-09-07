@@ -209,7 +209,7 @@ pub fn check_schema(schema: &Value) -> AppResult<()> {
         .contains(&key.as_str())
     }) {
         return Err(fail(
-            "This form uses unsupported schema constraints. Use terminal mode.",
+            "This form uses unsupported schema constraints. End the session, select External Copilot terminal in Settings, then resume from History.",
         ));
     }
     let fields = schema
@@ -218,7 +218,7 @@ pub fn check_schema(schema: &Value) -> AppResult<()> {
         .ok_or_else(|| fail("This form has no supported field definitions."))?;
     if fields.len() > 64 || schema.to_string().len() > 262_144 {
         return Err(fail(
-            "This form is too large for native controls. Use the terminal.",
+            "This form is too large for in-app controls. End the session, select External Copilot terminal in Settings, then resume from History.",
         ));
     }
     if schema.get("type").is_some_and(|value| value != "object") {

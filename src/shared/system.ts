@@ -1,17 +1,5 @@
 export type LaunchResult = { ok: true } | { ok: false; error: string }
 
-export type LaunchCopilotCliRequest = {
-  folderPath: string
-  prompt: string
-  /**
-   * Pre-assigned Copilot session UUID (`copilot --session-id=...`). Supplying it lets the
-   * app mirror this externally launched session by tailing the CLI's event log.
-   */
-  sessionId?: string
-}
-
-export type LaunchCopilotResumeRequest = { folderPath: string; sessionId: string }
-
 export type AppInfo = { name: string; version: string }
 
 export const SystemIpcChannels = {
@@ -20,7 +8,5 @@ export const SystemIpcChannels = {
   OpenInWindowsTerminal: 'system:open-in-windows-terminal',
   OpenExternal: 'system:open-external',
   OpenPath: 'system:open-path',
-  LaunchCopilotCli: 'system:launch-copilot-cli',
-  LaunchCopilotResume: 'system:launch-copilot-resume',
   GetAppInfo: 'system:get-app-info'
 } as const

@@ -1,7 +1,7 @@
 /**
  * Read-only history of every Copilot CLI session recorded on this machine, sourced from the CLI's
  * own store at `~/.copilot/session-store.db`. These sessions are recorded uniformly regardless of
- * whether they were launched from DevTrees' embedded terminal or from a standalone terminal, so this
+ * whether they were launched from DevTrees' in-app chat or from a standalone terminal, so this
  * is the complete cross-source list. DevTrees only reads this store; it never writes to it.
  */
 export type CopilotHistorySession = {

@@ -15,7 +15,6 @@ export type CopilotLaunchOptions = {
   repository?: string
   /** Kanban task this launch belongs to, so a monitored terminal traces back to its task. */
   taskId?: string
-  transport?: 'sdk' | 'pty'
 }
 
 /** `sessionId` is the Copilot CLI session id the app is now mirroring. */
@@ -27,11 +26,10 @@ function basename(path: string): string {
 }
 
 /**
- * Returns a `launch` function that starts an interactive Copilot PTY owned by DevTrees.
- * Every launch site goes through this so the session remains interactive in the app.
+ * All launch sites use the backend's saved Settings choice, including resume.
  */
 export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<CopilotLaunchResult> {
-  const { start, launchTransport } = useTerminalSessions()
+  const { start } = useTerminalSessions()
 
   return useCallback(
     async (opts: CopilotLaunchOptions): Promise<CopilotLaunchResult> => {
@@ -45,12 +43,11 @@ export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<Co
         label: resolvedLabel,
         taskId,
         repository,
-        branch,
-        transport: opts.transport ?? launchTransport
+        branch
       })
       if (!session) return { ok: false, error: 'Could not start Copilot.' }
       return { ok: true, sessionId: session.id }
     },
-    [start, launchTransport]
+    [start]
   )
 }

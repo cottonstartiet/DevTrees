@@ -2045,21 +2045,6 @@
     "@types/babel__core" "^7.20.5"
     react-refresh "^0.18.0"
 
-"@xterm/addon-fit@^0.11.0":
-  version "0.11.0"
-  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@xterm/addon-fit/-/addon-fit-0.11.0.tgz#ba4778b69fcc9044a060c2176bbe077657d7b37e"
-  integrity sha1-ukd4tp/MkESgYMIXa74HdlfXs34=
-
-"@xterm/addon-serialize@^0.14.0":
-  version "0.14.0"
-  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@xterm/addon-serialize/-/addon-serialize-0.14.0.tgz#70c9f6dcd4632b086a0aa0deafd0e26e7482843b"
-  integrity sha1-cMn23NRjKwhqCqDer9DibnSChDs=
-
-"@xterm/xterm@^6.0.0":
-  version "6.0.0"
-  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@xterm/xterm/-/xterm-6.0.0.tgz#93637b0f2ee3a70718b5746a27c9c506af16745b"
-  integrity sha1-k2N7Dy7jpwcYtXRqJ8nFBq8WdFs=
-
 acorn-jsx@^5.3.2:
   version "5.3.2"
   resolved "https://registry.yarnpkg.com/acorn-jsx/-/acorn-jsx-5.3.2.tgz#7ed5bb55908b3b2f1bc55c6af1653bada7f07937"

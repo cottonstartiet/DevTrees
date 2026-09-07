@@ -189,15 +189,17 @@ floated on a soft drop-shadow.
 ### Status Bar (signature)
 A slim bottom bar surfacing repo/branch/PR state and background task progress — the cockpit's primary readout. Compact `text-xs`, muted foreground, with color only for live/error status.
 
-### Embedded Terminal
-The Copilot terminal uses a black background with light default text in both app
-themes. Its padding and viewport share the same background, and native CLI ANSI
-colors remain intact. Terminal tabs, toolbar, and transcript follow the app theme.
+### Copilot Session Modes
+Settings is the only launch-mode control: In-app chat or External Copilot terminal.
+The SQLite-backed preference defaults to external and applies to new and resumed
+sessions without moving active runtimes. External sessions use compact status and
+metadata only, without an in-app terminal or transcript. Their rows disappear on
+exit and are not restored after an app restart.
 
 ### Native Copilot Sessions
 Native sessions use the same compact transcript rows, followed by an inline
 request region and idle-only composer. The mode is explicit in the session
-header; Stop turn, End session, Resume and transport switching are distinct.
+header; Stop turn, End session, and Resume are distinct.
 Do not style this surface as a consumer chat app or introduce approval modals.
 
 Permission details precede Deny and Allow once. Approval must never be the
@@ -207,8 +209,8 @@ the first option. Pending request and composer drafts are shared across Session
 and Dashboard. Only explicit navigation to a request moves focus.
 
 Dashboard offers compact responses without nested cards; complex forms link to
-the exact request. Transport handoff uses an inline confirmation explaining that
-the old runtime ends and pending requests cannot be transferred.
+the exact request. To change a conversation's launch mode, end the runtime, change
+Settings, and resume. Pending requests do not transfer.
 
 ## 6. Do's and Don'ts
 

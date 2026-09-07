@@ -153,6 +153,19 @@ function TasksPageContainer({
         toast.info('A Copilot session for this task is already running.')
         return
       }
+      if (linkedId) {
+        try {
+          if (await window.api.terminalSessions.isRunning(linkedId)) {
+            toast.info(
+              'This task is still running in Copilot. End that session before starting another.'
+            )
+            return
+          }
+        } catch (error) {
+          toast.error(`Could not check the task's Copilot session: ${String(error)}`)
+          return
+        }
+      }
 
       // The worktree may have been deleted outside the app since the task was created.
       const worktreePath = resolvedTask.worktreePath
@@ -236,7 +249,9 @@ function TasksPageContainer({
       const linkedId = task.copilotSessionId
       if (!linkedId) return false
       const session = terminalSessionsById[linkedId]
-      if (!session) return false
+      // Transient external rows disappear on exit. The action checks ownership
+      // before launching a review; absence alone is not proof of completion.
+      if (!session) return true
       // "Work is done" = the session finished, or its turn ended and it is idle at the prompt.
       return isTerminalSessionFinished(session.status) || session.status === 'idle'
     },
@@ -245,6 +260,17 @@ function TasksPageContainer({
 
   const handleReviewTask = useCallback(
     async (task: Task): Promise<void> => {
+      if (task.copilotSessionId && !terminalSessionsById[task.copilotSessionId]) {
+        try {
+          if (await window.api.terminalSessions.isRunning(task.copilotSessionId)) {
+            toast.info('End the task session in its external terminal before starting a review.')
+            return
+          }
+        } catch (error) {
+          toast.error(`Could not check whether the task session ended: ${String(error)}`)
+          return
+        }
+      }
       const worktreePath = task.worktreePath
       const repository = repositories.find((r) => r.id === task.repositoryId) ?? null
       try {
@@ -307,9 +333,17 @@ function TasksPageContainer({
       }
 
       await moveTask(task.id, 'review')
-      toast.success(`Code review started for "${task.title}" in a terminal.`)
+      toast.success(`Code review started for "${task.title}".`)
     },
-    [checkWorktreeStatus, createWorktree, launchCopilot, moveTask, repositories, setTaskLocal]
+    [
+      checkWorktreeStatus,
+      createWorktree,
+      launchCopilot,
+      moveTask,
+      repositories,
+      setTaskLocal,
+      terminalSessionsById
+    ]
   )
 
   return (

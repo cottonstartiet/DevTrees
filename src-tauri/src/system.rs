@@ -157,41 +157,27 @@ fn is_valid_copilot_session_id(id: &str) -> bool {
     re.is_match(id)
 }
 
-fn launch_copilot_cli(folder_path: &str, prompt: &str, session_id: Option<&str>) -> LaunchResult {
+pub(crate) fn launch_copilot_cli(
+    folder_path: &str,
+    prompt: &str,
+    session_id: Option<&str>,
+) -> LaunchResult {
     if !cfg!(windows) {
         return LaunchResult::err("Copilot CLI launch is currently Windows-only.");
     }
     if folder_path.trim().is_empty() {
         return LaunchResult::err("folderPath is required.");
     }
-    // Pinning the session id up front (`--session-id` also *sets* the UUID for a new
-    // session) is what lets the app find and tail this session's event log afterwards.
-    let id_arg = match session_id {
-        Some(id) if !id.trim().is_empty() => {
-            if !is_valid_copilot_session_id(id) {
-                return LaunchResult::err("Invalid Copilot session id.");
-            }
-            format!(" --session-id={id}")
-        }
-        _ => String::new(),
+    if !Path::new(folder_path).is_dir() {
+        return LaunchResult::err("The session's working directory does not exist.");
+    }
+    let cli = match crate::copilot_sdk_sessions::installed_cli() {
+        Ok(path) => path,
+        Err(error) => return LaunchResult::err(error.to_string()),
     };
-    // An empty prompt launches a plain interactive Copilot session (`copilot --allow-all-tools`).
-    // A non-empty prompt is passed via `-i <prompt>` so Copilot executes it immediately. This is the
-    // external-terminal replacement for the former embedded "start Copilot session" feature.
-    let ps_command = if prompt.trim().is_empty() {
-        format!("copilot --allow-all-tools{id_arg}")
-    } else {
-        // PowerShell 5.1 does not escape embedded double quotes when serializing an argument
-        // to a native exe; pre-escape for the Windows CRT argv (double the backslash run
-        // preceding a quote, then escape the quote) so the whole prompt reaches copilot as one arg.
-        static QUOTE_RE: OnceLock<Regex> = OnceLock::new();
-        let quote_re = QUOTE_RE.get_or_init(|| Regex::new(r#"(\\*)""#).unwrap());
-        let native_escaped = quote_re.replace_all(prompt, |caps: &regex::Captures| {
-            let slashes = &caps[1];
-            format!("{slashes}{slashes}\\\"")
-        });
-        let ps_escaped = native_escaped.replace('\'', "''");
-        format!("copilot --allow-all-tools{id_arg} -i '{ps_escaped}'")
+    let ps_command = match copilot_command(&cli, prompt, session_id) {
+        Ok(command) => command,
+        Err(error) => return LaunchResult::err(error),
     };
     let encoded = encode_ps_command(&ps_command);
     launch_detached(
@@ -207,34 +193,40 @@ fn launch_copilot_cli(folder_path: &str, prompt: &str, session_id: Option<&str>)
     )
 }
 
-fn launch_copilot_resume(folder_path: &str, session_id: &str) -> LaunchResult {
-    if !cfg!(windows) {
-        return LaunchResult::err("Copilot CLI launch is currently Windows-only.");
-    }
-    if folder_path.trim().is_empty() {
-        return LaunchResult::err("folderPath is required.");
-    }
-    if !is_valid_copilot_session_id(session_id) {
-        return LaunchResult::err("Invalid Copilot session id.");
-    }
-    if !Path::new(folder_path).exists() {
-        return LaunchResult::err(format!(
-            "This session's folder no longer exists:\n{folder_path}"
-        ));
-    }
-    let ps_command = format!("copilot --allow-all-tools --session-id={session_id}");
-    let encoded = encode_ps_command(&ps_command);
-    launch_detached(
-        "wt",
-        &[
-            "-d".into(),
-            folder_path.into(),
-            "powershell".into(),
-            "-NoExit".into(),
-            "-EncodedCommand".into(),
-            encoded,
-        ],
-    )
+fn copilot_command(
+    cli: &Path,
+    prompt: &str,
+    session_id: Option<&str>,
+) -> Result<String, &'static str> {
+    // Pinning the session id up front (`--session-id` also *sets* the UUID for a new
+    // session) is what lets the app find and tail this session's event log afterwards.
+    let id_arg = match session_id {
+        Some(id) if !id.trim().is_empty() => {
+            if !is_valid_copilot_session_id(id) {
+                return Err("Invalid Copilot session id.");
+            }
+            format!(" --session-id={id}")
+        }
+        _ => String::new(),
+    };
+    let executable = cli.to_string_lossy().replace('\'', "''");
+    // Do not add automatic approval flags; the CLI retains the user's permission settings.
+    let ps_command = if prompt.trim().is_empty() {
+        format!("& '{executable}'{id_arg}")
+    } else {
+        // PowerShell 5.1 does not escape embedded double quotes when serializing an argument
+        // to a native exe; pre-escape for the Windows CRT argv (double the backslash run
+        // preceding a quote, then escape the quote) so the whole prompt reaches copilot as one arg.
+        static QUOTE_RE: OnceLock<Regex> = OnceLock::new();
+        let quote_re = QUOTE_RE.get_or_init(|| Regex::new(r#"(\\*)""#).unwrap());
+        let native_escaped = quote_re.replace_all(prompt, |caps: &regex::Captures| {
+            let slashes = &caps[1];
+            format!("{slashes}{slashes}\\\"")
+        });
+        let ps_escaped = native_escaped.replace('\'', "''");
+        format!("& '{executable}'{id_arg} -i '{ps_escaped}'")
+    };
+    Ok(ps_command)
 }
 
 // ----- Tauri commands -----
@@ -273,30 +265,52 @@ pub async fn system_open_path(app: AppHandle, folder_path: String) -> AppResult<
 }
 
 #[tauri::command]
-pub async fn system_launch_copilot_cli(
-    folder_path: String,
-    prompt: String,
-    session_id: Option<String>,
-) -> AppResult<LaunchResult> {
-    Ok(launch_copilot_cli(
-        &folder_path,
-        &prompt,
-        session_id.as_deref(),
-    ))
-}
-
-#[tauri::command]
-pub async fn system_launch_copilot_resume(
-    folder_path: String,
-    session_id: String,
-) -> AppResult<LaunchResult> {
-    Ok(launch_copilot_resume(&folder_path, &session_id))
-}
-
-#[tauri::command]
 pub async fn system_get_app_info(app: AppHandle) -> AppResult<AppInfo> {
     Ok(AppInfo {
         name: APP_DISPLAY_NAME.to_string(),
         version: app.package_info().version.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_commands_preserve_session_ids_without_granting_permissions() {
+        let cli = Path::new(r"C:\Copilot tools\copilot.exe");
+        let id = "00112233-4455-6677-8899-aabbccddeeff";
+        let resumed = copilot_command(cli, "", Some(id)).unwrap();
+        assert_eq!(
+            resumed,
+            format!("& 'C:\\Copilot tools\\copilot.exe' --session-id={id}")
+        );
+        assert!(!resumed.contains(" -i "));
+        let fresh = copilot_command(cli, "Review this worktree", Some(id)).unwrap();
+        assert!(fresh.ends_with(" -i 'Review this worktree'"));
+        for command in [resumed, fresh] {
+            assert!(!command.contains("--allow"));
+        }
+        assert!(copilot_command(cli, "", Some("bad;command")).is_err());
+    }
+
+    #[test]
+    fn powershell_encoding_preserves_unicode_newlines_and_quoted_prompts() {
+        let command = copilot_command(
+            Path::new(r"C:\User's tools\copilot.exe"),
+            "Don't run \"$env:INJECT\";\nReview \u{03bb}",
+            None,
+        )
+        .unwrap();
+        assert!(command.starts_with("& 'C:\\User''s tools\\copilot.exe'"));
+        assert!(command.contains("Don''t run \\\"$env:INJECT\\\";"));
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encode_ps_command(&command))
+            .unwrap();
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        assert_eq!(String::from_utf16(&units).unwrap(), command);
+    }
 }

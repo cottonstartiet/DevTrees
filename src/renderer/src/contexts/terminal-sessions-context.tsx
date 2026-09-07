@@ -1,18 +1,18 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from 'react'
 import { toast } from 'sonner'
-import { retainTerminals, syncTerminals } from '@/lib/pty-terminal'
 import { useNativeSessions, type NativeSessionsContextValue } from './use-native-sessions'
 
 import {
   isTerminalSessionFinished,
+  isExternalSessionEnded,
+  missingExternalSessions,
   type RespondTerminalSessionRequest,
   type StartTerminalSessionRequest,
   type TerminalSession,
   type TerminalSessionInteraction,
   type TerminalSessionStatus,
-  type TerminalTimelineEntry,
-  type WatchTerminalSessionRequest
+  type TerminalTimelineEntry
 } from '@shared/terminal-session'
 
 export interface TerminalSessionsContextValue extends NativeSessionsContextValue {
@@ -35,10 +35,6 @@ export interface TerminalSessionsContextValue extends NativeSessionsContextValue
   selectionRevision: number
   observationNow: number
   select: (id: string | null, interactionId?: string) => void
-  launchTransport: 'sdk' | 'pty'
-  setLaunchTransport: (transport: 'sdk' | 'pty') => void
-  /** Legacy support for mirroring an externally launched Copilot CLI session. */
-  watch: (req: WatchTerminalSessionRequest) => Promise<TerminalSession | null>
   start: (req: StartTerminalSessionRequest) => Promise<TerminalSession | null>
   prompt: (id: string, prompt: string) => Promise<void>
   respond: (req: RespondTerminalSessionRequest) => Promise<void>
@@ -116,10 +112,10 @@ export function TerminalSessionsProvider({
   const interactionRevisionRef = React.useRef<Record<string, number | undefined>>({})
   const [selectedId, setSelectedId] = React.useState<string | null>(null)
   const [selectedInteractionId, setSelectedInteractionId] = React.useState<string | null>(null)
-  const [launchTransport, setLaunchTransport] = React.useState<'sdk' | 'pty'>('sdk')
   const [selectionRevision, setSelectionRevision] = React.useState(0)
   const [observationNow, setObservationNow] = React.useState(Date.now)
   const revisionsRef = React.useRef<Record<string, number>>({})
+  const externalRevisionsRef = React.useRef<Record<string, number>>({})
   const forgottenRef = React.useRef(new Set<string>())
   const select = React.useCallback((id: string | null, interactionId?: string): void => {
     setSelectedId(id)
@@ -139,6 +135,41 @@ export function TerminalSessionsProvider({
     suppressNotificationsRef.current = suppressNotifications
   }, [suppressNotifications])
 
+  const clearLocalDetails = React.useCallback((id: string): void => {
+    delete interactionRequestIdRef.current[id]
+    delete interactionByIdRef.current[id]
+    delete interactionRevisionRef.current[id]
+    setEntriesById((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+    setInteractionById((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+    setInteractionRequestedAtById((current) => {
+      const next = { ...current }
+      delete next[id]
+      return next
+    })
+  }, [])
+
+  const removeLocalSession = React.useCallback(
+    (id: string): void => {
+      delete externalRevisionsRef.current[id]
+      clearLocalDetails(id)
+      setById((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+      setSelectedId((current) => (current === id ? null : current))
+    },
+    [clearLocalDetails]
+  )
+
   const ingest = React.useCallback(
     (session: TerminalSession, notify: boolean): void => {
       if (forgottenRef.current.has(session.id)) return
@@ -156,15 +187,16 @@ export function TerminalSessionsProvider({
         if (message) {
           const options = {
             description: message.description,
-            action: navigateRef.current
-              ? {
-                  label: 'Open session',
-                  onClick: () => {
-                    select(session.id)
-                    navigateRef.current?.()
+            action:
+              navigateRef.current && !isExternalSessionEnded(session)
+                ? {
+                    label: 'Open session',
+                    onClick: () => {
+                      select(session.id)
+                      navigateRef.current?.()
+                    }
                   }
-                }
-              : undefined
+                : undefined
           }
           if (message.kind === 'attention') toast.warning(message.title, options)
           else if (message.kind === 'error') toast.error(message.title, options)
@@ -172,9 +204,17 @@ export function TerminalSessionsProvider({
         }
       }
 
+      if (isExternalSessionEnded(session)) {
+        removeLocalSession(session.id)
+        return
+      }
+      if (session.transport === 'external') {
+        if (externalRevisionsRef.current[session.id] === undefined) clearLocalDetails(session.id)
+        externalRevisionsRef.current[session.id] = session.revision
+      } else delete externalRevisionsRef.current[session.id]
       setById((current) => ({ ...current, [session.id]: session }))
     },
-    [select]
+    [select, removeLocalSession, clearLocalDetails]
   )
 
   const notifyNativeInteraction = React.useCallback(
@@ -259,10 +299,17 @@ export function TerminalSessionsProvider({
   const loadHistory = React.useCallback(
     async (id: string): Promise<void> => {
       try {
-        mergeEntries(id, await window.api.terminalSessions.history(id))
+        const revision = revisionsRef.current[id]
+        const entries = await window.api.terminalSessions.history(id)
+        if (
+          externalRevisionsRef.current[id] === undefined &&
+          revisionsRef.current[id] === revision
+        ) {
+          mergeEntries(id, entries)
+        }
       } catch (error) {
         console.error('[sessions] transcript load failed:', error)
-        toast.error('Could not load the read-only transcript. The terminal is still available.')
+        toast.error('Could not load the session history.')
       }
     },
     [mergeEntries]
@@ -287,7 +334,7 @@ export function TerminalSessionsProvider({
       window.api.terminalSessions.onUpdate((update) => {
         if (cancelled) return
         ingest(update.session, true)
-        mergeEntries(update.session.id, update.entries)
+        if (update.session.transport !== 'external') mergeEntries(update.session.id, update.entries)
       }),
       window.api.terminalSessions.onInteraction(ingestLiveInteraction)
     ])
@@ -365,21 +412,6 @@ export function TerminalSessionsProvider({
     }
   }, [byId, refreshInteraction])
 
-  const watch = React.useCallback(
-    async (req: WatchTerminalSessionRequest): Promise<TerminalSession | null> => {
-      const result = await window.api.terminalSessions.watch(req)
-      if (!result.ok) {
-        toast.error(result.error)
-        return null
-      }
-      forgottenRef.current.delete(result.session.id)
-      registerNative(result.session.id)
-      ingest(result.session, false)
-      return result.session
-    },
-    [ingest, registerNative]
-  )
-
   const start = React.useCallback(
     async (req: StartTerminalSessionRequest): Promise<TerminalSession | null> => {
       const result = await window.api.terminalSessions.start(req)
@@ -388,13 +420,17 @@ export function TerminalSessionsProvider({
         return null
       }
       forgottenRef.current.delete(result.session.id)
-      registerNative(result.session.id)
+      if (result.session.transport === 'sdk') registerNative(result.session.id)
+      else {
+        forgetNative(result.session.id)
+        clearLocalDetails(result.session.id)
+      }
       ingest(result.session, false)
       select(result.session.id)
       navigateRef.current?.()
       return result.session
     },
-    [ingest, select, registerNative]
+    [ingest, select, registerNative, forgetNative, clearLocalDetails]
   )
 
   const prompt = React.useCallback(async (id: string, value: string): Promise<void> => {
@@ -412,6 +448,7 @@ export function TerminalSessionsProvider({
   const forget = React.useCallback(
     async (id: string): Promise<void> => {
       await window.api.terminalSessions.forget(id)
+      delete externalRevisionsRef.current[id]
       forgottenRef.current.add(id)
       forgetNative(id)
       delete statusRef.current[id]
@@ -453,20 +490,21 @@ export function TerminalSessionsProvider({
   )
 
   React.useEffect(() => {
-    syncTerminals(sessions)
-  }, [sessions])
-
-  React.useEffect(() => retainTerminals(), [])
-
-  React.useEffect(() => {
     let active = true
     let pending = false
     const reconcile = async (): Promise<void> => {
       if (pending) return
       pending = true
       try {
+        const before = { ...externalRevisionsRef.current }
         const list = await window.api.terminalSessions.list()
-        if (active) for (const session of list) ingest(session, true)
+        if (active) {
+          for (const id of missingExternalSessions(before, externalRevisionsRef.current, list)) {
+            revisionsRef.current[id] = Math.max(revisionsRef.current[id] ?? 0, before[id] + 1)
+            removeLocalSession(id)
+          }
+          for (const session of list) ingest(session, true)
+        }
       } catch (error) {
         console.error('[sessions] status reconciliation failed:', error)
       } finally {
@@ -486,7 +524,7 @@ export function TerminalSessionsProvider({
       clearInterval(timer)
       window.removeEventListener('focus', onFocus)
     }
-  }, [ingest])
+  }, [ingest, removeLocalSession])
 
   const value = React.useMemo<TerminalSessionsContextValue>(
     () => ({
@@ -499,12 +537,9 @@ export function TerminalSessionsProvider({
       loadHistory,
       selectedId,
       selectedInteractionId,
-      launchTransport,
-      setLaunchTransport,
       selectionRevision,
       observationNow,
       select,
-      watch,
       start,
       prompt,
       respond,
@@ -522,11 +557,9 @@ export function TerminalSessionsProvider({
       loadHistory,
       selectedId,
       selectedInteractionId,
-      launchTransport,
       selectionRevision,
       observationNow,
       select,
-      watch,
       start,
       prompt,
       respond,

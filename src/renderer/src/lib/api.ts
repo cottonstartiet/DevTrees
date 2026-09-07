@@ -11,8 +11,9 @@
  *    `result()` converts any such rejection into the discriminated-union failure the UI already
  *    handles, so a backend hiccup surfaces as an in-app error instead of an unhandled rejection.
  */
-import { Channel, invoke } from '@tauri-apps/api/core'
-import type { TerminalCheckpoint, TerminalOutput, TerminalTarget } from '@shared/terminal-session'
+import { invoke } from '@tauri-apps/api/core'
+import type { TerminalTarget } from '@shared/terminal-session'
+import type { SessionLaunchMode } from '@shared/settings'
 import type { NativeAnswer, NativeSnapshot } from '@shared/native-session'
 import { listen } from '@tauri-apps/api/event'
 
@@ -86,12 +87,7 @@ import type {
   RepoPrThreadsRequest,
   RepoPrThreadsResult
 } from '@shared/reviews'
-import type {
-  AppInfo,
-  LaunchCopilotCliRequest,
-  LaunchCopilotResumeRequest,
-  LaunchResult
-} from '@shared/system'
+import type { AppInfo, LaunchResult } from '@shared/system'
 import type { CopilotHistoryListResult } from '@shared/copilot-history'
 import type { CopilotAnalyticsResult } from '@shared/copilot-analytics'
 import type {
@@ -116,8 +112,7 @@ import {
   type TerminalSessionInteractionUpdate,
   type TerminalSessionResult,
   type TerminalSessionUpdate,
-  type TerminalTimelineEntry,
-  type WatchTerminalSessionRequest
+  type TerminalTimelineEntry
 } from '@shared/terminal-session'
 
 type Args = Record<string, unknown>
@@ -361,11 +356,12 @@ const api = {
       result('system_open_external', { url }, (error) => ({ ok: false, error })),
     openPath: (folderPath: string): Promise<LaunchResult> =>
       result('system_open_path', { folderPath }, (error) => ({ ok: false, error })),
-    launchCopilotCli: (req: LaunchCopilotCliRequest): Promise<LaunchResult> =>
-      result('system_launch_copilot_cli', { ...req }, (error) => ({ ok: false, error })),
-    launchCopilotResume: (req: LaunchCopilotResumeRequest): Promise<LaunchResult> =>
-      result('system_launch_copilot_resume', { ...req }, (error) => ({ ok: false, error })),
     getAppInfo: (): Promise<AppInfo> => invoke('system_get_app_info')
+  },
+  settings: {
+    sessionLaunchMode: (): Promise<SessionLaunchMode> => invoke('settings_session_launch_mode'),
+    setSessionLaunchMode: (mode: SessionLaunchMode): Promise<void> =>
+      invoke('settings_set_session_launch_mode', { mode })
   },
   copilotHistory: {
     list: (): Promise<CopilotHistoryListResult> =>
@@ -400,35 +396,10 @@ const api = {
       listen<NativeSnapshot>('native-sessions:update', (event) => cb(event.payload))
   },
   terminalSessions: {
-    attach: async (
-      target: TerminalTarget,
-      attachment: string,
-      onOutput: (output: TerminalOutput) => void
-    ): Promise<void> => {
-      const channel = new Channel<TerminalOutput>(onOutput)
-      await invoke('pty_attach', { target, attachment, channel })
-    },
-    acknowledge: (
-      target: TerminalTarget,
-      attachment: string,
-      seq: number,
-      checkpoint?: TerminalCheckpoint
-    ): Promise<void> => invoke('pty_ack', { target, attachment, seq, checkpoint }),
-    detach: (target: TerminalTarget, attachment: string): Promise<void> =>
-      invoke('pty_detach', { target, attachment }),
-    write: (target: TerminalTarget, data: number[]): Promise<void> =>
-      invoke('pty_write', { target, data }),
-    resize: (target: TerminalTarget, rows: number, cols: number): Promise<void> =>
-      invoke('pty_resize', { target, rows, cols }),
-    stop: (target: TerminalTarget): Promise<void> => invoke('pty_stop', { target }),
     list: (): Promise<TerminalSession[]> => invoke('terminal_sessions_list'),
     start: (req: StartTerminalSessionRequest): Promise<TerminalSessionResult> =>
       result('terminal_sessions_start', { req }, (error) => ({ ok: false, error })),
-    switch: (target: TerminalTarget, transport: 'sdk' | 'pty'): Promise<TerminalSessionResult> =>
-      result('terminal_sessions_switch', { ...target, transport }, (error) => ({
-        ok: false,
-        error
-      })),
+    isRunning: (id: string): Promise<boolean> => invoke('terminal_sessions_is_running', { id }),
     prompt: (id: string, prompt: string): Promise<void> =>
       invoke('terminal_sessions_prompt', { id, prompt }),
     interaction: (id: string): Promise<TerminalSessionInteraction | null> =>
@@ -436,8 +407,6 @@ const api = {
     respond: (req: RespondTerminalSessionRequest): Promise<void> =>
       invoke('terminal_sessions_respond', { req }),
     cancel: (id: string): Promise<void> => invoke('terminal_sessions_cancel', { id }),
-    watch: (req: WatchTerminalSessionRequest): Promise<TerminalSessionResult> =>
-      result('terminal_sessions_watch', { req }, (error) => ({ ok: false, error })),
     forget: (id: string): Promise<void> => invoke('terminal_sessions_forget', { id }),
     history: (id: string): Promise<TerminalTimelineEntry[]> =>
       invoke('terminal_sessions_history', { id }),

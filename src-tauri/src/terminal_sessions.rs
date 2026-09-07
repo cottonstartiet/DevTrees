@@ -1,14 +1,14 @@
-//! Managed Copilot CLI sessions plus compatibility monitoring for legacy external terminals.
+//! Native Copilot sessions and app-lifetime-only external CLI status.
 //!
-//! New sessions use the native Copilot TUI in an app-owned PTY. This module observes
-//! CLI event logs for attention and read-only history; pty_sessions owns live I/O.
+//! External sessions are observed for attention without streaming transcripts or
+//! persisting watches. Native sessions retain their SDK runtime and saved history.
 //! Legacy ACP helpers remain for existing command compatibility.
 //!
 //! The compatibility tail is driven by a single polling task. Each
 //! poll reads only the bytes appended since the last cursor, so watching a long-running
 //! session stays cheap even when its log grows to hundreds of megabytes.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -143,7 +143,7 @@ pub struct WatchTerminalSessionRequest {
 }
 
 #[derive(Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartTerminalSessionRequest {
     pub folder_path: String,
     pub label: String,
@@ -157,15 +157,6 @@ pub struct StartTerminalSessionRequest {
     pub repository: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
-    #[serde(default)]
-    pub transport: Option<SessionTransport>,
-}
-
-#[derive(Clone, Copy, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SessionTransport {
-    Sdk,
-    Pty,
 }
 
 #[derive(Serialize)]
@@ -341,8 +332,6 @@ struct Watch {
     cursor: u64,
     /// Source line index of the next event, giving timeline entries a stable order.
     seq: u64,
-    /// Timeline entries awaiting their completion event (tool calls, permission prompts).
-    open_entries: Vec<TerminalTimelineEntry>,
     /// The CLI drops an `inuse.<pid>.lock` file while the process is attached. Once we
     /// have seen one, its disappearance is a reliable "the terminal was closed" signal.
     saw_lock: bool,
@@ -359,6 +348,7 @@ struct Watch {
 pub struct TerminalSessionMonitor {
     watches: Mutex<HashMap<String, Watch>>,
     started: Mutex<bool>,
+    launching: Mutex<HashSet<String>>,
 }
 
 /// Location of the Copilot CLI's per-session state folders.
@@ -469,7 +459,6 @@ fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
         },
         cursor: cursor.max(0) as u64,
         seq: seq.max(0) as u64,
-        open_entries: Vec::new(),
         saw_lock: false,
         missing_polls: 0,
         managed: row.get::<_, i64>(13)? != 0,
@@ -772,7 +761,7 @@ fn apply_event(session: &mut TerminalSession, event: &RawEvent) -> bool {
         }
         "session.error" => {
             // A CLI error may end a turn, not the process. Keep its terminal usable.
-            session.status = if session.transport == "pty" {
+            session.status = if session.transport == "external" {
                 TerminalSessionStatus::Idle
             } else {
                 TerminalSessionStatus::Error
@@ -783,6 +772,7 @@ fn apply_event(session: &mut TerminalSession, event: &RawEvent) -> bool {
                 .and_then(|v| v.as_str())
                 .unwrap_or("The Copilot session reported an error.");
             session.last_activity = summarize(message);
+            session.pending_prompt = None;
         }
         _ => {}
     }
@@ -1389,13 +1379,64 @@ fn history_cursor(path: &PathBuf) -> AppResult<(u64, u64)> {
 }
 
 /// True while the CLI holds the session folder open (`inuse.<pid>.lock`).
-fn has_lock(dir: &PathBuf) -> bool {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return false;
+fn has_lock(dir: &PathBuf) -> AppResult<bool> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
     };
-    entries
-        .flatten()
-        .any(|entry| entry.file_name().to_string_lossy().starts_with("inuse."))
+    for entry in entries {
+        let name = entry?.file_name();
+        let name = name.to_string_lossy();
+        if let Some(pid) = name
+            .strip_prefix("inuse.")
+            .and_then(|s| s.strip_suffix(".lock"))
+        {
+            let pid = pid
+                .parse::<u32>()
+                .map_err(|_| AppError::msg("Invalid Copilot ownership lock."))?;
+            if process_is_running(pid)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn process_is_running(pid: u32) -> AppResult<bool> {
+    #[cfg(windows)]
+    {
+        use winapi::shared::winerror::{ERROR_INVALID_PARAMETER, WAIT_TIMEOUT};
+        use winapi::um::{
+            handleapi::CloseHandle, processthreadsapi::OpenProcess, synchapi::WaitForSingleObject,
+            winbase::WAIT_OBJECT_0, winnt::SYNCHRONIZE,
+        };
+        unsafe {
+            let handle = OpenProcess(SYNCHRONIZE, 0, pid);
+            if handle.is_null() {
+                let error = std::io::Error::last_os_error();
+                return if error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+                    Ok(false)
+                } else {
+                    Err(error.into())
+                };
+            }
+            let status = WaitForSingleObject(handle, 0);
+            CloseHandle(handle);
+            match status {
+                WAIT_TIMEOUT => Ok(true),
+                WAIT_OBJECT_0 => Ok(false),
+                _ => Err(AppError::msg("Could not inspect the Copilot process.")),
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // External launching is Windows-only. Conservatively refuse a competing
+        // owner on other platforms rather than deleting or ignoring its lock.
+        let _ = pid;
+        Ok(true)
+    }
 }
 
 // ----- Polling loop -----
@@ -1411,6 +1452,9 @@ fn emit(app: &AppHandle, session: &TerminalSession, entries: Vec<TerminalTimelin
 }
 
 fn persist(app: &AppHandle, session: &TerminalSession, cursor: u64, seq: u64) {
+    if session.transport == "external" {
+        return;
+    }
     if let Some(state) = app.try_state::<DbState>() {
         if let Ok(db) = state.0.lock() {
             let _ = upsert(&db, session, cursor, seq);
@@ -1470,153 +1514,109 @@ fn set_managed_status(
     emit(app, &snapshot.0, Vec::new());
 }
 
-/// One tick: advance every watched session, emitting and persisting the ones that moved.
-fn poll_once(app: &AppHandle) {
-    let Some(monitor) = app.try_state::<TerminalSessionMonitor>() else {
-        return;
-    };
-    let Ok(root) = session_state_root() else {
-        return;
-    };
-
-    let mut changed: Vec<(TerminalSession, u64, u64, Vec<TerminalTimelineEntry>)> = Vec::new();
-    {
-        let Ok(mut watches) = monitor.watches.lock() else {
-            return;
-        };
-        for watch in watches.values_mut() {
-            if watch.session.status.is_final() {
-                continue;
-            }
-            if watch.managed && watch.session.transport != "pty" {
-                continue;
-            }
-            let dir = root.join(&watch.session.id);
-            if !dir.exists() {
-                watch.missing_polls += 1;
-                if watch.session.transport == "pty" {
-                    if watch.session.observation_error.is_none() {
-                        watch.session.observation_error = Some(
-                            "Waiting for the CLI status log. Open the terminal to inspect startup."
-                                .into(),
-                        );
-                        watch.session.revision += 1;
-                        changed.push((watch.session.clone(), watch.cursor, watch.seq, Vec::new()));
-                    }
-                    continue;
-                }
-                // ~2 minutes without the CLI ever creating its folder: the launch failed
-                // or the user closed the window before Copilot started.
-                if watch.missing_polls > 120 {
-                    watch.session.status = TerminalSessionStatus::Done;
-                    watch.session.last_activity = "Terminal closed before Copilot started".into();
-                    watch.session.updated_at = now_ms();
-                    changed.push((watch.session.clone(), watch.cursor, watch.seq, Vec::new()));
-                }
-                continue;
-            }
-            watch.missing_polls = 0;
-
-            let mut dirty = false;
-            let mut entries: Vec<TerminalTimelineEntry> = Vec::new();
-            let log_path = dir.join("events.jsonl");
-            let lines = read_new_lines(&log_path, &mut watch.cursor);
-            if let Err(error) = &lines {
-                if error.kind() == std::io::ErrorKind::InvalidData {
-                    watch.log_error = Some(error.to_string());
-                }
-            }
-            let observation_error = lines
-                .as_ref()
-                .err()
-                .map(|error| format!("Session status unavailable: {error}"))
-                .or_else(|| watch.log_error.clone());
-            if watch.session.observation_error != observation_error {
-                watch.session.observation_error = observation_error;
-                dirty = true;
-            }
-            if watch.session.observation_error.is_none()
-                && now_ms() - watch.session.observed_at.unwrap_or(0) >= 5000
-            {
-                watch.session.observed_at = Some(now_ms());
-                dirty = true;
-            }
-            for line in lines.unwrap_or_default() {
-                let seq = watch.seq;
-                watch.seq += 1;
-                // Unknown event types are forward-compatible; malformed records make
-                // observation explicitly unavailable rather than implying no wait.
-                if line.trim().is_empty() {
-                    continue;
-                }
-                if let Ok(event) = serde_json::from_str::<RawEvent>(&line) {
-                    let before_attention =
-                        (watch.session.status, watch.session.pending_prompt.clone());
-                    dirty |= apply_event(&mut watch.session, &event);
-                    watch.attention.update(
-                        &event.event_type,
-                        &event.data,
-                        &describe_permission(&event.data),
-                    );
-                    if let Some(prompt) = watch.attention.prompt() {
-                        watch.session.status = TerminalSessionStatus::WaitingInput;
-                        watch.session.pending_prompt = Some(prompt.to_string());
-                    } else if watch.session.status == TerminalSessionStatus::WaitingInput {
-                        watch.session.status = TerminalSessionStatus::Working;
-                        watch.session.pending_prompt = None;
-                    }
-                    dirty |= before_attention
-                        != (watch.session.status, watch.session.pending_prompt.clone());
-                    if let Some(entry) = timeline_entry(&event, seq, &mut watch.open_entries) {
-                        entries.push(entry);
-                    }
-                } else {
-                    watch.log_error =
-                        Some("A CLI status record could not be read. Inspect the terminal.".into());
-                    watch.session.observation_error = watch.log_error.clone();
-                    dirty = true;
-                }
-            }
-            if !entries.is_empty() {
-                dirty = true;
-            }
-
-            let locked = has_lock(&dir);
-            if locked {
-                watch.saw_lock = true;
-            } else if watch.session.transport != "pty"
-                && watch.saw_lock
-                && !watch.session.status.is_final()
-            {
-                // The terminal window was closed. Whatever the last state was, the
-                // session is over.
-                watch.session.status = TerminalSessionStatus::Done;
-                watch.session.pending_prompt = None;
-                dirty = true;
-            }
-
-            if dirty {
-                watch.session.updated_at = now_ms();
-                watch.session.revision += 1;
-                changed.push((watch.session.clone(), watch.cursor, watch.seq, entries));
-            }
+fn observe_external(watch: &mut Watch, dir: &PathBuf) -> AppResult<()> {
+    let locked = has_lock(dir)?;
+    if locked {
+        watch.saw_lock = true;
+        watch.missing_polls = 0;
+    } else if watch.saw_lock {
+        watch.session.status = TerminalSessionStatus::Done;
+        watch.session.pending_prompt = None;
+        watch.session.last_activity = "External Copilot session ended".into();
+        return Ok(());
+    } else {
+        watch.missing_polls += 1;
+        if watch.missing_polls > 120 {
+            watch.session.status = TerminalSessionStatus::Error;
+            watch.session.pending_prompt = None;
+            watch.session.last_activity =
+                "Copilot did not start. Check the external terminal for startup errors.".into();
+            return Ok(());
         }
     }
-
-    for (session, cursor, seq, entries) in changed {
-        {
-            let Ok(watches) = monitor.watches.lock() else {
-                continue;
-            };
-            if !watches
-                .get(&session.id)
-                .is_some_and(|watch| watch.session.revision == session.revision)
-            {
+    let lines = read_new_lines(&dir.join("events.jsonl"), &mut watch.cursor).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::InvalidData {
+            watch.log_error = Some(error.to_string());
+        }
+        error
+    })?;
+    for line in lines {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let event = match serde_json::from_str::<RawEvent>(&line) {
+            Ok(event) => event,
+            Err(error) => {
+                watch.log_error = Some(format!("A CLI status record could not be read: {error}"));
                 continue;
             }
-            persist(app, &session, cursor, seq);
+        };
+        apply_event(&mut watch.session, &event);
+        watch.attention.update(
+            &event.event_type,
+            &event.data,
+            &describe_permission(&event.data),
+        );
+        if let Some(prompt) = watch.attention.prompt() {
+            watch.session.status = TerminalSessionStatus::WaitingInput;
+            watch.session.pending_prompt = Some(prompt.to_string());
+        } else if watch.session.status == TerminalSessionStatus::WaitingInput {
+            watch.session.status = TerminalSessionStatus::Working;
+            watch.session.pending_prompt = None;
         }
-        emit(app, &session, entries);
+    }
+    if let Some(error) = &watch.log_error {
+        return Err(AppError::msg(error.clone()));
+    }
+    Ok(())
+}
+
+/// External watches publish status only and are never saved or restored.
+fn poll_once(app: &AppHandle) {
+    let result = (|| -> AppResult<()> {
+        let monitor = app.state::<TerminalSessionMonitor>();
+        let root = session_state_root()?;
+        let mut watches = monitor
+            .watches
+            .lock()
+            .map_err(|_| AppError::msg("Session mutex poisoned."))?;
+        for watch in watches
+            .values_mut()
+            .filter(|watch| watch.session.transport == "external")
+        {
+            let before = (
+                watch.session.status,
+                watch.session.last_activity.clone(),
+                watch.session.pending_prompt.clone(),
+                watch.session.observation_error.clone(),
+            );
+            if let Err(error) = observe_external(watch, &root.join(&watch.session.id)) {
+                watch.session.observation_error =
+                    Some(format!("Session status unavailable: {error}"));
+            } else {
+                watch.session.observation_error = None;
+                watch.session.observed_at = Some(now_ms());
+            }
+            if before
+                != (
+                    watch.session.status,
+                    watch.session.last_activity.clone(),
+                    watch.session.pending_prompt.clone(),
+                    watch.session.observation_error.clone(),
+                )
+            {
+                watch.session.updated_at = now_ms();
+            }
+            watch.session.revision += 1;
+            emit(app, &watch.session, Vec::new());
+        }
+        watches.retain(|_, watch| {
+            watch.session.transport != "external" || !watch.session.status.is_final()
+        });
+        Ok(())
+    })();
+    if let Err(error) = result {
+        eprintln!("External session status polling failed: {error}");
     }
 }
 
@@ -1662,7 +1662,7 @@ pub fn init(app: &AppHandle) -> AppResult<()> {
             .lock()
             .map_err(|_| AppError::msg("terminal session monitor mutex poisoned"))?;
         for mut watch in restored {
-            if (watch.managed || matches!(watch.session.transport.as_str(), "pty" | "sdk"))
+            if (watch.managed || watch.session.transport == "sdk")
                 && !watch.session.status.is_final()
             {
                 watch.session.status = TerminalSessionStatus::Done;
@@ -1691,6 +1691,154 @@ pub async fn terminal_sessions_list(app: AppHandle) -> AppResult<Vec<TerminalSes
         .values()
         .map(|watch| watch.session.clone())
         .collect())
+}
+
+struct LaunchReservation {
+    app: AppHandle,
+    id: String,
+}
+
+impl LaunchReservation {
+    fn new(app: &AppHandle, id: &str) -> AppResult<Self> {
+        let monitor = app.state::<TerminalSessionMonitor>();
+        let mut launching = monitor
+            .launching
+            .lock()
+            .map_err(|_| AppError::msg("Launch mutex poisoned."))?;
+        if !launching.insert(id.to_string()) {
+            return Err(AppError::msg(
+                "This conversation is already being launched.",
+            ));
+        }
+        Ok(Self {
+            app: app.clone(),
+            id: id.to_string(),
+        })
+    }
+}
+
+impl Drop for LaunchReservation {
+    fn drop(&mut self) {
+        match self.app.state::<TerminalSessionMonitor>().launching.lock() {
+            Ok(mut launching) => {
+                launching.remove(&self.id);
+            }
+            Err(error) => eprintln!("Could not release session launch reservation: {error}"),
+        }
+    }
+}
+
+fn session_is_running(app: &AppHandle, id: &str) -> AppResult<bool> {
+    if crate::copilot_sdk_sessions::has_unreleased_session(app, id)? {
+        return Ok(true);
+    }
+    let monitor = app.state::<TerminalSessionMonitor>();
+    if monitor
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("Session mutex poisoned."))?
+        .get(id)
+        .is_some_and(|watch| !watch.session.status.is_final())
+    {
+        return Ok(true);
+    }
+    has_lock(&session_state_root()?.join(id))
+}
+
+#[tauri::command]
+pub fn terminal_sessions_is_running(app: AppHandle, id: String) -> AppResult<bool> {
+    let id = uuid::Uuid::parse_str(&id)
+        .map_err(|_| AppError::msg("Invalid Copilot session id."))?
+        .to_string();
+    session_is_running(&app, &id)
+}
+
+fn start_external(
+    app: &AppHandle,
+    req: StartTerminalSessionRequest,
+    id: String,
+) -> AppResult<TerminalSessionResult> {
+    let (cursor, seq) = history_cursor(&session_state_root()?.join(&id).join("events.jsonl"))?;
+    let monitor = app.state::<TerminalSessionMonitor>();
+    let mut watches = monitor
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("Session mutex poisoned."))?;
+    let state = app.state::<DbState>();
+    let db = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("Database mutex poisoned."))?;
+    let saved = load_one(&db, &id)?;
+    let previous = watches
+        .get(&id)
+        .or(saved.as_ref())
+        .map(|watch| &watch.session);
+    let now = now_ms();
+    let session = TerminalSession {
+        id: id.clone(),
+        task_id: req
+            .task_id
+            .or_else(|| previous.and_then(|session| session.task_id.clone())),
+        folder_path: req.folder_path,
+        label: req.label,
+        repository: req
+            .repository
+            .or_else(|| previous.and_then(|session| session.repository.clone())),
+        branch: req
+            .branch
+            .or_else(|| previous.and_then(|session| session.branch.clone())),
+        status: TerminalSessionStatus::Starting,
+        last_activity: "Starting Copilot in an external terminal".into(),
+        pending_prompt: None,
+        created_at: now,
+        updated_at: now,
+        transport: "external".into(),
+        generation: Some(uuid::Uuid::new_v4().to_string()),
+        revision: (now as u64).max(previous.map_or(1, |session| session.revision + 1)),
+        observed_at: None,
+        observation_error: None,
+    };
+    let tx = db.unchecked_transaction()?;
+    tx.execute("DELETE FROM terminal_sessions WHERE id = ?1", [&id])?;
+    let launched = crate::system::launch_copilot_cli(
+        &session.folder_path,
+        if req.resume_session_id.is_some() {
+            ""
+        } else {
+            req.prompt.as_deref().unwrap_or("")
+        },
+        Some(&id),
+    );
+    if !launched.ok {
+        return Err(AppError::msg(launched.error.unwrap_or_else(|| {
+            "Could not launch the external terminal.".into()
+        })));
+    }
+    // Keep the watch even if persistence cleanup fails: the external process has
+    // already started, and retrying must not create a second controller.
+    watches.insert(
+        id,
+        Watch {
+            session: session.clone(),
+            cursor,
+            seq,
+            saw_lock: false,
+            missing_polls: 0,
+            managed: false,
+            attention: crate::session_attention::Attention::default(),
+            log_error: None,
+        },
+    );
+    drop(watches);
+    ensure_polling(app);
+    emit(app, &session, Vec::new());
+    tx.commit()?;
+    Ok(TerminalSessionResult {
+        ok: true,
+        session: Some(session),
+        error: None,
+    })
 }
 
 /// Begin mirroring an externally launched Copilot CLI session.
@@ -1760,7 +1908,6 @@ fn watch_terminal_session(
                 session: session.clone(),
                 cursor,
                 seq,
-                open_entries: Vec::new(),
                 saw_lock: false,
                 missing_polls: 0,
                 managed: false,
@@ -1777,23 +1924,6 @@ fn watch_terminal_session(
         session: Some(session),
         error: None,
     })
-}
-
-#[tauri::command]
-pub async fn terminal_sessions_watch(
-    app: AppHandle,
-    req: WatchTerminalSessionRequest,
-) -> AppResult<TerminalSessionResult> {
-    watch_terminal_session(&app, req)
-}
-
-pub fn watch_pty_session(
-    app: &AppHandle,
-    req: &StartTerminalSessionRequest,
-    id: &str,
-    generation: &str,
-) -> AppResult<TerminalSessionResult> {
-    watch_managed_session(app, req, id, generation, "pty")
 }
 
 pub(crate) fn watch_managed_session(
@@ -1850,17 +1980,13 @@ pub(crate) fn watch_managed_session(
                 .clone()
                 .or_else(|| previous.and_then(|watch| watch.session.branch.clone())),
             status: TerminalSessionStatus::Starting,
-            last_activity: if transport == "sdk" {
-                "Starting native Copilot session".into()
-            } else {
-                "Starting Copilot in the embedded terminal".into()
-            },
+            last_activity: "Starting native Copilot session".into(),
             pending_prompt: None,
             created_at: previous.map_or(now, |watch| watch.session.created_at),
             updated_at: now,
             transport: transport.into(),
             generation: Some(generation.into()),
-            revision: previous.map_or(1, |watch| watch.session.revision + 1),
+            revision: (now as u64).max(previous.map_or(1, |watch| watch.session.revision + 1)),
             observed_at: None,
             observation_error: None,
         };
@@ -1879,7 +2005,6 @@ pub(crate) fn watch_managed_session(
                 session: session.clone(),
                 cursor,
                 seq,
-                open_entries: Vec::new(),
                 saw_lock: false,
                 missing_polls: 0,
                 managed: true,
@@ -1937,93 +2062,6 @@ pub(crate) fn publish_native_session(app: &AppHandle, session: &TerminalSession)
         },
     )
     .map_err(|error| AppError::msg(error.to_string()))
-}
-
-#[tauri::command]
-pub async fn terminal_sessions_switch(
-    app: AppHandle,
-    id: String,
-    generation: String,
-    transport: SessionTransport,
-) -> AppResult<TerminalSessionResult> {
-    let session = {
-        let monitor = app.state::<TerminalSessionMonitor>();
-        let watches = monitor
-            .watches
-            .lock()
-            .map_err(|_| AppError::msg("Session mutex poisoned."))?;
-        let session = &watches
-            .get(&id)
-            .ok_or_else(|| AppError::msg("This session was removed."))?
-            .session;
-        if session.generation.as_deref() != Some(&generation) {
-            return Err(AppError::msg(
-                "The session owner changed. Refresh before switching modes.",
-            ));
-        }
-        session.clone()
-    };
-    if !session.status.is_final() {
-        match session.transport.as_str() {
-            "sdk" => {
-                crate::copilot_sdk_sessions::native_session_end(
-                    app.clone(),
-                    crate::copilot_sdk_sessions::NativeTarget {
-                        id: id.clone(),
-                        generation: generation.clone(),
-                    },
-                )
-                .await?
-            }
-            "pty" => crate::pty_sessions::stop_and_wait(&app, &id, &generation).await?,
-            _ => return Err(AppError::msg(
-                "An external session must be ended in its owning terminal before resuming here.",
-            )),
-        }
-    }
-    terminal_sessions_start(
-        app,
-        StartTerminalSessionRequest {
-            folder_path: session.folder_path,
-            prompt: None,
-            resume_session_id: Some(id),
-            label: session.label,
-            task_id: session.task_id,
-            repository: session.repository,
-            branch: session.branch,
-            transport: Some(transport),
-        },
-    )
-    .await
-}
-
-pub fn pty_exited(app: &AppHandle, id: &str, generation: &str, exit: Result<u32, String>) {
-    let snapshot = {
-        let monitor = app.state::<TerminalSessionMonitor>();
-        let Ok(mut watches) = monitor.watches.lock() else {
-            return;
-        };
-        let Some(watch) = watches.get_mut(id) else {
-            return;
-        };
-        if watch.session.generation.as_deref() != Some(generation) {
-            return;
-        }
-        watch.session.status = TerminalSessionStatus::Done;
-        watch.session.pending_prompt = None;
-        watch.session.updated_at = now_ms();
-        watch.session.revision += 1;
-        watch.session.last_activity = match exit {
-            Ok(code) => format!("Copilot terminal exited ({code})"),
-            Err(error) => {
-                watch.session.status = TerminalSessionStatus::Error;
-                format!("Could not observe Copilot exit: {error}")
-            }
-        };
-        (watch.session.clone(), watch.cursor, watch.seq)
-    };
-    persist(app, &snapshot.0, snapshot.1, snapshot.2);
-    emit(app, &snapshot.0, Vec::new());
 }
 
 #[allow(dead_code)]
@@ -2232,14 +2270,41 @@ fn start_acp_session(
 #[tauri::command]
 pub async fn terminal_sessions_start(
     app: AppHandle,
-    req: StartTerminalSessionRequest,
+    mut req: StartTerminalSessionRequest,
 ) -> AppResult<TerminalSessionResult> {
-    if matches!(req.transport, Some(SessionTransport::Sdk)) {
-        return crate::copilot_sdk_sessions::start(app, req).await;
+    if !PathBuf::from(&req.folder_path).is_dir() {
+        return Err(AppError::msg(
+            "The session's working directory does not exist.",
+        ));
     }
-    tauri::async_runtime::spawn_blocking(move || crate::pty_sessions::start(app, req))
-        .await
-        .map_err(|error| AppError::msg(format!("Copilot session task failed: {error}")))?
+    let id = req
+        .resume_session_id
+        .as_deref()
+        .map(uuid::Uuid::parse_str)
+        .transpose()
+        .map_err(|_| AppError::msg("Invalid Copilot session id."))?
+        .unwrap_or_else(uuid::Uuid::new_v4)
+        .to_string();
+    if req.resume_session_id.is_some() {
+        req.resume_session_id = Some(id.clone());
+        req.prompt = None;
+    }
+    let _reservation = LaunchReservation::new(&app, &id)?;
+    if session_is_running(&app, &id)? {
+        return Err(AppError::msg(
+            "This conversation is already running. End it in its current app or terminal before resuming.",
+        ));
+    }
+    match crate::settings::settings_session_launch_mode(app.clone())? {
+        crate::settings::SessionLaunchMode::Sdk => {
+            crate::copilot_sdk_sessions::start(app, req).await
+        }
+        crate::settings::SessionLaunchMode::External => {
+            tauri::async_runtime::spawn_blocking(move || start_external(&app, req, id))
+                .await
+                .map_err(|error| AppError::msg(format!("Copilot launch failed: {error}")))?
+        }
+    }
 }
 
 #[tauri::command]
@@ -2412,8 +2477,6 @@ pub async fn terminal_sessions_history(id: String) -> AppResult<Vec<TerminalTime
 #[tauri::command]
 pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<()> {
     crate::copilot_sdk_sessions::forget(&app, &id).await?;
-    app.state::<crate::pty_sessions::PtySessionManager>()
-        .stop_session(&id)?;
     if app
         .state::<AcpSessionManager>()
         .sessions
@@ -2454,6 +2517,77 @@ pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn external_watch() -> Watch {
+        Watch {
+            session: session(),
+            cursor: 0,
+            seq: 0,
+            saw_lock: false,
+            missing_polls: 0,
+            managed: false,
+            attention: crate::session_attention::Attention::default(),
+            log_error: None,
+        }
+    }
+
+    #[test]
+    fn external_observation_tracks_status_without_retaining_transcripts() {
+        let dir = std::env::temp_dir().join(format!("devtrees-external-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join(format!("inuse.{}.lock", std::process::id()));
+        fs::write(&lock, "").unwrap();
+        let log = dir.join("events.jsonl");
+        fs::write(&log, concat!(
+            "{\"type\":\"session.start\"}\n",
+            "{\"type\":\"tool.execution_start\",\"data\":{\"toolName\":\"ask_user\",\"toolCallId\":\"q\"}}\n"
+        )).unwrap();
+        let mut watch = external_watch();
+        observe_external(&mut watch, &dir).unwrap();
+        assert_eq!(watch.session.status, TerminalSessionStatus::WaitingInput);
+        assert!(watch.saw_lock);
+        let mut file = fs::OpenOptions::new().append(true).open(&log).unwrap();
+        writeln!(
+            file,
+            "{{\"type\":\"session.error\",\"data\":{{\"message\":\"retry turn\"}}}}"
+        )
+        .unwrap();
+        observe_external(&mut watch, &dir).unwrap();
+        assert_eq!(watch.session.status, TerminalSessionStatus::Idle);
+        assert!(watch.session.pending_prompt.is_none());
+        fs::remove_file(&lock).unwrap();
+        observe_external(&mut watch, &dir).unwrap();
+        assert_eq!(watch.session.status, TerminalSessionStatus::Done);
+        drop(file);
+        fs::remove_file(log).unwrap();
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn missing_external_logs_do_not_imply_a_live_process_exited() {
+        let dir = std::env::temp_dir().join(format!("devtrees-external-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let lock = dir.join(format!("inuse.{}.lock", std::process::id()));
+        fs::write(&lock, "").unwrap();
+        let mut watch = external_watch();
+        for _ in 0..125 {
+            assert!(observe_external(&mut watch, &dir).is_err());
+            assert!(!watch.session.status.is_final());
+        }
+        fs::remove_file(lock).unwrap();
+        observe_external(&mut watch, &dir).unwrap();
+        assert_eq!(watch.session.status, TerminalSessionStatus::Done);
+        fs::remove_dir(dir).unwrap();
+    }
+
+    #[test]
+    fn launches_cannot_override_the_saved_setting() {
+        let req = serde_json::json!({ "folderPath": "repo", "label": "Copilot" });
+        assert!(serde_json::from_value::<StartTerminalSessionRequest>(req.clone()).is_ok());
+        let mut override_req = req;
+        override_req["transport"] = serde_json::json!("sdk");
+        assert!(serde_json::from_value::<StartTerminalSessionRequest>(override_req).is_err());
+    }
 
     #[cfg(windows)]
     #[test]
@@ -2700,9 +2834,8 @@ mod tests {
     }
 
     #[test]
-    fn resumed_and_recoverable_pty_errors_leave_the_terminal_usable() {
+    fn resumed_and_recoverable_external_errors_leave_the_session_running() {
         let mut s = session();
-        s.transport = "pty".into();
         s.status = TerminalSessionStatus::WaitingInput;
         s.pending_prompt = Some("old question".into());
         apply_event(&mut s, &event(r#"{"type":"session.resume","data":{}}"#));

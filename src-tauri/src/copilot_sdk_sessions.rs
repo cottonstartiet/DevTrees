@@ -524,7 +524,7 @@ impl ElicitationHandler for Handlers {
                     check_schema(schema).err().map(|e| e.to_string())
                 }),
             Some(ElicitationMode::Url) => Some(
-                "URL authorization requires Terminal mode until completion tracking is supported."
+                "URL authorization requires an external Copilot terminal. End this session, select External Copilot terminal in Settings, then resume from History."
                     .into(),
             ),
             _ => Some("Copilot requested an unsupported interaction mode.".into()),
@@ -667,7 +667,7 @@ fn get(app: &AppHandle, target: &NativeTarget) -> AppResult<Arc<Managed>> {
     Ok(owner)
 }
 
-fn installed_cli() -> AppResult<PathBuf> {
+pub(crate) fn installed_cli() -> AppResult<PathBuf> {
     if let Some(path) = std::env::var_os("COPILOT_CLI_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
@@ -689,7 +689,7 @@ fn installed_cli() -> AppResult<PathBuf> {
                 .find(|path| path.is_file())
         })
         .ok_or_else(|| {
-            error("Copilot CLI was not found. Install it and sign in, or use terminal mode.")
+            error("Copilot CLI was not found. Install it and sign in before starting a session.")
         })?
         .canonicalize()
         .map_err(error)
@@ -948,7 +948,7 @@ pub async fn native_session_prompt(
         return Err(error("A message is required."));
     }
     if prompt.trim_start().starts_with('/') && !matches!(prompt.trim(), "/plan" | "/interactive") {
-        return Err(error("This slash command requires Terminal mode. Native controls support /plan and /interactive."));
+        return Err(error("In-app chat supports /plan and /interactive. For other commands, end this session, select External Copilot terminal in Settings, then resume from History."));
     }
     let _lifecycle = owner.lifecycle.lock().await;
     let runtime = owner
@@ -1001,7 +1001,7 @@ pub async fn native_session_prompt(
                     result.warning.or(result.message).unwrap_or_default()
                 )
             } else {
-                "The mode change needs an additional decision. Use Terminal to complete it.".into()
+                "The mode change needs an additional decision. End this session, select External Copilot terminal in Settings, then resume from History.".into()
             };
             state.push(Entry::Notice {
                 seq,
@@ -1095,6 +1095,20 @@ pub async fn native_session_cancel(app: AppHandle, target: NativeTarget) -> AppR
 #[tauri::command]
 pub async fn native_session_end(app: AppHandle, target: NativeTarget) -> AppResult<()> {
     get(&app, &target)?.end().await
+}
+
+pub(crate) fn has_unreleased_session(app: &AppHandle, id: &str) -> AppResult<bool> {
+    let owner = app
+        .state::<NativeSessionManager>()
+        .sessions
+        .lock()
+        .map_err(error)?
+        .get(id)
+        .cloned();
+    match owner {
+        Some(owner) => Ok(owner.state.lock().map_err(error)?.base_status != Status::Done),
+        None => Ok(false),
+    }
 }
 
 pub async fn forget(app: &AppHandle, id: &str) -> AppResult<()> {

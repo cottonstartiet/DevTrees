@@ -34,8 +34,8 @@ yarn build        # tauri build (signed NSIS installer + updater artifacts)
 
 Validate the Rust backend with `cargo build` / `cargo clippy` from `src-tauri/`.
 Session regression checks use `cargo test --manifest-path src-tauri/Cargo.toml --lib`
-and `node --test scripts/pty-terminal.test.mjs scripts/session-interactions.test.mjs`
-(the installed xterm parser and native interaction state; no browser server).
+and `node --test scripts/session-launch.test.mjs scripts/session-interactions.test.mjs`
+(session routing/status contracts and native interaction state; no browser server).
 
 The `*:web` scripts and `dist-web` directory build the embedded desktop renderer,
 not a standalone web application. Use `yarn dev` to run the complete app.
@@ -43,11 +43,11 @@ not a standalone web application. Use `yarn dev` to run the complete app.
 ## Tasks and Copilot sessions
 
 Tasks can target the main working copy, an existing worktree, or a planned worktree
-created when work starts. **Native UI** uses the official Rust Copilot SDK to
+created when work starts. **In-app chat** uses the official Rust Copilot SDK to
 connect the installed CLI to the app's transcript, permission controls, questions,
-and forms. It is the default for new sessions; choose **Terminal** under
-**Sessions > New sessions** for full CLI workflows. Existing
-running terminals are never migrated automatically.
+and forms. Choose it or **External Copilot terminal** under **Settings > Copilot
+sessions**. The setting is saved in SQLite and applies to every new and resumed
+session; external is the default. Changing it never moves a running session.
 
 Native requests are answered in the originating operation, not converted to a
 follow-up message. **Deny** and **Allow once** are explicit; no permanent grants
@@ -55,7 +55,7 @@ or automatic approvals are added. Session-wide approval is intentionally hidden
 until its live scope is verified. Forms preserve text, numbers, booleans and
 single/multiple choices. Unsupported schemas and sensitive credential fields
 show an explanation rather than a misleading empty form. URL authorization uses
-Terminal mode until its completion tracking is supported; native forms never
+an external Copilot terminal until its completion tracking is supported; native forms never
 collect credentials.
 
 The **Dashboard** shares pending requests, submissions and drafts with the Session
@@ -68,30 +68,30 @@ Send follow-up instructions when Copilot is idle. **Stop turn** cancels current
 work and pending requests; **End session** releases the runtime. **Resume** starts
 a new runtime with the same saved conversation. **Enter plan mode** (or `/plan`)
 enables supported plan decisions; `/interactive` returns to interactive mode.
-Other slash commands and terminal-only setup flows require Terminal mode.
+Other slash commands and terminal-only setup flows require an external Copilot terminal.
 
-**Use Terminal / Use Native UI** explicitly ends the old runtime before resuming
-the saved session in the other mode. Pending questions and in-flight tool calls
-do not transfer; Copilot may need to ask again. If shutdown or startup fails, the
-error stays visible rather than starting a second controller or silently changing
-the requested mode.
+To change a conversation's mode, **End session** in native chat (or end Copilot in
+its external terminal), change Settings, and resume the conversation. Pending
+questions and in-flight tool calls do not transfer. Resume uses the same saved
+conversation ID without replaying the initial prompt. Active owners are rejected
+rather than starting a second controller.
 
-The embedded PTY remains available for full CLI workflows, authentication, setup,
-and unsupported native interactions. It has a black background in both themes.
-Its **Transcript** is optional read-only event-log history and may lag behind the
-terminal. Missing or stale log observations do not disable the terminal.
+External mode opens the installed Copilot CLI in Windows Terminal. DevTrees shows
+live status and attention messages only, not a terminal viewport or transcript.
+Respond in the external terminal. Status observation can lag; unavailable status
+is shown explicitly. External rows disappear when Copilot ends, and external
+watches are not persisted or restored after an app restart. A renderer reconnect
+within the same app run restores current live status.
 
-Switching pages or sessions keeps each process and terminal alive. Closing
-DevTrees ends its owned processes, including child tools on Windows. After reopening,
-**Resume** explicitly starts a new process using the same CLI history ID; DevTrees
-does not replay an old prompt, permission, or answer. A renderer reconnect restores
-the current terminal screen without restarting Copilot. Local scrollback survives
-navigation, while a full renderer reload restores the screen rather than all
-scrollback. Output replay is bounded and backpressured rather than silently dropped.
+Switching pages keeps native and external sessions running. Closing DevTrees ends
+its native SDK runtimes but leaves external terminals running. Native conversations
+can be resumed after reopening. Global **History** and **Analytics** continue to
+read CLI history independently, including external sessions; removing a live status
+row never deletes a conversation or its task link.
 
 No auto-approval flags are added; existing user-controlled CLI permissions remain
-in effect. External Windows Terminal sessions remain monitor-only and cannot be
-attached to the embedded terminal. History and pull-request review remain available.
+in effect. External launch is Windows-only. Missing tools or launch failures
+produce an error rather than silently changing the selected mode.
 
 Install and authenticate the Copilot CLI before starting a session. GitHub
 operations use `gh`; Azure DevOps operations use Azure CLI with its DevOps extension.

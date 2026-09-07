@@ -84,7 +84,18 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
         }
     }
     tx.execute("UPDATE terminal_sessions SET transport = 'acp' WHERE managed = 1 AND transport = 'external'", [])?;
-    tx.execute_batch("PRAGMA user_version = 2;")?;
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+         );
+         INSERT OR IGNORE INTO app_settings (key, value)
+             VALUES ('session_launch_mode', 'external');
+         UPDATE app_settings SET value = 'external'
+             WHERE key = 'session_launch_mode' AND value = 'pty';
+         DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
+         PRAGMA user_version = 3;",
+    )?;
     tx.commit()?;
     Ok(())
 }
@@ -116,7 +127,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -126,19 +137,22 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
-        assert_eq!(tables, ["repositories", "tasks", "terminal_sessions"]);
+        assert_eq!(
+            tables,
+            ["app_settings", "repositories", "tasks", "terminal_sessions"]
+        );
         for table in tables {
             let count: i64 = conn
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
                     row.get(0)
                 })
                 .unwrap();
-            assert_eq!(count, 0);
+            assert_eq!(count, if table == "app_settings" { 1 } else { 0 });
         }
     }
 
     #[test]
-    fn version_one_sessions_migrate_without_converting_pty_records_on_reopen() {
+    fn legacy_terminal_watches_are_removed_without_changing_the_setting() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn.execute_batch(
@@ -158,11 +172,30 @@ mod tests {
         assert_eq!(transport, "acp");
         conn.execute("UPDATE terminal_sessions SET transport='pty', generation='new-process', revision=5 WHERE id='legacy'", []).unwrap();
         initialize_schema(&conn).unwrap();
-        let record: (String, String, i64, i64, i64) = conn.query_row(
-            "SELECT transport, generation, revision, cursor, seq FROM terminal_sessions WHERE id='legacy'", [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
-        ).unwrap();
-        assert_eq!(record, ("pty".into(), "new-process".into(), 5, 123, 7));
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM terminal_sessions", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        assert_eq!(
+            crate::settings::read_launch_mode(&conn).unwrap(),
+            crate::settings::SessionLaunchMode::External
+        );
+        conn.execute("UPDATE app_settings SET value='sdk'", [])
+            .unwrap();
+        initialize_schema(&conn).unwrap();
+        assert_eq!(
+            crate::settings::read_launch_mode(&conn).unwrap(),
+            crate::settings::SessionLaunchMode::Sdk
+        );
+        conn.execute("UPDATE app_settings SET value='pty'", [])
+            .unwrap();
+        initialize_schema(&conn).unwrap();
+        assert_eq!(
+            crate::settings::read_launch_mode(&conn).unwrap(),
+            crate::settings::SessionLaunchMode::External
+        );
     }
 
     #[test]
@@ -182,9 +215,15 @@ mod tests {
              VALUES ('session', 'task', 'repo', 'Session', 'idle', 123, 7, 1, 1, 1);",
         )
         .unwrap();
+        conn.execute("UPDATE app_settings SET value='sdk'", [])
+            .unwrap();
         conn.close().unwrap();
 
         let conn = init(&data_dir).unwrap();
+        assert_eq!(
+            crate::settings::read_launch_mode(&conn).unwrap(),
+            crate::settings::SessionLaunchMode::Sdk
+        );
         let repository: (String, i64) = conn
             .query_row("SELECT name, sort_order FROM repositories", [], |row| {
                 Ok((row.get(0)?, row.get(1)?))

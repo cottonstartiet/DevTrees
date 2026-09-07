@@ -1,8 +1,8 @@
 /**
  * Copilot CLI sessions shown in DevTrees.
  *
- * Native sessions use SDK callbacks. Terminal sessions use an embedded PTY with
- * attention and read-only history observed independently from the CLI event log.
+ * Native sessions use SDK callbacks. External sessions expose transient status
+ * observed from the CLI event log, without an in-app transcript.
  */
 export type TerminalSessionStatus =
   /** Launched, but the CLI has not written its first event yet. */
@@ -34,7 +34,7 @@ export type TerminalSession = {
   pendingPrompt?: string | null
   createdAt: number
   updatedAt: number
-  transport: 'sdk' | 'acp' | 'pty' | 'external'
+  transport: 'sdk' | 'acp' | 'external'
   generation?: string | null
   revision: number
   observedAt?: number | null
@@ -43,30 +43,14 @@ export type TerminalSession = {
 
 export type TerminalTarget = { id: string; generation: string }
 
-export type TerminalOutput = {
-  attachment: string
-  generation: string
-  seq: number
-  reset: boolean
-  replay: boolean
-  ready: boolean
-  checkpointable: boolean
-  rows: number
-  cols: number
-  data: number[]
-  ended: boolean
-}
-
-export type TerminalCheckpoint = { data: string; rows: number; cols: number }
-
 export function terminalObservationIssue(
   session: TerminalSession,
   now = Date.now()
 ): string | null {
-  if (session.transport !== 'pty' || isTerminalSessionFinished(session.status)) return null
+  if (session.transport !== 'external' || isTerminalSessionFinished(session.status)) return null
   if (session.observationError) return session.observationError
   if (!session.observedAt || now - session.observedAt > 15_000) {
-    return 'Session status is unavailable. Open the terminal to inspect Copilot.'
+    return 'Session status is unavailable. Check the external Copilot terminal.'
   }
   return null
 }
@@ -87,7 +71,20 @@ export type TerminalSessionResult =
 export type StartTerminalSessionRequest = Omit<WatchTerminalSessionRequest, 'id'> & {
   prompt?: string
   resumeSessionId?: string
-  transport?: 'sdk' | 'pty'
+}
+
+export function isExternalSessionEnded(session: TerminalSession): boolean {
+  return session.transport === 'external' && isTerminalSessionFinished(session.status)
+}
+
+/** Only remove watches that have not changed since the list request began. */
+export function missingExternalSessions(
+  before: Record<string, number>,
+  current: Record<string, number>,
+  listed: TerminalSession[]
+): string[] {
+  const present = new Set(listed.map((session) => session.id))
+  return Object.keys(before).filter((id) => !present.has(id) && current[id] === before[id])
 }
 
 export type TerminalSessionPermissionOption = {
