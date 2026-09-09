@@ -1,9 +1,10 @@
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done'
 export type TaskQueueStatus = 'queued' | 'running' | 'complete' | 'failed'
-export type TaskSourceProvider = 'ado' | 'github'
 
-export function taskLaunchInitialMode(status: TaskStatus): 'plan' | undefined {
-  return status === 'todo' ? 'plan' : undefined
+export function taskLaunchInitialMode(status: TaskStatus): 'plan' | 'autopilot' | undefined {
+  if (status === 'todo') return 'plan'
+  if (status === 'review') return 'autopilot'
+  return undefined
 }
 
 type QueueTarget = {
@@ -45,9 +46,6 @@ export type Task = {
   queueOrder: number
   sortOrder: number
   executionTargetKey: string
-  sourceProvider: TaskSourceProvider | null
-  sourceId: string | null
-  sourceUrl: string | null
   createdAt: number
   updatedAt: number
 }
@@ -61,17 +59,9 @@ export type CreateTaskRequest = {
   worktreePath: string
   worktreeBranch: string | null
   pendingWorktreeName: string | null
-  sourceProvider?: TaskSourceProvider | null
-  sourceId?: string | null
-  sourceUrl?: string | null
 }
 
-export type TaskErrorCode =
-  | 'invalid-title'
-  | 'duplicate-source'
-  | 'not-found'
-  | 'target-busy'
-  | 'unknown'
+export type TaskErrorCode = 'invalid-title' | 'not-found' | 'target-busy' | 'unknown'
 
 export type CreateTaskResult =
   | { ok: true; task: Task }

@@ -307,13 +307,6 @@ export function useNativeSessions(
     [apply, runNative]
   )
 
-  const queueNative = React.useCallback(
-    (session: TerminalSession, action: string, itemId?: string, text?: string): Promise<boolean> =>
-      runNative(session, nativeKey(session, 'queue'), async () => {
-        apply(await window.api.nativeSessions.queue(target(session), action, itemId, text))
-      }),
-    [apply, runNative]
-  )
   const stopNative = React.useCallback(
     (session: TerminalSession): Promise<boolean> =>
       runNative(session, nativeKey(session, 'lifecycle'), () =>
@@ -351,7 +344,6 @@ export function useNativeSessions(
   }, [])
 
   return {
-    queueNative,
     nativeById,
     nativeDrafts,
     nativeErrors,

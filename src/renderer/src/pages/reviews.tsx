@@ -15,7 +15,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { usePrReviewWorkspace } from '@/contexts/pr-review-context'
 import { useRepoOpenPrs } from '@/hooks/use-repo-open-prs'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
-import { buildPrCodeReviewPrompt } from '@/lib/copilot-pr-review-prompt'
+import { buildCodeReviewPrompt } from '@/lib/copilot-code-review-prompt'
 import { openExternal } from '@/lib/system'
 import { cn } from '@/lib/utils'
 import type { RepoPr } from '@shared/reviews'
@@ -203,7 +203,8 @@ function PrRow({ pr, folderPath }: { pr: RepoPr; folderPath: string }): React.JS
     if (isLaunching) return
     setIsLaunching(true)
     try {
-      const prompt = buildPrCodeReviewPrompt({
+      const prompt = buildCodeReviewPrompt({
+        kind: 'pull-request',
         folderPath,
         provider: pr.provider,
         prNumber: pr.id,

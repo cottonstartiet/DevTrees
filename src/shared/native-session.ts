@@ -64,7 +64,7 @@ export type NativeSnapshot = {
   commandsReady?: boolean
   capabilities?: {
     promptCapabilities?: { image?: boolean; embeddedContext?: boolean }
-    sessionCapabilities?: { list?: Record<string, unknown>; close?: Record<string, unknown> }
+    sessionCapabilities?: { close?: Record<string, unknown> }
     loadSession?: boolean
   }
   queue?: QueuedPrompt[]

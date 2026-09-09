@@ -116,15 +116,6 @@ pub fn build_ado_pr_web_url(remote: &AdoRemote, pr_id: i64) -> String {
     )
 }
 
-pub fn build_ado_work_item_url(remote: &AdoRemote, work_item_id: i64) -> String {
-    format!(
-        "https://dev.azure.com/{}/{}/_workitems/edit/{}",
-        encode_uri_component(&remote.org),
-        encode_uri_component(&remote.project),
-        work_item_id
-    )
-}
-
 pub fn build_ado_commit_url(remote: &AdoRemote, sha: &str) -> String {
     format!(
         "https://dev.azure.com/{}/{}/_git/{}/commit/{}",

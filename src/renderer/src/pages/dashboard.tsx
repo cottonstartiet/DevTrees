@@ -238,6 +238,7 @@ export function DashboardPage({
                       <NativeSessionControls
                         session={session}
                         compact
+                        showComposer={false}
                         onOpenSession={(requestId) => {
                           select(session.id, requestId)
                           onNavigateToSessions()

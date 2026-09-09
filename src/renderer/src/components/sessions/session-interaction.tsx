@@ -7,8 +7,8 @@ import { MarkdownBody } from '@/components/pr-review/markdown-body'
 import { AcpComposer } from '@/components/sessions/acp-controls'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { nativeError } from '@/contexts/use-native-sessions'
+import { cn } from '@/lib/utils'
 import {
-  acpPermissionOptionIsRemembered,
   acpPermissionOptionScope,
   initialNativeDraft,
   nativeFields,
@@ -55,7 +55,10 @@ function PlanCompletion({
       id={compact ? undefined : 'native-plan-transition'}
       tabIndex={compact ? undefined : -1}
       aria-labelledby={`plan-complete-${session.id}`}
-      className="bg-muted/40 focus-visible:ring-ring space-y-3 rounded-md border p-3 outline-none focus-visible:ring-3"
+      className={cn(
+        'focus-visible:ring-ring space-y-3 rounded-md border p-3 outline-none focus-visible:ring-3',
+        compact ? 'bg-muted/40' : 'border-amber-500/35 bg-amber-500/[0.035]'
+      )}
     >
       <div>
         <p id={`plan-complete-${session.id}`} className="text-sm font-medium">
@@ -358,22 +361,6 @@ export function SessionInteraction({
                     )
                   })}
               </div>
-              <ul className="text-muted-foreground space-y-1 text-xs">
-                {interaction.options.map((option) => (
-                  <li key={option.optionId}>
-                    <span className="text-foreground font-medium">{option.name}:</span>{' '}
-                    {acpPermissionOptionScope(option.kind)}
-                  </li>
-                ))}
-              </ul>
-              {interaction.options.some((option) =>
-                acpPermissionOptionIsRemembered(option.kind)
-              ) && (
-                <p className="text-muted-foreground text-xs">
-                  Remembered choices are owned by Copilot CLI and apply only when a later request
-                  matches its saved permission scope.
-                </p>
-              )}
             </>
           )}
           {interaction.kind === 'permission' && (
@@ -674,10 +661,12 @@ export function SessionInteraction({
 export function NativeSessionControls({
   session,
   compact = false,
+  showComposer = true,
   onOpenSession
 }: {
   session: TerminalSession
   compact?: boolean
+  showComposer?: boolean
   onOpenSession?: (requestId: string) => void
 }): React.JSX.Element | null {
   const {
@@ -695,12 +684,23 @@ export function NativeSessionControls({
   const draft = nativeDrafts[key] ?? {}
   const pending = current?.interactions ?? []
   const finished = isTerminalSessionFinished(session.status)
+  const planTransitionBusy = nativeBusy[nativeKey(session, 'plan-transition')] === true
   const errors = Object.entries(nativeErrors).filter(
     ([identity, error]) =>
       error &&
       (identity === 'connection' || identity.startsWith(key.slice(0, key.lastIndexOf(','))))
   )
   if (finished && !current?.error && errors.length === 0) return null
+  if (
+    !showComposer &&
+    current &&
+    !current.error &&
+    errors.length === 0 &&
+    pending.length === 0 &&
+    !current.planTransitionAvailable &&
+    !planTransitionBusy
+  )
+    return null
   return (
     <div
       className={
@@ -760,10 +760,11 @@ export function NativeSessionControls({
         </Button>
       )}
       <PlanCompletion session={session} compact={compact} />
-      {!finished &&
+      {showComposer &&
+        !finished &&
         (!compact || pending.length === 0) &&
         !current?.planTransitionAvailable &&
-        !nativeBusy[nativeKey(session, 'plan-transition')] &&
+        !planTransitionBusy &&
         (session.transport === 'acp' ? (
           <AcpComposer session={session} compact={compact} />
         ) : (
@@ -781,9 +782,11 @@ export function NativeSessionControls({
               id={`composer-${session.id}`}
               rows={compact ? 2 : 3}
               placeholder={
-                session.status === 'idle'
-                  ? 'Message Copilot...'
-                  : 'Draft your next instruction while Copilot works...'
+                compact
+                  ? undefined
+                  : session.status === 'idle'
+                    ? 'Message Copilot...'
+                    : 'Draft your next instruction while Copilot works...'
               }
               value={String(draft.message ?? '')}
               onChange={(event) => setNativeDraft(key, { message: event.target.value })}

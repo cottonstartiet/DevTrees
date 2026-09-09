@@ -6,8 +6,9 @@ import {
   isTerminalSessionFinished,
   useTerminalSessions
 } from '@/contexts/terminal-sessions-context'
+import { buildCodeReviewPrompt } from '@/lib/copilot-code-review-prompt'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
-import { buildTaskCodeReviewPrompt } from '@/lib/copilot-task-review-prompt'
+import { saveTaskQueueSettings, TASK_QUEUE_SETTINGS_CHANGED_EVENT } from '@/lib/task-queue-settings'
 import { claimTaskRun, setTaskCopilotSession } from '@/lib/tasks'
 import { listWorktreesForRepository } from '@/lib/worktrees'
 import type { Repository } from '@shared/repository'
@@ -17,7 +18,7 @@ import {
   type Task,
   type TaskStatus
 } from '@shared/task'
-import type { TaskQueueSettings } from '@shared/settings'
+import type { TaskQueueMode, TaskQueueSettings } from '@shared/settings'
 import type { WorktreeStatusResult } from '@shared/worktree'
 
 function worktreeLabel(path: string): string {
@@ -34,9 +35,12 @@ interface UseTaskQueueOptions {
 
 export interface TaskQueueController {
   settings: TaskQueueSettings
+  settingsBusy: boolean
   queuedCount: number
   runningCount: number
   failedCount: number
+  setMode: (mode: TaskQueueMode) => Promise<void>
+  startTask: (task: Task) => Promise<void>
   moveTask: (task: Task, status: TaskStatus, beforeId?: string | null) => Promise<void>
   reviewTask: (task: Task) => Promise<void>
   canReviewTask: (task: Task) => boolean
@@ -54,6 +58,8 @@ export function useTaskQueue({
   const { byId: terminalSessionsById, observationNow } = useTerminalSessions()
   const launchCopilot = useCopilotLauncher()
   const [settings, setSettings] = React.useState<TaskQueueSettings>(DEFAULT_SETTINGS)
+  const [settingsBusy, setSettingsBusy] = React.useState(true)
+  const settingsWriteRef = React.useRef(false)
   const dispatchingRef = React.useRef(new Map<string, string>())
   const reconcilingRef = React.useRef(new Set<string>())
   const settlingRef = React.useRef(new Set<string>())
@@ -69,17 +75,42 @@ export function useTaskQueue({
         console.error('[task-queue] failed to load settings:', error)
         if (active) toast.error('Could not load task queue settings. Using manual mode.')
       })
+      .finally(() => {
+        if (active) setSettingsBusy(false)
+      })
 
     const onSettingsChanged = (event: Event): void => {
       const detail = (event as CustomEvent<TaskQueueSettings>).detail
       if (detail) setSettings(detail)
     }
-    window.addEventListener('task-queue-settings-changed', onSettingsChanged)
+    window.addEventListener(TASK_QUEUE_SETTINGS_CHANGED_EVENT, onSettingsChanged)
     return () => {
       active = false
-      window.removeEventListener('task-queue-settings-changed', onSettingsChanged)
+      window.removeEventListener(TASK_QUEUE_SETTINGS_CHANGED_EVENT, onSettingsChanged)
     }
   }, [])
+
+  const setMode = React.useCallback(
+    async (mode: TaskQueueMode): Promise<void> => {
+      if (settingsWriteRef.current || mode === settings.mode) return
+      const previousSettings = settings
+      const nextSettings = { ...settings, mode }
+      settingsWriteRef.current = true
+      setSettingsBusy(true)
+      setSettings(nextSettings)
+      try {
+        await saveTaskQueueSettings(nextSettings)
+      } catch (error) {
+        console.error('[task-queue] failed to save settings:', error)
+        setSettings(previousSettings)
+        toast.error('Could not change task execution mode.')
+      } finally {
+        settingsWriteRef.current = false
+        setSettingsBusy(false)
+      }
+    },
+    [settings]
+  )
 
   const materializeTaskWorktree = React.useCallback(
     async (task: Task): Promise<Task | null> => {
@@ -228,7 +259,8 @@ export function useTaskQueue({
 
         const isReview = task.status === 'review'
         const prompt = isReview
-          ? buildTaskCodeReviewPrompt({
+          ? buildCodeReviewPrompt({
+              kind: 'task',
               folderPath: claimedTask.worktreePath,
               taskTitle: claimedTask.title,
               taskDescription: claimedTask.description,
@@ -324,7 +356,7 @@ export function useTaskQueue({
   )
 
   React.useEffect(() => {
-    if (settings.mode !== 'automatic') return
+    if (settingsBusy || settings.mode !== 'automatic') return
     const available = settings.concurrency - runningTasks.length - dispatchingRef.current.size
     if (available <= 0) return
     const selected = selectTaskQueueCandidates(
@@ -336,7 +368,7 @@ export function useTaskQueue({
     for (const task of selected) {
       void executeTask(task, false)
     }
-  }, [executeTask, queuedTasks, runningTasks, settings])
+  }, [executeTask, queuedTasks, runningTasks, settings, settingsBusy])
 
   React.useEffect(() => {
     for (const task of runningTasks) {
@@ -430,6 +462,16 @@ export function useTaskQueue({
     [runningTasks]
   )
 
+  const startTask = React.useCallback(
+    async (task: Task): Promise<void> => {
+      if (task.status !== 'todo') return
+      if (!hasAvailableSlot()) return
+      if (!hasAvailableTarget(task)) return
+      await executeTask(task, true)
+    },
+    [executeTask, hasAvailableSlot, hasAvailableTarget]
+  )
+
   const handleMoveTask = React.useCallback(
     async (task: Task, status: TaskStatus, beforeId?: string | null): Promise<void> => {
       const startsTask =
@@ -438,9 +480,7 @@ export function useTaskQueue({
         settings.mode === 'manual' && task.status === 'in_progress' && status === 'review'
 
       if (startsTask) {
-        if (!hasAvailableSlot()) return
-        if (!hasAvailableTarget(task)) return
-        await executeTask(task, true)
+        await startTask(task)
         return
       }
 
@@ -458,7 +498,15 @@ export function useTaskQueue({
 
       await moveTask(task.id, status, beforeId)
     },
-    [canReviewTask, executeTask, hasAvailableSlot, hasAvailableTarget, moveTask, settings.mode]
+    [
+      canReviewTask,
+      executeTask,
+      hasAvailableSlot,
+      hasAvailableTarget,
+      moveTask,
+      settings.mode,
+      startTask
+    ]
   )
 
   const reviewTask = React.useCallback(
@@ -470,9 +518,12 @@ export function useTaskQueue({
 
   return {
     settings,
+    settingsBusy,
     queuedCount: queuedTasks.length,
     runningCount: runningTasks.length,
     failedCount: failedTasks.length,
+    setMode,
+    startTask,
     moveTask: handleMoveTask,
     reviewTask,
     canReviewTask

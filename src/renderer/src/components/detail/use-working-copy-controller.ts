@@ -2,6 +2,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 
 import { type CommitDialogMode } from '@/components/commit-dialog'
+import { usePrReviewWorkspace } from '@/contexts/pr-review-context'
 import { useTasks } from '@/contexts/tasks-context'
 import { useUnpushedCommits } from '@/hooks/use-unpushed-commits'
 import {
@@ -49,6 +50,9 @@ export interface WorkingCopyController {
   handleUnstageAll: (entries: WorkingCopyEntry[]) => Promise<void>
   handleRevert: (entry: WorkingCopyEntry) => Promise<void>
   handleOpenFile: (entry: WorkingCopyEntry) => Promise<void>
+  handleReviewChanges: () => void
+  reviewChangesDisabled: boolean
+  reviewChangesTooltip: string
   handleOpenAllInVSCode: () => Promise<void>
   isPushing: boolean
   handlePush: () => Promise<void>
@@ -89,6 +93,7 @@ export function useWorkingCopyController({
     folderPath !== null && branch !== null
   )
   const { startTask, succeedTask, failTask } = useTasks()
+  const { openLocalReview } = usePrReviewWorkspace()
   const [pending, setPending] = React.useState<Set<string>>(() => new Set())
   const [commitMode, setCommitMode] = React.useState<CommitDialogMode | null>(null)
   const [isPushing, setIsPushing] = React.useState(false)
@@ -271,6 +276,23 @@ export function useWorkingCopyController({
       toast.error(err instanceof Error ? err.message : 'Could not open VS Code.')
     }
   }, [folderPath])
+
+  const reviewChangesDisabled = isLoading || !folderPath || !data || entries.length === 0
+  const reviewChangesTooltip = isLoading
+    ? 'Working copy status is loading.'
+    : !folderPath || !data
+      ? 'Working copy status is unavailable.'
+      : entries.length === 0
+        ? 'Working tree is clean.'
+        : 'Review working-copy changes in DevTrees.'
+
+  const handleReviewChanges = React.useCallback((): void => {
+    if (reviewChangesDisabled || !folderPath) return
+    openLocalReview({
+      folderPath,
+      branchLabel: branch ?? 'Detached HEAD'
+    })
+  }, [branch, folderPath, openLocalReview, reviewChangesDisabled])
 
   const handlePush = React.useCallback(async (): Promise<void> => {
     if (!folderPath || !branch) return
@@ -488,6 +510,9 @@ export function useWorkingCopyController({
     handleUnstageAll,
     handleRevert,
     handleOpenFile,
+    handleReviewChanges,
+    reviewChangesDisabled,
+    reviewChangesTooltip,
     handleOpenAllInVSCode,
     isPushing,
     handlePush,

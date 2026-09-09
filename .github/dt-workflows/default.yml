@@ -7,7 +7,7 @@
 workflow:
   name: devtrees-default
   description: Verify the DevTrees directed-workflow runtime and live graph.
-  version: "1.0.0"
+  version: '1.0.0'
   entry_point: prepare
 
   input:
@@ -28,7 +28,7 @@ agents:
     type: set
     description: Build the read-only investigation request.
     values:
-      objective: "{{ workflow.input.objective }}"
+      objective: '{{ workflow.input.objective }}'
       instruction: Do not edit files, run destructive commands, or create commits.
     routes:
       - to: investigate
@@ -78,7 +78,7 @@ agents:
     reason: The user accepted the Copilot investigation.
     output_template:
       result: accepted
-      report: "{{ investigate.output.result }}"
+      report: '{{ investigate.output.result }}'
 
   - name: rejected
     type: terminate
@@ -87,7 +87,7 @@ agents:
     reason: The user rejected the Copilot investigation.
     output_template:
       result: rejected
-      report: "{{ investigate.output.result }}"
+      report: '{{ investigate.output.result }}'
 
 output:
-  result: "{{ investigate.output.result }}"
+  result: '{{ investigate.output.result }}'

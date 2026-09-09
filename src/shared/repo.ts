@@ -1,3 +1,5 @@
+import type { PrChangedFile, PrFileContent, PrFileDiff } from './pr-review'
+
 export type RepoStatus = {
   branch: string
   ahead: number
@@ -106,6 +108,30 @@ export type WorkingCopyStatusResult =
       untracked: number
       entries: WorkingCopyEntry[]
     }
+  | { ok: false; error: string }
+
+/** Local working-copy review data, computed against HEAD rather than a provider pull request. */
+export type LocalReviewChangedFilesRequest = { folderPath: string }
+export type LocalReviewChangedFilesResult =
+  | { ok: true; files: PrChangedFile[] }
+  | { ok: false; error: string }
+
+export type LocalReviewFileDiffRequest = {
+  folderPath: string
+  /** Repository-relative current path from LocalReviewChangedFilesResult. */
+  path: string
+}
+export type LocalReviewFileDiffResult =
+  | { ok: true; diff: PrFileDiff }
+  | { ok: false; error: string }
+
+export type LocalReviewFileContentRequest = {
+  folderPath: string
+  /** Repository-relative current path from LocalReviewChangedFilesResult. */
+  path: string
+}
+export type LocalReviewFileContentResult =
+  | { ok: true; content: PrFileContent & { side: 'head' } }
   | { ok: false; error: string }
 
 export type StageFilesRequest = { folderPath: string; files: string[] }
@@ -232,6 +258,9 @@ export const RepoIpcChannels = {
   OpenPullRequest: 'repo:open-pull-request',
   FindPullRequest: 'repo:find-pull-request',
   WorkingCopyStatus: 'repo:working-copy-status',
+  LocalReviewChangedFiles: 'repo:local-review-changed-files',
+  LocalReviewFileDiff: 'repo:local-review-file-diff',
+  LocalReviewFileContent: 'repo:local-review-file-content',
   RecentCommits: 'repo:recent-commits',
   StageFiles: 'repo:stage-files',
   UnstageFiles: 'repo:unstage-files',

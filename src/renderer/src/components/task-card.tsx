@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { FolderGit2Icon, GitBranchIcon, LoaderCircleIcon } from 'lucide-react'
+import { FolderGit2Icon, GitBranchIcon, LoaderCircleIcon, PlayIcon } from 'lucide-react'
 
 import { TerminalSessionStatusBadge } from '@/components/sessions/terminal-session-status-badge'
 import { Button } from '@/components/ui/button'
@@ -18,15 +18,19 @@ export function TaskCard({
   task,
   sessionStatus,
   onOpen,
+  onStart,
   onReview,
   onDone,
+  isStarting,
   canReview
 }: {
   task: Task
   sessionStatus: TerminalSessionStatus | undefined
   onOpen: (task: Task) => void
+  onStart: (task: Task) => void
   onReview: (task: Task) => void
   onDone: (task: Task) => void
+  isStarting: boolean
   canReview: boolean
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -81,11 +85,6 @@ export function TaskCard({
       {task.description ? (
         <p className="text-muted-foreground line-clamp-2 text-xs break-words">{task.description}</p>
       ) : null}
-      {task.sourceProvider && task.sourceId ? (
-        <p className="text-muted-foreground truncate text-xs">
-          {task.sourceProvider === 'ado' ? 'Azure DevOps' : 'GitHub'} · {task.sourceId}
-        </p>
-      ) : null}
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <span className="inline-flex items-center gap-1">
           <FolderGit2Icon className="size-3" />
@@ -100,7 +99,26 @@ export function TaskCard({
               : (task.worktreeBranch ?? worktreeLabel(task.worktreePath))}
         </span>
       </div>
-      {task.status === 'in_progress' || task.status === 'review' ? (
+      {task.status === 'todo' ? (
+        <div className="mt-1 flex">
+          <Button
+            type="button"
+            size="sm"
+            disabled={isStarting || task.queueStatus === 'running'}
+            onClick={(e) => {
+              e.stopPropagation()
+              onStart(task)
+            }}
+          >
+            {isStarting ? (
+              <LoaderCircleIcon className="motion-reduce:animate-none animate-spin" />
+            ) : (
+              <PlayIcon />
+            )}
+            {isStarting ? 'Starting…' : 'Start'}
+          </Button>
+        </div>
+      ) : task.status === 'in_progress' || task.status === 'review' ? (
         <div className="mt-1 flex flex-wrap gap-2">
           {task.status === 'in_progress' && canReview ? (
             <Button

@@ -1,11 +1,12 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{mpsc, Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
 
 use base64::Engine as _;
 use regex::Regex;
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::error::AppResult;
@@ -43,6 +44,193 @@ impl LaunchResult {
 pub struct AppInfo {
     pub name: String,
     pub version: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KeepAwakeResult {
+    pub ok: bool,
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl KeepAwakeResult {
+    fn ok(enabled: bool) -> Self {
+        Self {
+            ok: true,
+            enabled,
+            error: None,
+        }
+    }
+
+    fn err(enabled: bool, message: impl Into<String>) -> Self {
+        Self {
+            ok: false,
+            enabled,
+            error: Some(message.into()),
+        }
+    }
+}
+
+struct KeepAwakeWorker {
+    stop_tx: mpsc::Sender<()>,
+    done_rx: mpsc::Receiver<Result<(), String>>,
+    thread: JoinHandle<()>,
+}
+
+impl KeepAwakeWorker {
+    fn stop(self) -> Result<(), String> {
+        let stop_result = self
+            .stop_tx
+            .send(())
+            .map_err(|_| "The keep-awake worker stopped unexpectedly.".to_string());
+        let reset_result = self
+            .done_rx
+            .recv()
+            .map_err(|_| "The keep-awake worker did not confirm shutdown.".to_string())
+            .and_then(|result| result);
+        let join_result = self
+            .thread
+            .join()
+            .map_err(|_| "The keep-awake worker panicked during shutdown.".to_string());
+
+        stop_result?;
+        reset_result?;
+        join_result
+    }
+}
+
+#[derive(Default)]
+pub struct KeepAwakeState {
+    worker: Mutex<Option<KeepAwakeWorker>>,
+}
+
+impl KeepAwakeState {
+    fn is_enabled(&self) -> Result<bool, String> {
+        self.worker
+            .lock()
+            .map(|worker| worker.is_some())
+            .map_err(|_| "The keep-awake state is unavailable.".to_string())
+    }
+
+    fn set_enabled(&self, enabled: bool) -> Result<bool, String> {
+        self.set_enabled_with(enabled, start_keep_awake_worker)
+    }
+
+    fn set_enabled_with(
+        &self,
+        enabled: bool,
+        start_worker: fn() -> Result<KeepAwakeWorker, String>,
+    ) -> Result<bool, String> {
+        let mut worker = self
+            .worker
+            .lock()
+            .map_err(|_| "The keep-awake state is unavailable.".to_string())?;
+
+        if enabled {
+            if worker.is_none() {
+                *worker = Some(start_worker()?);
+            }
+        } else if let Some(active_worker) = worker.take() {
+            active_worker.stop()?;
+        }
+
+        Ok(worker.is_some())
+    }
+
+    pub(crate) fn shutdown(&self) {
+        if let Err(error) = self.set_enabled(false) {
+            eprintln!("failed to release keep-awake state: {error}");
+        }
+    }
+}
+
+impl Drop for KeepAwakeState {
+    fn drop(&mut self) {
+        if let Ok(worker) = self.worker.get_mut() {
+            if let Some(active_worker) = worker.take() {
+                if let Err(error) = active_worker.stop() {
+                    eprintln!("failed to release keep-awake state during drop: {error}");
+                }
+            }
+        }
+    }
+}
+
+fn start_worker(
+    set_execution_state: fn(bool) -> Result<(), String>,
+) -> Result<KeepAwakeWorker, String> {
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let (done_tx, done_rx) = mpsc::sync_channel(1);
+    let thread = thread::Builder::new()
+        .name("devtrees-keep-awake".to_string())
+        .spawn(move || {
+            let activation = set_execution_state(true);
+            let active = activation.is_ok();
+            if ready_tx.send(activation).is_err() {
+                if active {
+                    let _ = set_execution_state(false);
+                }
+                return;
+            }
+            if !active {
+                return;
+            }
+
+            let _ = stop_rx.recv();
+            let _ = done_tx.send(set_execution_state(false));
+        })
+        .map_err(|error| format!("Could not start the keep-awake worker: {error}"))?;
+
+    match ready_rx.recv() {
+        Ok(Ok(())) => Ok(KeepAwakeWorker {
+            stop_tx,
+            done_rx,
+            thread,
+        }),
+        Ok(Err(error)) => {
+            let _ = thread.join();
+            Err(error)
+        }
+        Err(_) => {
+            let _ = thread.join();
+            Err("The keep-awake worker did not report its startup state.".to_string())
+        }
+    }
+}
+
+fn start_keep_awake_worker() -> Result<KeepAwakeWorker, String> {
+    start_worker(set_system_keep_awake)
+}
+
+#[cfg(windows)]
+fn set_system_keep_awake(enabled: bool) -> Result<(), String> {
+    use winapi::um::winbase::SetThreadExecutionState;
+
+    const ES_SYSTEM_REQUIRED: u32 = 0x0000_0001;
+    const ES_CONTINUOUS: u32 = 0x8000_0000;
+
+    let flags = if enabled {
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+    } else {
+        ES_CONTINUOUS
+    };
+    let previous = unsafe { SetThreadExecutionState(flags) };
+    if previous == 0 {
+        Err(format!(
+            "Windows could not update the system sleep state: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn set_system_keep_awake(_enabled: bool) -> Result<(), String> {
+    Err("Keep awake is currently supported only on Windows.".to_string())
 }
 
 #[cfg(windows)]
@@ -279,9 +467,52 @@ pub async fn system_get_app_info(app: AppHandle) -> AppResult<AppInfo> {
     })
 }
 
+#[tauri::command]
+pub fn system_get_keep_awake(state: State<'_, KeepAwakeState>) -> KeepAwakeResult {
+    match state.is_enabled() {
+        Ok(enabled) => KeepAwakeResult::ok(enabled),
+        Err(error) => KeepAwakeResult::err(false, error),
+    }
+}
+
+#[tauri::command]
+pub fn system_set_keep_awake(state: State<'_, KeepAwakeState>, enabled: bool) -> KeepAwakeResult {
+    match state.set_enabled(enabled) {
+        Ok(enabled) => KeepAwakeResult::ok(enabled),
+        Err(error) => {
+            let current = state.is_enabled().unwrap_or(false);
+            KeepAwakeResult::err(current, error)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+    static WORKER_EXECUTION_CALLS: AtomicU8 = AtomicU8::new(0);
+    static STATE_EXECUTION_CALLS: AtomicU8 = AtomicU8::new(0);
+    static WORKER_STARTS: AtomicUsize = AtomicUsize::new(0);
+
+    fn mock_worker_execution_state(enabled: bool) -> Result<(), String> {
+        WORKER_EXECUTION_CALLS.fetch_or(if enabled { 1 } else { 2 }, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn mock_state_execution_state(enabled: bool) -> Result<(), String> {
+        STATE_EXECUTION_CALLS.fetch_or(if enabled { 1 } else { 2 }, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn failing_execution_state(_enabled: bool) -> Result<(), String> {
+        Err("native failure".to_string())
+    }
+
+    fn mock_worker() -> Result<KeepAwakeWorker, String> {
+        WORKER_STARTS.fetch_add(1, Ordering::SeqCst);
+        start_worker(mock_state_execution_state)
+    }
 
     #[test]
     fn external_commands_preserve_session_ids_without_granting_permissions() {
@@ -321,5 +552,36 @@ mod tests {
             .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
         assert_eq!(String::from_utf16(&units).unwrap(), command);
+    }
+
+    #[test]
+    fn keep_awake_worker_enables_and_resets_on_the_same_lifecycle() {
+        WORKER_EXECUTION_CALLS.store(0, Ordering::SeqCst);
+        let worker = start_worker(mock_worker_execution_state).unwrap();
+        worker.stop().unwrap();
+        assert_eq!(WORKER_EXECUTION_CALLS.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn keep_awake_worker_propagates_native_startup_failures() {
+        let error = match start_worker(failing_execution_state) {
+            Ok(_) => panic!("expected native startup failure"),
+            Err(error) => error,
+        };
+        assert_eq!(error, "native failure");
+    }
+
+    #[test]
+    fn keep_awake_state_transitions_are_idempotent() {
+        STATE_EXECUTION_CALLS.store(0, Ordering::SeqCst);
+        WORKER_STARTS.store(0, Ordering::SeqCst);
+        let state = KeepAwakeState::default();
+
+        assert!(state.set_enabled_with(true, mock_worker).unwrap());
+        assert!(state.set_enabled_with(true, mock_worker).unwrap());
+        assert_eq!(WORKER_STARTS.load(Ordering::SeqCst), 1);
+        assert!(!state.set_enabled_with(false, mock_worker).unwrap());
+        assert!(!state.set_enabled_with(false, mock_worker).unwrap());
+        assert_eq!(STATE_EXECUTION_CALLS.load(Ordering::SeqCst), 3);
     }
 }

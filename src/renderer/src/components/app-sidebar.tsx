@@ -69,7 +69,7 @@ import { cn } from '@/lib/utils'
 import { openInWindowsTerminal } from '@/lib/system'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
-import type { TerminalSessionStatus } from '@shared/terminal-session'
+import { isTerminalSessionFinished, type TerminalSessionStatus } from '@shared/terminal-session'
 import { nativeSessionNeedsUserAction } from '@shared/native-session'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
@@ -404,8 +404,14 @@ export function AppSidebar({
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
   const [repositoriesOpen, setRepositoriesOpen] = React.useState(true)
+  const [completedSessionsOpen, setCompletedSessionsOpen] = React.useState(false)
   const launchCopilot = useCopilotLauncher()
   const { sessions, selectedId, select, forget, nativeById } = useTerminalSessions()
+  const activeSessions = sessions.filter((session) => !isTerminalSessionFinished(session.status))
+  const endedSessions = sessions.filter((session) => isTerminalSessionFinished(session.status))
+  const selectedSessionIsCompleted = sessions.some(
+    (session) => session.id === selectedId && isTerminalSessionFinished(session.status)
+  )
 
   const handleStartCopilotSession = React.useCallback(
     async (wt: Worktree, repository?: string): Promise<void> => {
@@ -459,6 +465,52 @@ export function AppSidebar({
       onReorderRepositories(arrayMove(ids, oldIndex, newIndex))
     },
     [repositories, onReorderRepositories]
+  )
+
+  const renderSessionMenu = (sessionList: typeof sessions): React.JSX.Element => (
+    <SidebarMenu>
+      {sessionList.map((session) => {
+        const primary = session.label || session.branch || session.folderPath
+        const repoLabel = session.repository
+        const needsAction = nativeSessionNeedsUserAction(session, nativeById[session.id])
+        return (
+          <SidebarMenuItem key={session.id}>
+            <SidebarMenuButton
+              tooltip={repoLabel ? `${primary} · ${repoLabel}` : primary}
+              isActive={activeView === 'sessions' && selectedId === session.id}
+              className={cn(
+                'h-auto border border-transparent py-1',
+                needsAction &&
+                  'border-amber-500/35 bg-amber-500/[0.035] hover:bg-amber-500/[0.07] data-[active=true]:border-amber-500/45 data-[active=true]:bg-amber-500/[0.09]'
+              )}
+              onClick={() => {
+                select(session.id)
+                onSelectView('sessions')
+              }}
+            >
+              <CircleDotIcon
+                className={cn('size-3.5 shrink-0', SESSION_DOT_CLASS[session.status])}
+              />
+              <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                <span className="truncate">{primary}</span>
+                <span className="text-sidebar-foreground/70 truncate text-[10px]">
+                  {repoLabel ? `${repoLabel} · ` : ''}
+                  {SESSION_STATUS_LABEL[session.status]}
+                </span>
+              </div>
+            </SidebarMenuButton>
+            <SidebarMenuAction
+              showOnHover
+              title="Dismiss session"
+              onClick={() => void forget(session.id)}
+            >
+              <XIcon />
+              <span className="sr-only">Dismiss session</span>
+            </SidebarMenuAction>
+          </SidebarMenuItem>
+        )
+      })}
+    </SidebarMenu>
   )
 
   return (
@@ -575,52 +627,27 @@ export function AppSidebar({
                   No sessions yet.
                 </p>
               ) : (
-                <SidebarMenu>
-                  {sessions.map((session) => {
-                    const primary = session.label || session.branch || session.folderPath
-                    const repoLabel = session.repository
-                    const needsAction = nativeSessionNeedsUserAction(
-                      session,
-                      nativeById[session.id]
-                    )
-                    return (
-                      <SidebarMenuItem key={session.id}>
-                        <SidebarMenuButton
-                          tooltip={repoLabel ? `${primary} · ${repoLabel}` : primary}
-                          isActive={activeView === 'sessions' && selectedId === session.id}
-                          className={cn(
-                            'h-auto border border-transparent py-1',
-                            needsAction &&
-                              'border-amber-500/35 bg-amber-500/[0.035] hover:bg-amber-500/[0.07] data-[active=true]:border-amber-500/45 data-[active=true]:bg-amber-500/[0.09]'
-                          )}
-                          onClick={() => {
-                            select(session.id)
-                            onSelectView('sessions')
-                          }}
-                        >
-                          <CircleDotIcon
-                            className={cn('size-3.5 shrink-0', SESSION_DOT_CLASS[session.status])}
-                          />
-                          <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                            <span className="truncate">{primary}</span>
-                            <span className="text-sidebar-foreground/70 truncate text-[10px]">
-                              {repoLabel ? `${repoLabel} · ` : ''}
-                              {SESSION_STATUS_LABEL[session.status]}
-                            </span>
-                          </div>
-                        </SidebarMenuButton>
-                        <SidebarMenuAction
-                          showOnHover
-                          title="Dismiss session"
-                          onClick={() => void forget(session.id)}
-                        >
-                          <XIcon />
-                          <span className="sr-only">Dismiss session</span>
-                        </SidebarMenuAction>
-                      </SidebarMenuItem>
-                    )
-                  })}
-                </SidebarMenu>
+                <>
+                  {activeSessions.length > 0 ? renderSessionMenu(activeSessions) : null}
+                  {endedSessions.length > 0 ? (
+                    <Collapsible
+                      open={completedSessionsOpen || selectedSessionIsCompleted}
+                      onOpenChange={setCompletedSessionsOpen}
+                      className={cn(activeSessions.length > 0 && 'mt-1')}
+                    >
+                      <SidebarGroupLabel
+                        asChild
+                        className="cursor-pointer hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                      >
+                        <CollapsibleTrigger className="group/completed flex w-full items-center">
+                          <ChevronRightIcon className="mr-1.5 size-3.5 transition-transform group-data-[state=open]/completed:rotate-90" />
+                          <span>Completed</span>
+                        </CollapsibleTrigger>
+                      </SidebarGroupLabel>
+                      <CollapsibleContent>{renderSessionMenu(endedSessions)}</CollapsibleContent>
+                    </Collapsible>
+                  ) : null}
+                </>
               )}
             </SidebarGroupContent>
           </SidebarGroup>

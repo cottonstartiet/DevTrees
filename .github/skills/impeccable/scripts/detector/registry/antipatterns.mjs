@@ -7,7 +7,7 @@ const ANTIPATTERNS = [
     description:
       'Thick colored border on one side of a card — the most recognizable tell of AI-generated UIs. Use a subtler accent or remove it entirely.',
     skillSection: 'Visual Details',
-    skillGuideline: 'colored accent stripe',
+    skillGuideline: 'colored accent stripe'
   },
   {
     id: 'border-accent-on-rounded',
@@ -16,7 +16,7 @@ const ANTIPATTERNS = [
     description:
       'Thick accent border on a rounded card — the border clashes with the rounded corners. Remove the border or the border-radius.',
     skillSection: 'Visual Details',
-    skillGuideline: 'colored accent stripe',
+    skillGuideline: 'colored accent stripe'
   },
   {
     id: 'overused-font',
@@ -25,7 +25,7 @@ const ANTIPATTERNS = [
     description:
       'Inter, Roboto, Fraunces, Geist, Plus Jakarta Sans, and Space Grotesk are used on so many sites they no longer feel distinctive. Each new wave of AI-generated UIs converges on the same handful of faces. Choose a face that gives your interface personality.',
     skillSection: 'Typography',
-    skillGuideline: 'overused fonts like Inter',
+    skillGuideline: 'overused fonts like Inter'
   },
   {
     id: 'single-font',
@@ -34,7 +34,7 @@ const ANTIPATTERNS = [
     description:
       'Only one font family is used for the entire page. Pair a distinctive display font with a refined body font to create typographic hierarchy.',
     skillSection: 'Typography',
-    skillGuideline: 'only one font family for the entire page',
+    skillGuideline: 'only one font family for the entire page'
   },
   {
     id: 'flat-type-hierarchy',
@@ -43,7 +43,7 @@ const ANTIPATTERNS = [
     description:
       'Font sizes are too close together — no clear visual hierarchy. Use fewer sizes with more contrast (aim for at least a 1.25 ratio between steps).',
     skillSection: 'Typography',
-    skillGuideline: 'flat type hierarchy',
+    skillGuideline: 'flat type hierarchy'
   },
   {
     id: 'gradient-text',
@@ -52,7 +52,7 @@ const ANTIPATTERNS = [
     description:
       'Gradient text is decorative rather than meaningful — a common AI tell, especially on headings and metrics. Use solid colors for text.',
     skillSection: 'Color & Contrast',
-    skillGuideline: 'gradient text for',
+    skillGuideline: 'gradient text for'
   },
   {
     id: 'ai-color-palette',
@@ -61,7 +61,7 @@ const ANTIPATTERNS = [
     description:
       'Purple/violet gradients and cyan-on-dark are the most recognizable tells of AI-generated UIs. Choose a distinctive, intentional palette.',
     skillSection: 'Color & Contrast',
-    skillGuideline: 'AI color palette',
+    skillGuideline: 'AI color palette'
   },
   {
     id: 'cream-palette',
@@ -70,7 +70,7 @@ const ANTIPATTERNS = [
     description:
       'A warm cream or beige page background has become the default "tasteful" AI surface, reached for by reflex. Choose a background that comes from a deliberate palette, not the safe warm off-white.',
     skillSection: 'Color & Contrast',
-    skillGuideline: 'cream and beige as the default surface',
+    skillGuideline: 'cream and beige as the default surface'
   },
   {
     id: 'nested-cards',
@@ -79,7 +79,7 @@ const ANTIPATTERNS = [
     description:
       'Cards inside cards create visual noise and excessive depth. Flatten the hierarchy — use spacing, typography, and dividers instead of nesting containers.',
     skillSection: 'Layout & Space',
-    skillGuideline: 'Nest cards inside cards',
+    skillGuideline: 'Nest cards inside cards'
   },
   {
     id: 'monotonous-spacing',
@@ -88,7 +88,7 @@ const ANTIPATTERNS = [
     description:
       'The same spacing value used everywhere — no rhythm, no variation. Use tight groupings for related items and generous separations between sections.',
     skillSection: 'Layout & Space',
-    skillGuideline: 'same spacing everywhere',
+    skillGuideline: 'same spacing everywhere'
   },
   {
     id: 'bounce-easing',
@@ -97,7 +97,7 @@ const ANTIPATTERNS = [
     description:
       'Bounce and elastic easing feel dated and tacky. Real objects decelerate smoothly — use exponential easing (ease-out-quart/quint/expo) instead.',
     skillSection: 'Motion',
-    skillGuideline: 'bounce or elastic easing',
+    skillGuideline: 'bounce or elastic easing'
   },
   {
     id: 'dark-glow',
@@ -106,7 +106,7 @@ const ANTIPATTERNS = [
     description:
       'Dark backgrounds with colored box-shadow glows are the default "cool" look of AI-generated UIs. Use subtle, purposeful lighting instead — or skip the dark theme entirely.',
     skillSection: 'Color & Contrast',
-    skillGuideline: 'dark mode with glowing accents',
+    skillGuideline: 'dark mode with glowing accents'
   },
   {
     id: 'icon-tile-stack',
@@ -115,7 +115,7 @@ const ANTIPATTERNS = [
     description:
       'A small rounded-square icon container above a heading is the universal AI feature-card template — every generator outputs this exact shape. Try a side-by-side icon and heading, or let the icon sit in flow without its own container.',
     skillSection: 'Typography',
-    skillGuideline: 'large icons with rounded corners above every heading',
+    skillGuideline: 'large icons with rounded corners above every heading'
   },
   {
     id: 'italic-serif-display',
@@ -124,7 +124,7 @@ const ANTIPATTERNS = [
     description:
       'Oversized italic serif (Fraunces, Recoleta, Playfair, Newsreader-italic) as the primary hero headline reads as taste in isolation but has become the universal AI-startup landing page hero. Set roman, or move to a non-serif display face. Editorial / magazine register may legitimately want this — judge by context.',
     skillSection: 'Typography',
-    skillGuideline: 'oversized italic serif as the hero headline',
+    skillGuideline: 'oversized italic serif as the hero headline'
   },
   {
     id: 'hero-eyebrow-chip',
@@ -133,7 +133,7 @@ const ANTIPATTERNS = [
     description:
       'A tiny uppercase letter-spaced label sitting immediately above an oversized hero headline — or the same shape rendered as a pill chip — is now the default AI SaaS hero. Drop the eyebrow, integrate the kicker into the headline, or run it as a navigation breadcrumb instead.',
     skillSection: 'Typography',
-    skillGuideline: 'tiny uppercase tracked label above the hero headline',
+    skillGuideline: 'tiny uppercase tracked label above the hero headline'
   },
   {
     id: 'repeated-section-kickers',
@@ -143,7 +143,7 @@ const ANTIPATTERNS = [
     description:
       'Repeating tiny uppercase tracked labels above section headings turns a brand page into AI editorial scaffolding. Replace them with stronger structure, artifacts, imagery, or a deliberate brand system.',
     skillSection: 'Typography',
-    skillGuideline: 'repeated eyebrow or kicker labels as section scaffolding',
+    skillGuideline: 'repeated eyebrow or kicker labels as section scaffolding'
   },
   {
     id: 'numbered-section-markers',
@@ -153,7 +153,7 @@ const ANTIPATTERNS = [
     description:
       'Numbered display markers as section labels (01, 02, 03) are the AI editorial scaffold one tier deeper than tracked eyebrow chips. If you find yourself reaching for them, choose a different section cadence.',
     skillSection: 'Layout & Space',
-    skillGuideline: 'numbered section markers',
+    skillGuideline: 'numbered section markers'
   },
   {
     id: 'em-dash-overuse',
@@ -162,7 +162,7 @@ const ANTIPATTERNS = [
     description:
       'More than two em-dashes (— or --) in body copy is an AI cadence tell. Use commas, colons, periods, or parentheses instead.',
     skillSection: 'Copy',
-    skillGuideline: 'no em dashes',
+    skillGuideline: 'no em dashes'
   },
   {
     id: 'marketing-buzzword',
@@ -171,7 +171,7 @@ const ANTIPATTERNS = [
     description:
       'Generic SaaS phrases (streamline / empower / supercharge / world-class / enterprise-grade / next-generation / cutting-edge / etc) are instant AI tells. Pick a specific verb and noun that says what the product literally does.',
     skillSection: 'Copy',
-    skillGuideline: 'marketing buzzwords',
+    skillGuideline: 'marketing buzzwords'
   },
   {
     id: 'aphoristic-cadence',
@@ -180,7 +180,7 @@ const ANTIPATTERNS = [
     description:
       'Three or more sections landing on a short rebuttal sentence ("X. No Y." / "X. Just Y.") or a manufactured-contrast aphorism ("Not a feature. A platform.") reads as AI cadence, not voice. Once is fine; the pattern is the tell.',
     skillSection: 'Copy',
-    skillGuideline: 'aphoristic cadence',
+    skillGuideline: 'aphoristic cadence'
   },
   {
     id: 'oversized-h1',
@@ -189,7 +189,7 @@ const ANTIPATTERNS = [
     description:
       'A full-sentence headline set at display size ends up dominating the viewport, leaving no room for anything else above the fold. A punchy one- or two-word headline at that size is fine — the problem is a long headline blown up too large. Set long headlines smaller, or tighten the copy.',
     skillSection: 'Typography',
-    skillGuideline: 'long headline set at display size',
+    skillGuideline: 'long headline set at display size'
   },
   {
     id: 'extreme-negative-tracking',
@@ -198,7 +198,7 @@ const ANTIPATTERNS = [
     description:
       'Letter-spacing pulled tighter than the point where characters keep their own shapes costs legibility. Tighten display type optically, not destructively.',
     skillSection: 'Typography',
-    skillGuideline: 'letter spacing crushed past legibility',
+    skillGuideline: 'letter spacing crushed past legibility'
   },
   {
     id: 'broken-image',
@@ -207,7 +207,7 @@ const ANTIPATTERNS = [
     description:
       '<img> tags with empty src, missing src, or placeholder values ship as broken-image boxes. Use real images, generated assets, or remove the tag.',
     skillSection: 'Imagery',
-    skillGuideline: 'broken image references',
+    skillGuideline: 'broken image references'
   },
 
   // ── Quality: general design and accessibility issues ──
@@ -218,14 +218,14 @@ const ANTIPATTERNS = [
     description:
       'Gray text looks washed out on colored backgrounds. Use a darker shade of the background color instead, or white/near-white for contrast.',
     skillSection: 'Color & Contrast',
-    skillGuideline: 'gray text on colored backgrounds',
+    skillGuideline: 'gray text on colored backgrounds'
   },
   {
     id: 'low-contrast',
     category: 'quality',
     name: 'Low contrast text',
     description:
-      'Text does not meet WCAG AA contrast requirements (4.5:1 for body, 3:1 for large text). Increase the contrast between text and background.',
+      'Text does not meet WCAG AA contrast requirements (4.5:1 for body, 3:1 for large text). Increase the contrast between text and background.'
   },
   {
     id: 'layout-transition',
@@ -234,7 +234,7 @@ const ANTIPATTERNS = [
     description:
       'Animating width, height, padding, or margin causes layout thrash and janky performance. Use transform and opacity instead, or grid-template-rows for height animations.',
     skillSection: 'Motion',
-    skillGuideline: 'Animate layout properties',
+    skillGuideline: 'Animate layout properties'
   },
   {
     id: 'line-length',
@@ -243,7 +243,7 @@ const ANTIPATTERNS = [
     description:
       'Text lines wider than ~80 characters are hard to read. The eye loses its place tracking back to the start of the next line. Add a max-width (65ch to 75ch) to text containers.',
     skillSection: 'Layout & Space',
-    skillGuideline: 'wrap beyond ~80 characters',
+    skillGuideline: 'wrap beyond ~80 characters'
   },
   {
     id: 'cramped-padding',
@@ -252,42 +252,42 @@ const ANTIPATTERNS = [
     description:
       'Text is too close to the edge of its container. Two shapes: (1) an element with its own text where the padding is too low for the font size, and (2) a wrapper with text-bearing children and near-zero padding against a visible boundary (border, outline, or non-transparent background) — children land flush against the boundary line. Add at least 8px (ideally 12–16px) of padding inside bordered, outlined, or colored containers.',
     skillSection: 'Layout & Space',
-    skillGuideline: 'inside bordered or colored containers',
+    skillGuideline: 'inside bordered or colored containers'
   },
   {
     id: 'body-text-viewport-edge',
     category: 'quality',
     name: 'Body text touching viewport edge',
     description:
-      'Body paragraphs render flush against the left or right viewport edge with no container providing horizontal padding. Wrap content in a container with at least 16px (ideally 24-32px) of horizontal padding, or apply max-width with mx-auto.',
+      'Body paragraphs render flush against the left or right viewport edge with no container providing horizontal padding. Wrap content in a container with at least 16px (ideally 24-32px) of horizontal padding, or apply max-width with mx-auto.'
   },
   {
     id: 'tight-leading',
     category: 'quality',
     name: 'Tight line height',
     description:
-      'Line height below 1.3x the font size makes multi-line text hard to read. Use 1.5 to 1.7 for body text so lines have room to breathe.',
+      'Line height below 1.3x the font size makes multi-line text hard to read. Use 1.5 to 1.7 for body text so lines have room to breathe.'
   },
   {
     id: 'skipped-heading',
     category: 'quality',
     name: 'Skipped heading level',
     description:
-      'Heading levels should not skip (e.g. h1 then h3 with no h2). Screen readers use heading hierarchy for navigation. Skipping levels breaks the document outline.',
+      'Heading levels should not skip (e.g. h1 then h3 with no h2). Screen readers use heading hierarchy for navigation. Skipping levels breaks the document outline.'
   },
   {
     id: 'justified-text',
     category: 'quality',
     name: 'Justified text',
     description:
-      'Justified text without hyphenation creates uneven word spacing ("rivers of white"). Use text-align: left for body text, or enable hyphens: auto if you must justify.',
+      'Justified text without hyphenation creates uneven word spacing ("rivers of white"). Use text-align: left for body text, or enable hyphens: auto if you must justify.'
   },
   {
     id: 'tiny-text',
     category: 'quality',
     name: 'Tiny body text',
     description:
-      'Body text below 12px is hard to read, especially on high-DPI screens. Use at least 14px for body content, 16px is ideal.',
+      'Body text below 12px is hard to read, especially on high-DPI screens. Use at least 14px for body content, 16px is ideal.'
   },
   {
     id: 'all-caps-body',
@@ -296,14 +296,14 @@ const ANTIPATTERNS = [
     description:
       'Long passages in uppercase are hard to read. We recognize words by shape (ascenders and descenders), which all-caps removes. Reserve uppercase for short labels and headings.',
     skillSection: 'Typography',
-    skillGuideline: 'long body passages in uppercase',
+    skillGuideline: 'long body passages in uppercase'
   },
   {
     id: 'wide-tracking',
     category: 'quality',
     name: 'Wide letter spacing on body text',
     description:
-      'Letter spacing above 0.05em on body text disrupts natural character groupings and slows reading. Reserve wide tracking for short uppercase labels only.',
+      'Letter spacing above 0.05em on body text disrupts natural character groupings and slows reading. Reserve wide tracking for short uppercase labels only.'
   },
   {
     id: 'text-overflow',
@@ -312,7 +312,7 @@ const ANTIPATTERNS = [
     description:
       'Content renders wider than its container, spilling out or forcing a horizontal scrollbar. Let text wrap, constrain widths, or give the region a deliberate scroll affordance.',
     skillSection: 'Layout & Space',
-    skillGuideline: 'content wider than its container',
+    skillGuideline: 'content wider than its container'
   },
   {
     id: 'clipped-overflow-container',
@@ -321,7 +321,7 @@ const ANTIPATTERNS = [
     description:
       'A clipping container (overflow hidden or clip) wrapping an absolutely-positioned child cuts off tooltips, menus, and popovers that need to escape. Let the overflow be visible, or move the positioned layer out of the clip.',
     skillSection: 'Layout & Space',
-    skillGuideline: 'overflow container clipping positioned children',
+    skillGuideline: 'overflow container clipping positioned children'
   },
   {
     id: 'design-system-font',
@@ -330,7 +330,7 @@ const ANTIPATTERNS = [
     description:
       'A font is used that is not declared in DESIGN.md typography. Use the documented type system or update DESIGN.md if this is an intentional brand addition.',
     skillSection: 'Typography',
-    skillGuideline: 'font family outside the project design system',
+    skillGuideline: 'font family outside the project design system'
   },
   {
     id: 'design-system-color',
@@ -340,7 +340,7 @@ const ANTIPATTERNS = [
     description:
       'A literal color is outside the DESIGN.md palette and sidecar tonal ramps. This may be legitimate, but it should be an intentional design-system addition rather than drift.',
     skillSection: 'Color & Contrast',
-    skillGuideline: 'literal color outside the project design system',
+    skillGuideline: 'literal color outside the project design system'
   },
   {
     id: 'design-system-radius',
@@ -350,7 +350,7 @@ const ANTIPATTERNS = [
     description:
       'A border-radius value is outside the DESIGN.md rounded scale. Use a documented radius token or update the design system if the new shape is intentional.',
     skillSection: 'Visual Details',
-    skillGuideline: 'border radius outside the project design system',
+    skillGuideline: 'border radius outside the project design system'
   },
 
   // ── Provider tells: opt-in via --gpt / --gemini (gated off by default) ──
@@ -363,7 +363,7 @@ const ANTIPATTERNS = [
     description:
       'A hairline border paired with a wide, diffuse shadow is a recurring generated-UI signature. Commit to one — a defined edge or a soft elevation — rather than both at once.',
     skillSection: 'Visual Details',
-    skillGuideline: 'hairline border plus wide diffuse shadow',
+    skillGuideline: 'hairline border plus wide diffuse shadow'
   },
   {
     id: 'repeating-stripes-gradient',
@@ -374,7 +374,7 @@ const ANTIPATTERNS = [
     description:
       'Repeating-gradient stripes used as surface decoration are a recurring generated-UI signature. Reach for a deliberate texture or leave the surface plain.',
     skillSection: 'Visual Details',
-    skillGuideline: 'repeating-gradient decorative stripes',
+    skillGuideline: 'repeating-gradient decorative stripes'
   },
   {
     id: 'codex-grid-background',
@@ -385,7 +385,7 @@ const ANTIPATTERNS = [
     description:
       'A two-axis grid drawn with hairline linear-gradient layers ("1px, transparent 1px" on both axes) is a recurring generated-UI signature. Reserve grid overlays for actual canvas, map, blueprint, or measurement surfaces; elsewhere use product structure or a plain surface.',
     skillSection: 'Visual Details',
-    skillGuideline: 'two-axis grid-line gradient background',
+    skillGuideline: 'two-axis grid-line gradient background'
   },
   {
     id: 'theater-slop-phrase',
@@ -396,7 +396,7 @@ const ANTIPATTERNS = [
     description:
       'Dismissing something as "theater" is a recurring generated-copy tic. Say plainly what the thing does or does not do.',
     skillSection: 'Copy',
-    skillGuideline: 'theater framing copy',
+    skillGuideline: 'theater framing copy'
   },
   {
     id: 'image-hover-transform',
@@ -407,45 +407,43 @@ const ANTIPATTERNS = [
     description:
       'Scaling or rotating an image on hover is a recurring generated-UI signature. Let imagery sit still, or use a subtler, purposeful interaction.',
     skillSection: 'Motion',
-    skillGuideline: 'image scale or rotate on hover',
-  },
-];
+    skillGuideline: 'image scale or rotate on hover'
+  }
+]
 
 const RULE_ENGINE_SUPPORT = {
   regex: new Set(['source', 'page-analyzer']),
   'static-html': new Set(['element', 'page']),
   browser: new Set(['element', 'page', 'layout']),
-  visual: new Set(['visual-contrast']),
-};
+  visual: new Set(['visual-contrast'])
+}
 
 function getAntipattern(id) {
-  return ANTIPATTERNS.find(rule => rule.id === id);
+  return ANTIPATTERNS.find((rule) => rule.id === id)
 }
 
 function getRulesForCategory(category) {
-  return ANTIPATTERNS.filter(rule => rule.category === category);
+  return ANTIPATTERNS.filter((rule) => rule.category === category)
 }
 
 function getRuleEngineSupport(engine) {
-  return RULE_ENGINE_SUPPORT[engine] || new Set();
+  return RULE_ENGINE_SUPPORT[engine] || new Set()
 }
 
 // Set of provider tags that gate rules off by default (e.g. 'gpt', 'gemini').
-const GATED_PROVIDERS = new Set(
-  ANTIPATTERNS.map(rule => rule.gated).filter(Boolean),
-);
+const GATED_PROVIDERS = new Set(ANTIPATTERNS.map((rule) => rule.gated).filter(Boolean))
 
 // Drop findings for rules gated behind a provider tag unless that provider
 // was explicitly enabled (CLI --gpt / --gemini). Non-gated findings always
 // pass through. `findings` carry the rule id on `.antipattern`.
 function filterByProviders(findings, providers = []) {
-  const enabled = new Set(providers || []);
-  if (!GATED_PROVIDERS.size) return findings;
-  return findings.filter(f => {
-    const rule = getAntipattern(f.antipattern);
-    if (!rule || !rule.gated) return true;
-    return enabled.has(rule.gated);
-  });
+  const enabled = new Set(providers || [])
+  if (!GATED_PROVIDERS.size) return findings
+  return findings.filter((f) => {
+    const rule = getAntipattern(f.antipattern)
+    if (!rule || !rule.gated) return true
+    return enabled.has(rule.gated)
+  })
 }
 
 export {
@@ -455,5 +453,5 @@ export {
   getAntipattern,
   getRulesForCategory,
   getRuleEngineSupport,
-  filterByProviders,
-};
+  filterByProviders
+}

@@ -26,9 +26,6 @@ pub struct Task {
     pub queue_order: i64,
     pub sort_order: i64,
     pub execution_target_key: String,
-    pub source_provider: Option<String>,
-    pub source_id: Option<String>,
-    pub source_url: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -183,18 +180,15 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         queue_order: row.get(12)?,
         sort_order: row.get(13)?,
         execution_target_key: row.get(14)?,
-        source_provider: row.get(15)?,
-        source_id: row.get(16)?,
-        source_url: row.get(17)?,
-        created_at: row.get(18)?,
-        updated_at: row.get(19)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
     })
 }
 
 const SELECT_COLUMNS: &str = "id, title, description, status, repository_id, repository_name,
      repository_path, worktree_path, worktree_branch, pending_worktree_name,
      copilot_session_id, queue_status, queue_order, sort_order,
-     execution_target_key, source_provider, source_id, source_url, created_at, updated_at";
+     execution_target_key, created_at, updated_at";
 
 fn load_tasks(conn: &Connection) -> rusqlite::Result<Vec<Task>> {
     let sql = format!("SELECT {SELECT_COLUMNS} FROM tasks ORDER BY status ASC, sort_order ASC");
@@ -253,9 +247,6 @@ pub async fn tasks_create(
     worktree_path: String,
     worktree_branch: Option<String>,
     pending_worktree_name: Option<String>,
-    source_provider: Option<String>,
-    source_id: Option<String>,
-    source_url: Option<String>,
 ) -> AppResult<TaskResult> {
     let trimmed_title = title.trim();
     if trimmed_title.is_empty() {
@@ -269,38 +260,6 @@ pub async fn tasks_create(
         .0
         .lock()
         .map_err(|_| AppError::msg("db mutex poisoned"))?;
-    let source = match (source_provider, source_id, source_url) {
-        (None, None, None) => None,
-        (Some(provider), Some(source_id), Some(source_url))
-            if matches!(provider.as_str(), "ado" | "github")
-                && !source_id.trim().is_empty()
-                && !source_url.trim().is_empty() =>
-        {
-            Some((provider, source_id, source_url))
-        }
-        _ => {
-            return Ok(TaskResult::err(
-                "unknown",
-                Some("Task source metadata is incomplete or invalid.".into()),
-            ))
-        }
-    };
-    if let Some((provider, source_id, _)) = &source {
-        let duplicate: Option<String> = conn
-            .query_row(
-                "SELECT id FROM tasks
-                 WHERE source_provider = ?1 AND source_id = ?2 COLLATE NOCASE",
-                rusqlite::params![provider, source_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if duplicate.is_some() {
-            return Ok(TaskResult::err(
-                "duplicate-source",
-                Some("This external item has already been added as a task.".into()),
-            ));
-        }
-    }
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
     let sort_order = next_sort_order(&conn, "todo");
@@ -314,10 +273,9 @@ pub async fn tasks_create(
         "INSERT INTO tasks (
             id, title, description, status, repository_id, repository_name, repository_path,
             worktree_path, worktree_branch, pending_worktree_name, copilot_session_id,
-            queue_status, queue_order, sort_order, execution_target_key,
-            source_provider, source_id, source_url, created_at, updated_at
+            queue_status, queue_order, sort_order, execution_target_key, created_at, updated_at
          ) VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?6, ?7, ?8, ?9, NULL,
-                   'queued', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+                   'queued', ?10, ?11, ?12, ?13, ?13)",
         rusqlite::params![
             id,
             trimmed_title,
@@ -331,9 +289,6 @@ pub async fn tasks_create(
             queue_order,
             sort_order,
             execution_target_key,
-            source.as_ref().map(|value| &value.0),
-            source.as_ref().map(|value| &value.1),
-            source.as_ref().map(|value| &value.2),
             now
         ],
     )?;
@@ -632,8 +587,8 @@ mod tests {
                 repository_path TEXT NOT NULL, worktree_path TEXT NOT NULL, worktree_branch TEXT,
                 pending_worktree_name TEXT, copilot_session_id TEXT, queue_status TEXT NOT NULL,
                 queue_order INTEGER NOT NULL, sort_order INTEGER NOT NULL,
-                execution_target_key TEXT NOT NULL, source_provider TEXT, source_id TEXT,
-                source_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                execution_target_key TEXT NOT NULL, created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
             );
             CREATE TABLE terminal_sessions (
                 id TEXT PRIMARY KEY, status TEXT NOT NULL

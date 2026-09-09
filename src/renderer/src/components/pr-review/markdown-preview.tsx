@@ -20,10 +20,10 @@ export interface MarkdownPreviewProps {
   path: string
   /** Head-side raw markdown. */
   text: string
-  threads: RepoPrThread[]
-  onCreateThread: (anchor: PrCommentAnchor, content: string) => Promise<string | null>
-  onReply: (thread: RepoPrThread, content: string) => Promise<string | null>
-  onToggleResolved: (thread: RepoPrThread, resolved: boolean) => Promise<string | null>
+  threads?: RepoPrThread[]
+  onCreateThread?: (anchor: PrCommentAnchor, content: string) => Promise<string | null>
+  onReply?: (thread: RepoPrThread, content: string) => Promise<string | null>
+  onToggleResolved?: (thread: RepoPrThread, resolved: boolean) => Promise<string | null>
 }
 
 type Range = { startLine: number; endLine: number }
@@ -53,11 +53,12 @@ function anchorLabel(path: string, range: Range): string {
 export function MarkdownPreview({
   path,
   text,
-  threads,
+  threads = [],
   onCreateThread,
   onReply,
   onToggleResolved
 }: MarkdownPreviewProps): React.JSX.Element {
+  const canComment = Boolean(onCreateThread && onReply && onToggleResolved)
   const containerRef = React.useRef<HTMLDivElement>(null)
   const [range, setRange] = React.useState<Range | null>(null)
 
@@ -104,6 +105,7 @@ export function MarkdownPreview({
       if (/^https?:\/\//i.test(href)) void openExternal(href)
       return
     }
+    if (!canComment) return
 
     // Clicks inside a thread card, the composer, or a diagram's own controls must not re-anchor
     // the range.
@@ -123,7 +125,7 @@ export function MarkdownPreview({
     <CommentComposer
       anchorLabel={anchorLabel(path, anchor)}
       onSubmit={async (content) => {
-        const message = await onCreateThread(
+        const message = await onCreateThread!(
           {
             filePath: path,
             side: 'right',
@@ -156,16 +158,18 @@ export function MarkdownPreview({
               range !== null && block.endLine >= range.startLine && block.startLine <= range.endLine
             }
             onComment={() => setRange({ startLine: block.startLine, endLine: block.endLine })}
+            canComment={canComment}
           >
-            {(byBlock.get(index) ?? []).map((thread) => (
-              <ThreadCard
-                key={thread.providerThreadId || thread.id}
-                thread={thread}
-                onReply={onReply}
-                onToggleResolved={onToggleResolved}
-                defaultCollapsed={thread.isResolved}
-              />
-            ))}
+            {canComment &&
+              (byBlock.get(index) ?? []).map((thread) => (
+                <ThreadCard
+                  key={thread.providerThreadId || thread.id}
+                  thread={thread}
+                  onReply={onReply!}
+                  onToggleResolved={onToggleResolved!}
+                  defaultCollapsed={thread.isResolved}
+                />
+              ))}
             {composerIndex === index && range ? renderComposer(range) : null}
           </PreviewBlock>
         ))}
@@ -175,7 +179,7 @@ export function MarkdownPreview({
           <div className="md-thread-rail mt-3">{renderComposer(range)}</div>
         ) : null}
 
-        {unanchored.length > 0 ? (
+        {canComment && unanchored.length > 0 ? (
           <section className="md-thread-rail mt-8 flex flex-col gap-2 border-t pt-4">
             <h2 className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
               Comments not anchored to a block
@@ -184,8 +188,8 @@ export function MarkdownPreview({
               <ThreadCard
                 key={thread.providerThreadId || thread.id}
                 thread={thread}
-                onReply={onReply}
-                onToggleResolved={onToggleResolved}
+                onReply={onReply!}
+                onToggleResolved={onToggleResolved!}
                 defaultCollapsed={thread.isResolved}
               />
             ))}
@@ -207,31 +211,35 @@ function PreviewBlock({
   path,
   isActive,
   onComment,
+  canComment,
   children
 }: {
   block: MarkdownBlock
   path: string
   isActive: boolean
   onComment: () => void
+  canComment: boolean
   children: React.ReactNode
 }): React.JSX.Element {
   const hasChildren = React.Children.toArray(children).length > 0
 
   return (
     <div className="md-block group relative">
-      <button
-        type="button"
-        onClick={onComment}
-        className={cn(
-          'md-block-comment text-muted-foreground hover:text-foreground hover:bg-accent bg-background',
-          'absolute top-1 -left-9 size-6 place-items-center rounded border opacity-0',
-          'group-hover:opacity-100 focus-visible:opacity-100'
-        )}
-        aria-label={`Comment on lines ${block.startLine} to ${block.endLine}`}
-        title={`Comment on L${block.startLine}\u2013L${block.endLine}`}
-      >
-        <MessageSquarePlusIcon className="size-3.5" />
-      </button>
+      {canComment ? (
+        <button
+          type="button"
+          onClick={onComment}
+          className={cn(
+            'md-block-comment text-muted-foreground hover:text-foreground hover:bg-accent bg-background',
+            'absolute top-1 -left-9 size-6 place-items-center rounded border opacity-0',
+            'group-hover:opacity-100 focus-visible:opacity-100'
+          )}
+          aria-label={`Comment on lines ${block.startLine} to ${block.endLine}`}
+          title={`Comment on L${block.startLine}\u2013L${block.endLine}`}
+        >
+          <MessageSquarePlusIcon className="size-3.5" />
+        </button>
+      ) : null}
 
       <div
         className="markdown-body md-block-content"

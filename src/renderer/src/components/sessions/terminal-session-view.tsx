@@ -15,6 +15,9 @@ import {
   type TerminalSession
 } from '@shared/terminal-session'
 
+const modeBadgeClassName =
+  'bg-muted inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium'
+
 /**
  * Native chat and external status share metadata, not interaction controls.
  */
@@ -91,14 +94,12 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <h2 className="truncate text-sm font-semibold">{session.label}</h2>
-            <TerminalSessionStatusBadge status={session.status} />
             {!native && (
               <span className="text-muted-foreground text-xs">
-                {session.transport === 'external' ? 'External Copilot terminal' : 'Previous session'}
+                {session.transport === 'external'
+                  ? 'External Copilot terminal'
+                  : 'Previous session'}
               </span>
-            )}
-            {currentMode && (
-              <span className="text-muted-foreground text-xs">{currentMode.name} mode</span>
             )}
             {currentSnapshot?.phase &&
               ['starting', 'loading', 'cancelling', 'ending'].includes(currentSnapshot.phase) && (
@@ -112,6 +113,8 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
               )}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+            {currentMode && <span className={modeBadgeClassName}>{currentMode.name}</span>}
+            <TerminalSessionStatusBadge status={session.status} />
             {session.repository && (
               <span className="flex items-center gap-1">
                 <FolderGitIcon className="size-3" />
@@ -125,6 +128,19 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
               </span>
             )}
             <span className="truncate font-mono">{session.folderPath}</span>
+            {currentSnapshot?.usage && (
+              <span>
+                Context: {currentSnapshot.usage.used.toLocaleString()} /{' '}
+                {currentSnapshot.usage.size.toLocaleString()} tokens
+                {currentSnapshot.usage.cost && (
+                  <>
+                    {' '}
+                    - {currentSnapshot.usage.cost.amount.toLocaleString()}{' '}
+                    {currentSnapshot.usage.cost.currency}
+                  </>
+                )}
+              </span>
+            )}
           </div>
         </div>
         {finished && (

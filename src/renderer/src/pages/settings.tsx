@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useTheme, type Theme } from '@/contexts/theme-context'
 import { cn } from '@/lib/utils'
 import { getAppInfo } from '@/lib/system'
+import { saveTaskQueueSettings } from '@/lib/task-queue-settings'
 import type { AppInfo } from '@shared/system'
 import {
   sessionLaunchModeLabel,
@@ -33,6 +34,65 @@ const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; Icon: typeof S
   { value: 'dark', label: 'Dark', Icon: MoonIcon },
   { value: 'system', label: 'System', Icon: MonitorIcon }
 ]
+
+function ThemeSwatch({ theme }: { theme: Theme }): React.JSX.Element {
+  if (theme === 'system') {
+    return (
+      <span className="border-border flex h-8 w-full overflow-hidden rounded-md border" aria-hidden>
+        <span className="flex w-1/2 bg-[oklch(0.985_0.006_158)]">
+          <span className="w-2.5 bg-[oklch(0.965_0.014_158)]" />
+          <span className="m-auto size-2.5 rounded-sm bg-[oklch(0.52_0.16_158)]" />
+        </span>
+        <span className="flex w-1/2 bg-[oklch(0.15_0.018_158)]">
+          <span className="w-2.5 bg-[oklch(0.185_0.025_158)]" />
+          <span className="m-auto size-2.5 rounded-sm bg-[oklch(0.76_0.16_158)]" />
+        </span>
+      </span>
+    )
+  }
+
+  const isDark = theme === 'dark'
+  return (
+    <span
+      className={cn(
+        'flex h-8 w-full overflow-hidden rounded-md border',
+        isDark
+          ? 'border-[oklch(0.32_0.035_158)] bg-[oklch(0.15_0.018_158)]'
+          : 'border-[oklch(0.89_0.02_158)] bg-[oklch(0.985_0.006_158)]'
+      )}
+      aria-hidden
+    >
+      <span
+        className={cn(
+          'w-5 border-r',
+          isDark
+            ? 'border-[oklch(0.31_0.038_158)] bg-[oklch(0.185_0.025_158)]'
+            : 'border-[oklch(0.87_0.028_158)] bg-[oklch(0.965_0.014_158)]'
+        )}
+      />
+      <span className="flex flex-1 items-center justify-center gap-1">
+        <span
+          className={cn(
+            'h-2 w-7 rounded-sm',
+            isDark ? 'bg-[oklch(0.76_0.16_158)]' : 'bg-[oklch(0.52_0.16_158)]'
+          )}
+        />
+        <span
+          className={cn(
+            'size-2 rounded-full',
+            isDark ? 'bg-[oklch(0.72_0.16_305)]' : 'bg-[oklch(0.57_0.19_305)]'
+          )}
+        />
+        <span
+          className={cn(
+            'size-2 rounded-full',
+            isDark ? 'bg-[oklch(0.8_0.14_80)]' : 'bg-[oklch(0.68_0.16_75)]'
+          )}
+        />
+      </span>
+    </span>
+  )
+}
 
 const SETTINGS_SECTIONS: ReadonlyArray<{
   value: SettingsSection
@@ -121,10 +181,9 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
     setBusy(true)
     setError(null)
     try {
-      await window.api.settings.setTaskQueue(next)
+      await saveTaskQueueSettings(next)
       setSettings(next)
       setConcurrencyDraft(String(next.concurrency))
-      window.dispatchEvent(new CustomEvent('task-queue-settings-changed', { detail: next }))
     } catch (error) {
       setError(`Could not save task queue settings: ${String(error)}`)
     } finally {
@@ -281,12 +340,16 @@ function AppearanceSettings(): React.JSX.Element {
                 variant={isActive ? 'secondary' : 'outline'}
                 onClick={() => setTheme(value)}
                 className={cn(
-                  'h-20 flex-col gap-2 px-3 shadow-none',
+                  'h-24 flex-col gap-2 px-3 shadow-none',
+                  isActive && 'border border-primary/50 ring-primary/20 ring-2',
                   !isActive && 'text-muted-foreground'
                 )}
               >
-                <Icon className="size-4" />
-                <span className="text-xs font-medium">{label}</span>
+                <ThemeSwatch theme={value} />
+                <span className="flex items-center gap-1.5">
+                  <Icon className="size-3.5" />
+                  <span className="text-xs font-medium">{label}</span>
+                </span>
               </Button>
             )
           })}

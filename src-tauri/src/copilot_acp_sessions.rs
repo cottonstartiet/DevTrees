@@ -1357,32 +1357,6 @@ pub fn acp_session_queue(
 }
 
 #[tauri::command]
-pub async fn acp_session_list(
-    app: AppHandle,
-    target: Target,
-    cursor: Option<String>,
-) -> AppResult<Value> {
-    let owner = get(&app, &target)?;
-    if owner.state.lock().map_err(error)?.snapshot.capabilities["sessionCapabilities"]
-        .get("list")
-        .is_none()
-    {
-        return Err(error(
-            "This Copilot version does not advertise session listing.",
-        ));
-    }
-    let request: acp::ListSessionsRequest = serde_json::from_value(json!({"cursor":cursor}))?;
-    let response = tokio::time::timeout(
-        Duration::from_secs(30),
-        owner.connection()?.send_request(request).block_task(),
-    )
-    .await
-    .map_err(error)?
-    .map_err(error)?;
-    serde_json::to_value(response).map_err(error)
-}
-
-#[tauri::command]
 pub async fn native_session_cancel(app: AppHandle, target: Target) -> AppResult<()> {
     get(&app, &target)?.request_stop().await
 }

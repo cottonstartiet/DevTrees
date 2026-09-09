@@ -220,11 +220,12 @@ Typing `/` at the beginning of the composer opens a compact, keyboard-navigable
 portal autocomplete populated by the connected agent, not a static
 terminal-command list. Agent configuration remains owned by Copilot CLI.
 Unsupported actions and content fail visibly. Attachments appear as removable
-context rows. Queue state is independent
-of turn state: show pause/resume, unsent edit/reorder/remove, and delivery-unknown
-warnings without presenting ambiguous delivery as a success. Stop pauses queued
-work; reopening requires explicit conversation and queue resume. Starting,
-loading, stopping and ending states must not masquerade as idle.
+context rows. Instructions submitted during an active turn are queued
+automatically without exposing queue-management controls in the Sessions view.
+The composer still distinguishes immediate Send from Queue so delivery timing is
+not ambiguous. Stop pauses queued work; reopening requires explicit conversation
+and queue resume. Starting, loading, stopping and ending states must not
+masquerade as idle.
 
 Dashboard offers compact responses without nested cards. Plan-completion
 decisions and plan refinement are actionable in place; complex structured forms

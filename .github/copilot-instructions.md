@@ -6,7 +6,7 @@ This project has captured design context for frontend/UI work:
 
 - **PRODUCT.md** (root) — strategic context: register (`product`), platform
   (`desktop`, with an embedded React/WebView2 renderer), target users, product purpose, brand personality
-  (*fast, developer-native, AI-forward*), anti-references, and design principles.
+  (_fast, developer-native, AI-forward_), anti-references, and design principles.
 - **DESIGN.md** (root) — the visual system: OKLCH color tokens, two themes
   (light / dark), typography, flat + tonal-layering elevation, and
   component specs. North Star: **"The Developer Cockpit."**

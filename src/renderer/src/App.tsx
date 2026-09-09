@@ -33,7 +33,7 @@ import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
 import { TasksPage, TasksHeaderControls } from '@/pages/tasks'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Repository } from '@shared/repository'
-import type { Task, TaskSourceProvider } from '@shared/task'
+import type { Task } from '@shared/task'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
 
 function worktreeLabel(path: string): string {
@@ -47,7 +47,6 @@ interface TasksPageContainerProps {
   dialogOpen: boolean
   onDialogOpenChange: (open: boolean) => void
   activeTask: Task | null
-  importProvider: TaskSourceProvider | null
   onOpenTask: (task: Task | null) => void
   queue: TaskQueueController
 }
@@ -58,7 +57,6 @@ function TasksPageContainer({
   dialogOpen,
   onDialogOpenChange,
   activeTask,
-  importProvider,
   onOpenTask,
   queue
 }: TasksPageContainerProps): React.JSX.Element {
@@ -66,13 +64,13 @@ function TasksPageContainer({
     <TasksPage
       repositories={repositories}
       worktreesByRepositoryId={worktreesByRepositoryId}
+      onStartTask={queue.startTask}
       onMoveTask={queue.moveTask}
       onReviewTask={queue.reviewTask}
       canReviewTask={queue.canReviewTask}
       dialogOpen={dialogOpen}
       onDialogOpenChange={onDialogOpenChange}
       activeTask={activeTask}
-      importProvider={importProvider}
       onOpenTask={onOpenTask}
     />
   )
@@ -265,23 +263,14 @@ function AppShell(): React.JSX.Element {
   const { tasks: allTasks } = useTaskBoard()
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [activeTaskForDialog, setActiveTaskForDialog] = useState<Task | null>(null)
-  const [taskImportProvider, setTaskImportProvider] = useState<TaskSourceProvider | null>(null)
 
   const handleOpenAddTaskDialog = useCallback((): void => {
     setActiveTaskForDialog(null)
-    setTaskImportProvider(null)
-    setTaskDialogOpen(true)
-  }, [])
-
-  const handleOpenTaskImportDialog = useCallback((provider: TaskSourceProvider): void => {
-    setActiveTaskForDialog(null)
-    setTaskImportProvider(provider)
     setTaskDialogOpen(true)
   }, [])
 
   const handleOpenTaskDialog = useCallback((task: Task | null): void => {
     setActiveTaskForDialog(task)
-    setTaskImportProvider(null)
     setTaskDialogOpen(true)
   }, [])
 
@@ -289,7 +278,6 @@ function AppShell(): React.JSX.Element {
     setTaskDialogOpen(open)
     if (!open) {
       setActiveTaskForDialog(null)
-      setTaskImportProvider(null)
     }
   }, [])
 
@@ -661,8 +649,10 @@ function AppShell(): React.JSX.Element {
                           queuedCount={taskQueue.queuedCount}
                           runningCount={taskQueue.runningCount}
                           failedCount={taskQueue.failedCount}
+                          mode={taskQueue.settings.mode}
+                          modeBusy={taskQueue.settingsBusy}
+                          onModeChange={taskQueue.setMode}
                           onAddTask={handleOpenAddTaskDialog}
-                          onAddFrom={handleOpenTaskImportDialog}
                         />
                       )}
                     </header>
@@ -684,7 +674,6 @@ function AppShell(): React.JSX.Element {
                         dialogOpen={taskDialogOpen}
                         onDialogOpenChange={handleTaskDialogOpenChange}
                         activeTask={activeTaskForDialog}
-                        importProvider={taskImportProvider}
                         onOpenTask={handleOpenTaskDialog}
                         queue={taskQueue}
                       />

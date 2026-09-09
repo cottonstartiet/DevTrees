@@ -8,6 +8,7 @@ mod error;
 mod gh;
 mod git;
 mod github;
+mod local_review;
 mod pr_review;
 mod repo;
 mod repositories;
@@ -16,7 +17,6 @@ mod session_attention;
 mod session_interactions;
 mod settings;
 mod system;
-mod task_imports;
 mod tasks;
 mod terminal_sessions;
 mod worktrees;
@@ -60,6 +60,7 @@ pub fn run() {
         .setup(|app| {
             let conn = db::init(&app.path().app_data_dir()?)?;
             app.manage(DbState(Mutex::new(conn)));
+            app.manage(system::KeepAwakeState::default());
             app.manage(TerminalSessionMonitor::default());
             app.manage(terminal_sessions::AcpSessionManager::default());
             app.manage(copilot_acp_sessions::SessionManager::default());
@@ -86,6 +87,8 @@ pub fn run() {
             system::system_open_external,
             system::system_open_path,
             system::system_get_app_info,
+            system::system_get_keep_awake,
+            system::system_set_keep_awake,
             settings::settings_session_launch_mode,
             settings::settings_set_session_launch_mode,
             settings::settings_task_queue,
@@ -122,6 +125,9 @@ pub fn run() {
             repo::repo_open_pull_request,
             repo::repo_find_active_pull_request,
             repo::repo_working_copy_status,
+            local_review::repo_local_review_changed_files,
+            local_review::repo_local_review_file_diff,
+            local_review::repo_local_review_file_content,
             repo::repo_recent_commits,
             repo::repo_rebase_on_default,
             repo::repo_unpushed_commits,
@@ -143,8 +149,6 @@ pub fn run() {
             tasks::tasks_set_copilot_session,
             tasks::tasks_set_queue_status,
             tasks::tasks_claim_run,
-            task_imports::ado_task_imports,
-            task_imports::github_task_imports,
             terminal_sessions::terminal_sessions_list,
             terminal_sessions::terminal_sessions_start,
             terminal_sessions::terminal_sessions_history,
@@ -157,11 +161,13 @@ pub fn run() {
             copilot_acp_sessions::native_session_end,
             copilot_acp_sessions::acp_session_enqueue,
             copilot_acp_sessions::acp_session_queue,
-            copilot_acp_sessions::acp_session_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building DevTrees")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                app.state::<system::KeepAwakeState>().shutdown();
+            }
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 let manager = app.state::<copilot_acp_sessions::SessionManager>();
                 if !manager
@@ -185,6 +191,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<system::KeepAwakeState>().shutdown();
                 tauri::async_runtime::block_on(copilot_acp_sessions::shutdown(app));
             }
         });

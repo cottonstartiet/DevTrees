@@ -16,8 +16,12 @@ test('a new task triggered into in progress starts in plan mode', () => {
   assert.equal(taskLaunchInitialMode('todo'), 'plan')
 })
 
-test('review and existing task stages do not force plan mode', () => {
-  for (const status of ['in_progress', 'review', 'done']) {
+test('a review task starts in autopilot mode', () => {
+  assert.equal(taskLaunchInitialMode('review'), 'autopilot')
+})
+
+test('existing non-review task stages do not force an initial mode', () => {
+  for (const status of ['in_progress', 'done']) {
     assert.equal(taskLaunchInitialMode(status), undefined)
   }
 })

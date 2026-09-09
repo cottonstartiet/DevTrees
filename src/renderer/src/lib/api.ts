@@ -45,6 +45,12 @@ import type {
   FetchResult,
   FindPullRequestRequest,
   FindPullRequestResult,
+  LocalReviewChangedFilesRequest,
+  LocalReviewChangedFilesResult,
+  LocalReviewFileContentRequest,
+  LocalReviewFileContentResult,
+  LocalReviewFileDiffRequest,
+  LocalReviewFileDiffResult,
   MyBranchesRequest,
   MyBranchesResult,
   OpenPullRequestRequest,
@@ -94,7 +100,7 @@ import type {
   RepoPrThreadsRequest,
   RepoPrThreadsResult
 } from '@shared/reviews'
-import type { AppInfo, LaunchResult } from '@shared/system'
+import type { AppInfo, KeepAwakeResult, LaunchResult } from '@shared/system'
 import type { CopilotHistoryListResult } from '@shared/copilot-history'
 import type { CopilotAnalyticsResult } from '@shared/copilot-analytics'
 import type {
@@ -111,7 +117,6 @@ import type {
   UpdateTaskRequest,
   UpdateTaskResult
 } from '@shared/task'
-import type { TaskImportResult } from '@shared/task-import'
 import {
   TERMINAL_SESSIONS_UPDATE_EVENT,
   type StartTerminalSessionRequest,
@@ -236,6 +241,16 @@ const api = {
       })),
     workingCopyStatus: (req: WorkingCopyStatusRequest): Promise<WorkingCopyStatusResult> =>
       result('repo_working_copy_status', { ...req }, (error) => ({ ok: false, error })),
+    localReviewChangedFiles: (
+      req: LocalReviewChangedFilesRequest
+    ): Promise<LocalReviewChangedFilesResult> =>
+      result('repo_local_review_changed_files', { ...req }, (error) => ({ ok: false, error })),
+    localReviewFileDiff: (req: LocalReviewFileDiffRequest): Promise<LocalReviewFileDiffResult> =>
+      result('repo_local_review_file_diff', { ...req }, (error) => ({ ok: false, error })),
+    localReviewFileContent: (
+      req: LocalReviewFileContentRequest
+    ): Promise<LocalReviewFileContentResult> =>
+      result('repo_local_review_file_content', { ...req }, (error) => ({ ok: false, error })),
     recentCommits: (req: RecentCommitsRequest): Promise<RecentCommitsResult> =>
       result('repo_recent_commits', { ...req }, (error) => ({ ok: false, error })),
     rebaseOnDefault: (req: RebaseOnDefaultRequest): Promise<RebaseOnDefaultResult> =>
@@ -364,7 +379,19 @@ const api = {
       result('system_open_external', { url }, (error) => ({ ok: false, error })),
     openPath: (folderPath: string): Promise<LaunchResult> =>
       result('system_open_path', { folderPath }, (error) => ({ ok: false, error })),
-    getAppInfo: (): Promise<AppInfo> => invoke('system_get_app_info')
+    getAppInfo: (): Promise<AppInfo> => invoke('system_get_app_info'),
+    getKeepAwake: (): Promise<KeepAwakeResult> =>
+      result('system_get_keep_awake', undefined, (error) => ({
+        ok: false,
+        enabled: false,
+        error
+      })),
+    setKeepAwake: (enabled: boolean): Promise<KeepAwakeResult> =>
+      result('system_set_keep_awake', { enabled }, (error) => ({
+        ok: false,
+        enabled: !enabled,
+        error
+      }))
   },
   settings: {
     sessionLaunchMode: (): Promise<SessionLaunchMode> => invoke('settings_session_launch_mode'),
@@ -391,13 +418,6 @@ const api = {
       }))
   },
   nativeSessions: {
-    listSaved: (
-      target: TerminalTarget,
-      cursor?: string
-    ): Promise<{
-      sessions: { sessionId: string; cwd: string; title?: string; updatedAt?: string }[]
-      nextCursor?: string
-    }> => invoke('acp_session_list', { target, cursor }),
     enqueue: (
       target: TerminalTarget,
       id: string,
@@ -441,20 +461,11 @@ const api = {
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),
     create: (req: CreateTaskRequest): Promise<CreateTaskResult> =>
-      result(
-        'tasks_create',
-        {
-          ...req,
-          sourceProvider: req.sourceProvider ?? null,
-          sourceId: req.sourceId ?? null,
-          sourceUrl: req.sourceUrl ?? null
-        },
-        (message) => ({
-          ok: false,
-          error: 'unknown',
-          message
-        })
-      ),
+      result('tasks_create', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      })),
     update: (req: UpdateTaskRequest): Promise<UpdateTaskResult> =>
       result('tasks_update', { ...req }, (message) => ({
         ok: false,
@@ -489,20 +500,6 @@ const api = {
       result('tasks_claim_run', { ...req }, (message) => ({
         ok: false,
         error: 'unknown',
-        message
-      }))
-  },
-  taskImports: {
-    ado: (repositoryPath: string): Promise<TaskImportResult> =>
-      result('ado_task_imports', { repositoryPath }, (message) => ({
-        ok: false,
-        code: 'az-failed',
-        message
-      })),
-    github: (repositoryPath: string): Promise<TaskImportResult> =>
-      result('github_task_imports', { repositoryPath }, (message) => ({
-        ok: false,
-        code: 'gh-failed',
         message
       }))
   }

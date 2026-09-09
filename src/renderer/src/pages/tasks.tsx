@@ -7,34 +7,29 @@ import {
   useSensors,
   type DragEndEvent
 } from '@dnd-kit/core'
-import { ChevronDownIcon, CircleDotIcon, ListTodoIcon, PlusIcon } from 'lucide-react'
+import { LoaderCircleIcon, PauseIcon, PlayIcon, PlusIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from '@/components/ui/dropdown-menu'
 import { TaskColumn } from '@/components/task-column'
 import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import type { Repository } from '@shared/repository'
-import type { Task, TaskSourceProvider, TaskStatus } from '@shared/task'
+import type { TaskQueueMode } from '@shared/settings'
+import type { Task, TaskStatus } from '@shared/task'
 import type { TerminalSession, TerminalSessionStatus } from '@shared/terminal-session'
 import type { Worktree } from '@shared/worktree'
 
 interface TasksPageProps {
   repositories: Repository[]
   worktreesByRepositoryId: Record<string, Worktree[]>
+  onStartTask: (task: Task) => Promise<void>
   onMoveTask: (task: Task, status: TaskStatus, beforeId?: string | null) => Promise<void>
   onReviewTask: (task: Task) => Promise<void>
   canReviewTask: (task: Task) => boolean
   dialogOpen: boolean
   onDialogOpenChange: (open: boolean) => void
   activeTask: Task | null
-  importProvider: TaskSourceProvider | null
   onOpenTask: (task: Task | null) => void
 }
 
@@ -43,8 +38,10 @@ interface TasksHeaderControlsProps {
   queuedCount: number
   runningCount: number
   failedCount: number
+  mode: TaskQueueMode
+  modeBusy: boolean
+  onModeChange: (mode: TaskQueueMode) => Promise<void>
   onAddTask: () => void
-  onAddFrom: (provider: TaskSourceProvider) => void
 }
 
 export function TasksHeaderControls({
@@ -52,10 +49,14 @@ export function TasksHeaderControls({
   queuedCount,
   runningCount,
   failedCount,
-  onAddTask,
-  onAddFrom
+  mode,
+  modeBusy,
+  onModeChange,
+  onAddTask
 }: TasksHeaderControlsProps): React.JSX.Element {
   const readyCount = queuedCount + failedCount
+  const isAutomatic = mode === 'automatic'
+  const nextMode = isAutomatic ? 'manual' : 'automatic'
   return (
     <div className="ml-auto flex items-center gap-3">
       <div className="text-muted-foreground flex items-center gap-2 text-xs">
@@ -68,28 +69,28 @@ export function TasksHeaderControls({
         <span>{readyCount} queued</span>
         {failedCount > 0 ? <span className="text-destructive">{failedCount} failed</span> : null}
       </div>
+      <Button
+        type="button"
+        variant={isAutomatic ? 'secondary' : 'outline'}
+        size="sm"
+        aria-label={`Switch task execution to ${nextMode}`}
+        aria-pressed={isAutomatic}
+        disabled={modeBusy}
+        onClick={() => void onModeChange(nextMode)}
+      >
+        {modeBusy ? (
+          <LoaderCircleIcon className="motion-reduce:animate-none animate-spin" />
+        ) : isAutomatic ? (
+          <PauseIcon />
+        ) : (
+          <PlayIcon />
+        )}
+        {isAutomatic ? 'Automatic' : 'Manual'}
+      </Button>
       <Button type="button" size="sm" onClick={onAddTask}>
         <PlusIcon />
         Add task
       </Button>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button type="button" size="sm" variant="outline">
-            Add from
-            <ChevronDownIcon />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => onAddFrom('ado')}>
-            <ListTodoIcon />
-            Azure DevOps task
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onAddFrom('github')}>
-            <CircleDotIcon />
-            GitHub issue
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
     </div>
   )
 }
@@ -107,17 +108,19 @@ function isNewerSession(candidate: TerminalSession, current: TerminalSession): b
 export function TasksPage({
   repositories,
   worktreesByRepositoryId,
+  onStartTask,
   onMoveTask,
   onReviewTask,
   canReviewTask,
   dialogOpen,
   onDialogOpenChange,
   activeTask,
-  importProvider,
   onOpenTask
 }: TasksPageProps): React.JSX.Element {
   const { tasks, tasksByStatus, createTask, updateTask, deleteTask } = useTaskBoard()
   const { sessions, byId: sessionsById } = useTerminalSessions()
+  const startingTaskIdsRef = React.useRef(new Set<string>())
+  const [startingTaskIds, setStartingTaskIds] = React.useState<ReadonlySet<string>>(() => new Set())
   const sessionStatusByTaskId = React.useMemo(() => {
     const newestSessionByTaskId = new Map<string, TerminalSession>()
     for (const session of sessions) {
@@ -140,6 +143,21 @@ export function TasksPage({
   }, [sessions, sessionsById, tasks])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
+
+  const handleStartTask = React.useCallback(
+    async (task: Task): Promise<void> => {
+      if (startingTaskIdsRef.current.has(task.id)) return
+      startingTaskIdsRef.current.add(task.id)
+      setStartingTaskIds(new Set(startingTaskIdsRef.current))
+      try {
+        await onStartTask(task)
+      } finally {
+        startingTaskIdsRef.current.delete(task.id)
+        setStartingTaskIds(new Set(startingTaskIdsRef.current))
+      }
+    },
+    [onStartTask]
+  )
 
   const handleDragEnd = React.useCallback(
     (event: DragEndEvent): void => {
@@ -177,8 +195,10 @@ export function TasksPage({
                 tasks={tasksByStatus[status]}
                 sessionStatusByTaskId={sessionStatusByTaskId}
                 onOpenTask={onOpenTask}
+                onStartTask={(task) => void handleStartTask(task)}
                 onReviewTask={(task) => void onReviewTask(task)}
                 onDoneTask={(task) => void onMoveTask(task, 'done')}
+                startingTaskIds={startingTaskIds}
                 canReviewTask={canReviewTask}
               />
             ))}
@@ -190,7 +210,6 @@ export function TasksPage({
         open={dialogOpen}
         onOpenChange={onDialogOpenChange}
         task={activeTask}
-        importProvider={importProvider}
         repositories={repositories}
         worktreesByRepositoryId={worktreesByRepositoryId}
         onCreate={async ({
@@ -199,10 +218,7 @@ export function TasksPage({
           repository,
           worktreePath,
           worktreeBranch,
-          pendingWorktreeName,
-          sourceProvider,
-          sourceId,
-          sourceUrl
+          pendingWorktreeName
         }) => {
           const created = await createTask({
             title,
@@ -212,10 +228,7 @@ export function TasksPage({
             repositoryPath: repository.path,
             worktreePath,
             worktreeBranch,
-            pendingWorktreeName,
-            sourceProvider,
-            sourceId,
-            sourceUrl
+            pendingWorktreeName
           })
           return created !== null
         }}

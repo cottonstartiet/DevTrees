@@ -17,12 +17,13 @@ export interface DiffViewProps {
   error: string | null
   isLoading: boolean
   /** Threads anchored to this file. */
-  threads: RepoPrThread[]
+  threads?: RepoPrThread[]
   /** Full head-side text, used to reveal context between hunks. Optional. */
   headText: string | null
-  onCreateThread: (anchor: PrCommentAnchor, content: string) => Promise<string | null>
-  onReply: (thread: RepoPrThread, content: string) => Promise<string | null>
-  onToggleResolved: (thread: RepoPrThread, resolved: boolean) => Promise<string | null>
+  onCreateThread?: (anchor: PrCommentAnchor, content: string) => Promise<string | null>
+  onReply?: (thread: RepoPrThread, content: string) => Promise<string | null>
+  onToggleResolved?: (thread: RepoPrThread, resolved: boolean) => Promise<string | null>
+  truncatedMessage?: string
 }
 
 type Row =
@@ -38,12 +39,14 @@ export function DiffView({
   diff,
   error,
   isLoading,
-  threads,
+  threads = [],
   headText,
   onCreateThread,
   onReply,
-  onToggleResolved
+  onToggleResolved,
+  truncatedMessage = 'Diff truncated — open the PR in the browser for the full change.'
 }: DiffViewProps): React.JSX.Element {
+  const canComment = Boolean(onCreateThread && onReply && onToggleResolved)
   const [expanded, setExpanded] = React.useState<Map<string, number>>(new Map())
   const [drag, setDrag] = React.useState<{ start: number; end: number } | null>(null)
   const [isDragging, setIsDragging] = React.useState(false)
@@ -167,9 +170,7 @@ export function DiffView({
   return (
     <div className="min-h-0 flex-1 overflow-auto">
       {diff.truncated ? (
-        <p className="text-muted-foreground border-b px-3 py-1.5 text-[11px]">
-          Diff truncated — open the PR in the browser for the full change.
-        </p>
+        <p className="text-muted-foreground border-b px-3 py-1.5 text-[11px]">{truncatedMessage}</p>
       ) : null}
       <table className="w-full border-collapse font-mono text-xs">
         <tbody>
@@ -240,7 +241,7 @@ export function DiffView({
                   </td>
                   <td className="text-muted-foreground w-16 shrink-0 select-none px-2 text-right align-top tabular-nums">
                     <span className="inline-flex items-center gap-1">
-                      {headLine ? (
+                      {headLine && canComment ? (
                         <button
                           type="button"
                           aria-label={`Comment on line ${headLine}`}
@@ -275,7 +276,7 @@ export function DiffView({
                   </td>
                 </tr>
 
-                {lineThreads?.length ? (
+                {canComment && lineThreads?.length ? (
                   <tr>
                     <td colSpan={3} className="px-3 py-1.5">
                       <div className="flex max-w-3xl flex-col gap-2">
@@ -283,8 +284,8 @@ export function DiffView({
                           <ThreadCard
                             key={thread.providerThreadId || thread.id}
                             thread={thread}
-                            onReply={onReply}
-                            onToggleResolved={onToggleResolved}
+                            onReply={onReply!}
+                            onToggleResolved={onToggleResolved!}
                             defaultCollapsed={thread.isResolved}
                           />
                         ))}
@@ -293,7 +294,7 @@ export function DiffView({
                   </tr>
                 ) : null}
 
-                {showComposer && anchor ? (
+                {canComment && showComposer && anchor ? (
                   <tr>
                     <td colSpan={3} className="px-3 py-1.5">
                       <CommentComposer
@@ -302,7 +303,7 @@ export function DiffView({
                           anchor.end > anchor.start ? `\u2013L${anchor.end}` : ''
                         } · diff`}
                         onSubmit={async (content) => {
-                          const message = await onCreateThread(
+                          const message = await onCreateThread!(
                             {
                               filePath: path,
                               side: 'right',
@@ -326,15 +327,15 @@ export function DiffView({
         </tbody>
       </table>
 
-      {unanchoredThreads.length > 0 ? (
+      {canComment && unanchoredThreads.length > 0 ? (
         <div className="flex max-w-3xl flex-col gap-2 p-3">
           <p className="text-muted-foreground text-[11px]">File-level threads</p>
           {unanchoredThreads.map((thread) => (
             <ThreadCard
               key={thread.providerThreadId || thread.id}
               thread={thread}
-              onReply={onReply}
-              onToggleResolved={onToggleResolved}
+              onReply={onReply!}
+              onToggleResolved={onToggleResolved!}
               defaultCollapsed={thread.isResolved}
             />
           ))}

@@ -6,8 +6,8 @@ import {
   processAutoReviews,
   type AutoReviewStatus
 } from '@/lib/auto-reviews'
+import { buildCodeReviewPrompt, CODE_REVIEW_INITIAL_MODE } from '@/lib/copilot-code-review-prompt'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
-import { buildPrCodeReviewPrompt } from '@/lib/copilot-pr-review-prompt'
 import { getRepoOpenPrs } from '@/lib/reviews'
 import type { RepoPr } from '@shared/reviews'
 import type { Repository } from '@shared/repository'
@@ -118,7 +118,8 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
       async (item) =>
         launchCopilot({
           folderPath: item.repository.path,
-          prompt: buildPrCodeReviewPrompt({
+          prompt: buildCodeReviewPrompt({
+            kind: 'pull-request',
             folderPath: item.repository.path,
             provider: item.pr.provider,
             prNumber: item.pr.id,
@@ -127,6 +128,7 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
             sourceRef: item.pr.sourceRef,
             targetRef: item.pr.targetRef
           }),
+          initialMode: CODE_REVIEW_INITIAL_MODE,
           label: `Review PR #${item.pr.id}`,
           repository: item.repository.name,
           background: true

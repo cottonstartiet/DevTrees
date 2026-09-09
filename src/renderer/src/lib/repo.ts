@@ -10,6 +10,12 @@ import type {
   DiscardAllChangesRequest,
   DiscardAllChangesResult,
   FetchResult,
+  LocalReviewChangedFilesRequest,
+  LocalReviewChangedFilesResult,
+  LocalReviewFileContentRequest,
+  LocalReviewFileContentResult,
+  LocalReviewFileDiffRequest,
+  LocalReviewFileDiffResult,
   PullResult,
   PushRequest,
   PushResult,
@@ -73,6 +79,24 @@ export function getWorkingCopyStatus(
   req: WorkingCopyStatusRequest
 ): Promise<WorkingCopyStatusResult> {
   return window.api.repo.workingCopyStatus(req)
+}
+
+export function getLocalReviewChangedFiles(
+  req: LocalReviewChangedFilesRequest
+): Promise<LocalReviewChangedFilesResult> {
+  return window.api.repo.localReviewChangedFiles(req)
+}
+
+export function getLocalReviewFileDiff(
+  req: LocalReviewFileDiffRequest
+): Promise<LocalReviewFileDiffResult> {
+  return window.api.repo.localReviewFileDiff(req)
+}
+
+export function getLocalReviewFileContent(
+  req: LocalReviewFileContentRequest
+): Promise<LocalReviewFileContentResult> {
+  return window.api.repo.localReviewFileContent(req)
 }
 
 export function getRecentCommits(req: RecentCommitsRequest): Promise<RecentCommitsResult> {

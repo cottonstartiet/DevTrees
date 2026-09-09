@@ -2,91 +2,17 @@ import * as React from 'react'
 import { PaperclipIcon, SendIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
-import { useCopilotLauncher } from '@/lib/copilot-launch'
 import {
   acpCommandDraft,
   acpCommandQuery,
   matchingAcpCommands,
   nativeKey,
   parsePromptAttachments,
-  type PromptContent,
-  type QueuedPrompt
+  type PromptContent
 } from '@shared/native-session'
 import type { TerminalSession } from '@shared/terminal-session'
-
-function QueueItem({ session, item }: { session: TerminalSession; item: QueuedPrompt }) {
-  const { queueNative, nativeBusy } = useTerminalSessions()
-  const [editing, setEditing] = React.useState(false)
-  const text = item.text
-  const [draft, setDraft] = React.useState(text)
-  const inflight = item.status === 'dispatching' || item.status === 'active'
-  const busy = nativeBusy[nativeKey(session, 'queue')]
-  return (
-    <li className="space-y-2 py-2">
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm">{text || 'Attached context'}</span>
-        <span className="text-muted-foreground text-xs">{item.status}</span>
-        {item.attachmentCount > 0 && (
-          <span className="text-muted-foreground text-xs">{item.attachmentCount} attachments</span>
-        )}
-      </div>
-      {item.error && (
-        <p role="alert" className="text-destructive text-xs">
-          {item.error}
-        </p>
-      )}
-      {editing && (
-        <Textarea
-          aria-label="Edit queued message"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-      )}
-      {!inflight && (
-        <div className="flex flex-wrap gap-2">
-          {item.status === 'queued' && (
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => {
-                  if (!editing) {
-                    setEditing(true)
-                    return
-                  }
-                  void queueNative(session, 'edit', item.id, draft).then((saved) => {
-                    if (saved) setEditing(false)
-                  })
-                }}
-              >
-                {editing ? 'Save' : 'Edit'}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => void queueNative(session, 'up', item.id)}
-              >
-                Move earlier
-              </Button>
-            </>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => void queueNative(session, 'remove', item.id)}
-          >
-            Remove
-          </Button>
-        </div>
-      )}
-    </li>
-  )
-}
 
 function fileContent(file: File): Promise<PromptContent> {
   if (file.size > 8 * 1024 * 1024)
@@ -139,7 +65,7 @@ export function AcpComposer({
   context?: 'default' | 'plan-followup'
   disabled?: boolean
 }) {
-  const { nativeById, nativeDrafts, setNativeDraft, nativeBusy, promptNative, queueNative } =
+  const { nativeById, nativeDrafts, setNativeDraft, nativeBusy, promptNative } =
     useTerminalSessions()
   const snapshot = nativeById[session.id]
   const key = nativeKey(session)
@@ -153,11 +79,6 @@ export function AcpComposer({
   const setLiteral = (value: boolean): void =>
     setNativeDraft(key, (current) => ({ ...current, literal: value }))
   const input = React.useRef<HTMLInputElement>(null)
-  const launch = useCopilotLauncher()
-  const [saved, setSaved] = React.useState<Awaited<
-    ReturnType<typeof window.api.nativeSessions.listSaved>
-  > | null>(null)
-  const [listing, setListing] = React.useState(false)
   const composer = React.useRef<HTMLTextAreaElement>(null)
   const parsed = React.useMemo(
     () => parsePromptAttachments(String(draft.attachments ?? '[]')),
@@ -170,8 +91,6 @@ export function AcpComposer({
     snapshot &&
     !['starting', 'loading', 'ending', 'ended', 'failed'].includes(phase ?? 'starting')
   )
-  const queue = snapshot?.queue ?? []
-  const pending = queue.filter((item) => !['completed', 'cancelled'].includes(item.status))
   const commandQuery = acpCommandQuery(message)
   const commands = React.useMemo(
     () => matchingAcpCommands(message, snapshot?.commands ?? []),
@@ -207,119 +126,6 @@ export function AcpComposer({
   }
   return (
     <div className="space-y-3">
-      {!compact && context === 'default' && (
-        <div className="flex flex-wrap items-center gap-2">
-          {snapshot?.capabilities?.sessionCapabilities?.list && (
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button size="sm" variant="ghost">
-                  Saved conversations
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                align="start"
-                className="max-h-96 w-96 max-w-[90vw] space-y-2 overflow-auto"
-              >
-                <p className="text-muted-foreground text-xs">
-                  Loaded from Copilot. A conversation must be ended before it can be resumed
-                  elsewhere.
-                </p>
-                {saved?.sessions.map((item) => (
-                  <Button
-                    key={item.sessionId}
-                    size="sm"
-                    variant="ghost"
-                    className="w-full justify-start truncate"
-                    onClick={() => {
-                      void launch({
-                        folderPath: item.cwd,
-                        resumeSessionId: item.sessionId,
-                        label: item.title || 'Copilot conversation'
-                      })
-                        .then((result) => {
-                          if (!result.ok) setError(result.error)
-                        })
-                        .catch((e) => setError(String(e)))
-                    }}
-                  >
-                    {item.title || item.sessionId}
-                  </Button>
-                ))}
-                {(!saved || saved.nextCursor) && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={listing || !session.generation}
-                    onClick={() => {
-                      if (!session.generation) return
-                      setListing(true)
-                      void window.api.nativeSessions
-                        .listSaved(
-                          { id: session.id, generation: session.generation },
-                          saved?.nextCursor
-                        )
-                        .then((result) =>
-                          setSaved((previous) => ({
-                            ...result,
-                            sessions: [
-                              ...new Map(
-                                [...(previous?.sessions ?? []), ...result.sessions].map((item) => [
-                                  item.sessionId,
-                                  item
-                                ])
-                              ).values()
-                            ]
-                          }))
-                        )
-                        .catch((e) => setError(String(e)))
-                        .finally(() => setListing(false))
-                    }}
-                  >
-                    {listing ? 'Loading...' : saved ? 'Load more' : 'Load conversations'}
-                  </Button>
-                )}
-              </PopoverContent>
-            </Popover>
-          )}
-          {snapshot?.usage && (
-            <span className="text-muted-foreground text-xs">
-              Context: {snapshot.usage.used.toLocaleString()} /{' '}
-              {snapshot.usage.size.toLocaleString()} tokens
-              {snapshot.usage.cost && (
-                <>
-                  {' '}
-                  - {snapshot.usage.cost.amount.toLocaleString()} {snapshot.usage.cost.currency}
-                </>
-              )}
-            </span>
-          )}
-        </div>
-      )}
-      {queue.length > 0 && (
-        <details open={snapshot?.queuePaused || undefined}>
-          <summary className="cursor-pointer text-xs">
-            {pending.length} queued/incomplete messages{snapshot?.queuePaused ? ' - paused' : ''}
-          </summary>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={nativeBusy[nativeKey(session, 'queue')]}
-              onClick={() => void queueNative(session, snapshot?.queuePaused ? 'resume' : 'pause')}
-            >
-              {snapshot?.queuePaused ? 'Resume queue' : 'Pause queue'}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => void queueNative(session, 'clear')}>
-              Clear non-running items
-            </Button>
-          </div>
-          <ul className="max-h-52 divide-y overflow-auto">
-            {queue.map((item) => (
-              <QueueItem key={item.id} session={session} item={item} />
-            ))}
-          </ul>
-        </details>
-      )}
       <form
         className="space-y-2"
         onSubmit={(event) => {
@@ -369,13 +175,15 @@ export function AcpComposer({
               }
               rows={compact ? 2 : 3}
               placeholder={
-                context === 'plan-followup'
-                  ? "Answer Copilot's question or request changes to the plan.\nCtrl+Enter to submit."
-                  : `${
-                      phase === 'idle'
-                        ? 'Message Copilot or type / for commands.'
-                        : 'Queue your next instruction.'
-                    }\nCtrl+Enter to submit. Stop pauses the queue; reopening never sends saved items automatically.`
+                compact
+                  ? undefined
+                  : context === 'plan-followup'
+                    ? 'Reply to refine the plan.'
+                    : `${
+                        phase === 'idle'
+                          ? 'Message Copilot or type / for commands.'
+                          : 'Queue your next instruction.'
+                      }\nCtrl+Enter to submit. Stop pauses the queue; reopening never sends saved items automatically.`
               }
               disabled={disabled}
               value={message}

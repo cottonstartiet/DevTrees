@@ -131,18 +131,18 @@ or resume decisions.
 
 ## Terminology
 
-| Term | Meaning |
-|---|---|
-| Definition | A parsed workflow YAML file and its normalized static topology. |
-| Run | One launched execution of one immutable definition revision. |
-| Step | A named executable definition such as an agent, script, or gate. |
-| Group | A named static parallel or dynamic for-each execution unit. |
-| Node address | A step name plus its nested sub-workflow/iteration path. |
-| Context | Workflow inputs, metadata, prior outputs, and execution history. |
-| Event | One append-only lifecycle record with a per-run sequence number. |
-| Snapshot | Materialized current run state derived from committed events. |
-| Checkpoint | Durable engine state from which a paused run can resume. |
-| Attention request | A persisted human gate or questions interaction. |
+| Term              | Meaning                                                          |
+| ----------------- | ---------------------------------------------------------------- |
+| Definition        | A parsed workflow YAML file and its normalized static topology.  |
+| Run               | One launched execution of one immutable definition revision.     |
+| Step              | A named executable definition such as an agent, script, or gate. |
+| Group             | A named static parallel or dynamic for-each execution unit.      |
+| Node address      | A step name plus its nested sub-workflow/iteration path.         |
+| Context           | Workflow inputs, metadata, prior outputs, and execution history. |
+| Event             | One append-only lifecycle record with a per-run sequence number. |
+| Snapshot          | Materialized current run state derived from committed events.    |
+| Checkpoint        | Durable engine state from which a paused run can resume.         |
+| Attention request | A persisted human gate or questions interaction.                 |
 
 ## Discovery and identity
 
@@ -218,7 +218,7 @@ Invalid files use `null` for fields that could not be recovered.
 workflow:
   name: example
   description: Optional text
-  version: "1.0.0"
+  version: '1.0.0'
   entry_point: first_step
   input: {}
   runtime:
@@ -236,18 +236,18 @@ output: {}
 
 ### Supported workflow fields
 
-| Field | Required | Behavior |
-|---|---:|---|
-| `name` | Yes | Non-empty display and diagnostic name. |
-| `description` | No | Catalog and launch detail text. |
-| `version` | No | Informational string. |
-| `entry_point` | Yes | Must name an agent, parallel group, or for-each group. |
-| `input` | No | Typed launch input definitions. |
-| `runtime.provider` | No | Defaults to `copilot`; any other value is rejected. |
-| `runtime.working_dir` | No | Relative to selected run worktree; must remain inside it. |
-| `limits.max_iterations` | No | Defaults to 20; range 1-500. |
-| `limits.timeout_seconds` | No | Optional whole seconds; range 1-86400. |
-| `output` | No | Final rendered JSON-compatible mapping. |
+| Field                    | Required | Behavior                                                  |
+| ------------------------ | -------: | --------------------------------------------------------- |
+| `name`                   |      Yes | Non-empty display and diagnostic name.                    |
+| `description`            |       No | Catalog and launch detail text.                           |
+| `version`                |       No | Informational string.                                     |
+| `entry_point`            |      Yes | Must name an agent, parallel group, or for-each group.    |
+| `input`                  |       No | Typed launch input definitions.                           |
+| `runtime.provider`       |       No | Defaults to `copilot`; any other value is rejected.       |
+| `runtime.working_dir`    |       No | Relative to selected run worktree; must remain inside it. |
+| `limits.max_iterations`  |       No | Defaults to 20; range 1-500.                              |
+| `limits.timeout_seconds` |       No | Optional whole seconds; range 1-86400.                    |
+| `output`                 |       No | Final rendered JSON-compatible mapping.                   |
 
 Fields present in Conductor but outside this table are rejected during the
 initial release. The diagnostic must name the unsupported field.
@@ -328,7 +328,7 @@ error. Runtime lookup failures identify the node and expression.
 ```yaml
 routes:
   - to: accepted
-    when: "{{ output.approved }}"
+    when: '{{ output.approved }}'
   - to: rejected
 ```
 
@@ -496,31 +496,31 @@ queued -> cancelled
 
 ### States
 
-| Status | Meaning |
-|---|---|
-| `queued` | Persisted and waiting for a global run permit. |
-| `starting` | Permit acquired; definition and checkpoint are being prepared. |
-| `running` | At least one executable unit can make progress. |
-| `waiting_input` | All progress is parked on a workflow gate/questions request. |
-| `stopping` | Graceful cancellation is in progress. |
-| `paused` | Durable, resumable checkpoint exists and no node is executing. |
-| `completed` | Terminal success. |
-| `failed` | Terminal error or explicit failed termination. |
-| `cancelled` | User killed/cancelled the run; not resumable. |
+| Status          | Meaning                                                        |
+| --------------- | -------------------------------------------------------------- |
+| `queued`        | Persisted and waiting for a global run permit.                 |
+| `starting`      | Permit acquired; definition and checkpoint are being prepared. |
+| `running`       | At least one executable unit can make progress.                |
+| `waiting_input` | All progress is parked on a workflow gate/questions request.   |
+| `stopping`      | Graceful cancellation is in progress.                          |
+| `paused`        | Durable, resumable checkpoint exists and no node is executing. |
+| `completed`     | Terminal success.                                              |
+| `failed`        | Terminal error or explicit failed termination.                 |
+| `cancelled`     | User killed/cancelled the run; not resumable.                  |
 
 ### Valid controls
 
-| State | Stop | Kill/cancel | Resume |
-|---|---:|---:|---:|
-| queued | No | Yes | No |
-| starting | Yes | Yes | No |
-| running | Yes | Yes | No |
-| waiting_input | Yes | Yes | No |
-| stopping | No | Yes | No |
-| paused | No | Yes | Yes |
-| completed | No | No | No |
-| failed | No | No | Checkpoint-dependent |
-| cancelled | No | No | No |
+| State         | Stop | Kill/cancel |               Resume |
+| ------------- | ---: | ----------: | -------------------: |
+| queued        |   No |         Yes |                   No |
+| starting      |  Yes |         Yes |                   No |
+| running       |  Yes |         Yes |                   No |
+| waiting_input |  Yes |         Yes |                   No |
+| stopping      |   No |         Yes |                   No |
+| paused        |   No |         Yes |                  Yes |
+| completed     |   No |          No |                   No |
+| failed        |   No |          No | Checkpoint-dependent |
+| cancelled     |   No |          No |                   No |
 
 Failure resume is allowed only when a valid recoverable checkpoint was written.
 An explicit failed `terminate` node is never resumable.
@@ -645,7 +645,7 @@ The workflow engine does not auto-approve permissions.
 ```yaml
 - name: prepare
   type: set
-  value: "{{ workflow.input.objective }}"
+  value: '{{ workflow.input.objective }}'
   routes:
     - to: investigate
 ```
@@ -656,7 +656,7 @@ or:
 - name: prepare
   type: set
   values:
-    objective: "{{ workflow.input.objective }}"
+    objective: '{{ workflow.input.objective }}'
     safe: true
 ```
 
@@ -740,9 +740,9 @@ questions only.
 - name: inspect
   type: script
   command: git
-  args: ["status", "--short"]
+  args: ['status', '--short']
   env:
-    MODE: "{{ workflow.input.mode }}"
+    MODE: '{{ workflow.input.mode }}'
   working_dir: .
   timeout_seconds: 60
 ```
@@ -861,7 +861,7 @@ Rules:
   type: workflow
   workflow: ./review.yml
   input_mapping:
-    report: "{{ investigate.output.result }}"
+    report: '{{ investigate.output.result }}'
   max_depth: 5
   routes:
     - to: complete
@@ -893,13 +893,16 @@ export type WorkflowCheckpoint = {
   iteration: number
   startedAt: number
   timeoutDeadline: number | null
-  acpSessions: Record<string, {
-    sessionId: string
-    generation: string | null
-    workingDirectory: string
-    submissionId: string
-    deliveryState: string
-  }>
+  acpSessions: Record<
+    string,
+    {
+      sessionId: string
+      generation: string | null
+      workingDirectory: string
+      submissionId: string
+      deliveryState: string
+    }
+  >
 }
 ```
 
@@ -1038,34 +1041,34 @@ export type WorkflowEvent = {
 
 Required events:
 
-| Type | Required data |
-|---|---|
-| `run_queued` | queue position |
-| `workflow_started` | metadata, entry point, static topology, definition hash |
-| `node_queued` | node type |
-| `node_started` | node type, iteration |
-| `node_output` | output, truncation metadata |
-| `node_completed` | elapsed, usage |
-| `node_failed` | error code, message, recoverable |
-| `route_taken` | from, to, condition index |
-| `parallel_started` | group, members, failure mode |
-| `parallel_completed` | success/failure counts |
-| `for_each_started` | group, item count, effective concurrency |
-| `for_each_item_started` | group, key, index |
-| `for_each_item_completed` | group, key, index |
-| `gate_presented` | request ID, rendered prompt, options |
-| `gate_resolved` | request ID, selected value |
-| `questions_presented` | request ID, question index |
-| `question_answered` | request ID, question ID, outcome |
-| `subworkflow_started` | child path, child workflow name |
-| `subworkflow_completed` | child output |
-| `checkpoint_saved` | checkpoint version, reason |
-| `run_stop_requested` | requesting action |
-| `run_paused` | reason |
-| `run_resumed` | prior revision |
-| `workflow_completed` | output, explicit flag, reason |
-| `workflow_failed` | error, explicit flag, checkpoint availability |
-| `workflow_cancelled` | reason |
+| Type                      | Required data                                           |
+| ------------------------- | ------------------------------------------------------- |
+| `run_queued`              | queue position                                          |
+| `workflow_started`        | metadata, entry point, static topology, definition hash |
+| `node_queued`             | node type                                               |
+| `node_started`            | node type, iteration                                    |
+| `node_output`             | output, truncation metadata                             |
+| `node_completed`          | elapsed, usage                                          |
+| `node_failed`             | error code, message, recoverable                        |
+| `route_taken`             | from, to, condition index                               |
+| `parallel_started`        | group, members, failure mode                            |
+| `parallel_completed`      | success/failure counts                                  |
+| `for_each_started`        | group, item count, effective concurrency                |
+| `for_each_item_started`   | group, key, index                                       |
+| `for_each_item_completed` | group, key, index                                       |
+| `gate_presented`          | request ID, rendered prompt, options                    |
+| `gate_resolved`           | request ID, selected value                              |
+| `questions_presented`     | request ID, question index                              |
+| `question_answered`       | request ID, question ID, outcome                        |
+| `subworkflow_started`     | child path, child workflow name                         |
+| `subworkflow_completed`   | child output                                            |
+| `checkpoint_saved`        | checkpoint version, reason                              |
+| `run_stop_requested`      | requesting action                                       |
+| `run_paused`              | reason                                                  |
+| `run_resumed`             | prior revision                                          |
+| `workflow_completed`      | output, explicit flag, reason                           |
+| `workflow_failed`         | error, explicit flag, checkpoint availability           |
+| `workflow_cancelled`      | reason                                                  |
 
 ### Payload limits
 
@@ -1778,20 +1781,20 @@ second state library unless the event reducer proves React Context unsuitable.
 
 ## File-level implementation map
 
-| Area | Files |
-|---|---|
-| Shared contract | `src/shared/workflow.ts` |
-| Database | `src-tauri/src/db.rs` |
-| Backend registration | `src-tauri/src/lib.rs` |
-| Workflow backend | `src-tauri/src/workflows/**` |
-| ACP reuse | `src-tauri/src/copilot_acp_sessions.rs`, `src-tauri/src/copilot_acp_sessions/**` |
-| API bridge | `src/renderer/src/lib/api.ts`, `src/renderer/src/env.d.ts` if required |
-| Navigation | `src/renderer/src/App.tsx`, `src/renderer/src/components/activity-rail.tsx`, `src/renderer/src/components/app-sidebar.tsx` |
-| Workflow page | `src/renderer/src/pages/workflows.tsx` |
-| Workflow state | `src/renderer/src/contexts/workflows-context.tsx` |
-| Workflow UI | `src/renderer/src/components/workflows/**` |
-| Styling | existing Tailwind tokens and `src/renderer/src/assets/main.css` only for graph-specific global selectors |
-| Conformance definition | `.github/dt-workflows/default.yml` |
+| Area                   | Files                                                                                                                      |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Shared contract        | `src/shared/workflow.ts`                                                                                                   |
+| Database               | `src-tauri/src/db.rs`                                                                                                      |
+| Backend registration   | `src-tauri/src/lib.rs`                                                                                                     |
+| Workflow backend       | `src-tauri/src/workflows/**`                                                                                               |
+| ACP reuse              | `src-tauri/src/copilot_acp_sessions.rs`, `src-tauri/src/copilot_acp_sessions/**`                                           |
+| API bridge             | `src/renderer/src/lib/api.ts`, `src/renderer/src/env.d.ts` if required                                                     |
+| Navigation             | `src/renderer/src/App.tsx`, `src/renderer/src/components/activity-rail.tsx`, `src/renderer/src/components/app-sidebar.tsx` |
+| Workflow page          | `src/renderer/src/pages/workflows.tsx`                                                                                     |
+| Workflow state         | `src/renderer/src/contexts/workflows-context.tsx`                                                                          |
+| Workflow UI            | `src/renderer/src/components/workflows/**`                                                                                 |
+| Styling                | existing Tailwind tokens and `src/renderer/src/assets/main.css` only for graph-specific global selectors                   |
+| Conformance definition | `.github/dt-workflows/default.yml`                                                                                         |
 
 ## Acceptance criteria
 
@@ -1834,4 +1837,3 @@ These require separate specification updates:
 - registry references and remote workflow packages;
 - timed or event-triggered workflow launch;
 - visual authoring and YAML round-trip.
-

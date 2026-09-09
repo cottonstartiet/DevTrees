@@ -3,6 +3,7 @@ import {
   ArrowDownToLine as PullIcon,
   ArrowUpFromLine as PushIcon,
   ExternalLink as OpenFileIcon,
+  FileDiff as FileDiffIcon,
   GitCommit as GitCommitIcon,
   GitCommitVertical as GitCommitVerticalIcon,
   GitCompareArrows as GitCompareArrowsIcon,
@@ -326,8 +327,9 @@ function DiscardAllConfirmDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3 text-sm">
           <p>
-            This will reset every tracked file to <code className="bg-muted rounded px-1 font-mono">HEAD</code>{' '}
-            and <strong>permanently delete</strong> untracked files and folders in the working tree.
+            This will reset every tracked file to{' '}
+            <code className="bg-muted rounded px-1 font-mono">HEAD</code> and{' '}
+            <strong>permanently delete</strong> untracked files and folders in the working tree.
           </p>
           <ul className="bg-muted/50 flex flex-col gap-1 rounded-md px-3 py-2 font-mono text-xs">
             <li>
@@ -359,7 +361,9 @@ function DiscardAllConfirmDialog({
             disabled={isDiscarding || totalCount === 0}
             onClick={onConfirm}
           >
-            {isDiscarding ? 'Discarding…' : `Discard ${totalCount} change${totalCount === 1 ? '' : 's'}`}
+            {isDiscarding
+              ? 'Discarding…'
+              : `Discard ${totalCount} change${totalCount === 1 ? '' : 's'}`}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -387,6 +391,9 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
     handleUnstageAll,
     handleRevert,
     handleOpenFile,
+    handleReviewChanges,
+    reviewChangesDisabled,
+    reviewChangesTooltip,
     handleOpenAllInVSCode,
     isCommitting,
     folderPath
@@ -401,10 +408,27 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
+            <span className="ml-auto shrink-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 gap-1.5 px-2"
+                disabled={reviewChangesDisabled}
+                onClick={handleReviewChanges}
+              >
+                <FileDiffIcon className="size-3.5" />
+                <span className="text-xs">Review changes</span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>{reviewChangesTooltip}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
             <Button
               variant="ghost"
               size="sm"
-              className="ml-auto h-7 shrink-0 gap-1.5 px-2"
+              className="h-7 shrink-0 gap-1.5 px-2"
               disabled={!folderPath}
               onClick={() => void handleOpenAllInVSCode()}
             >
@@ -413,8 +437,7 @@ export function WorkingCopyStatusView({ ctrl }: WorkingCopyStatusViewProps): Rea
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            Open the folder in VS Code with the Source Control panel focused to review all
-            changes.
+            Open the folder in VS Code with the Source Control panel focused to review all changes.
           </TooltipContent>
         </Tooltip>
       </header>
@@ -576,7 +599,9 @@ function FileSection({
                   </span>
                   <span
                     className="text-foreground min-w-0 flex-1 truncate font-mono whitespace-nowrap"
-                    title={entry.originalPath ? `${entry.originalPath} → ${entry.path}` : entry.path}
+                    title={
+                      entry.originalPath ? `${entry.originalPath} → ${entry.path}` : entry.path
+                    }
                   >
                     {entry.originalPath ? (
                       <>

@@ -125,13 +125,13 @@ organization + project + repository + pull-request ID
 
 The caches are performance aids, not sources of durable truth.
 
-| Entry | Lifetime | Refresh behavior |
-|---|---:|---|
-| Parsed repository remote | Process lifetime | Replace if origin URL changes |
-| Current Azure identity | Process lifetime | Clear after an authentication error |
-| Open PR list | 5 seconds | Manual refresh bypasses the cached value |
-| PR context | 5 seconds | Mutations and manual refresh invalidate it |
-| Prepared commit pair | Until the SHA pair changes | No refetch while both objects remain available |
+| Entry                    |                   Lifetime | Refresh behavior                               |
+| ------------------------ | -------------------------: | ---------------------------------------------- |
+| Parsed repository remote |           Process lifetime | Replace if origin URL changes                  |
+| Current Azure identity   |           Process lifetime | Clear after an authentication error            |
+| Open PR list             |                  5 seconds | Manual refresh bypasses the cached value       |
+| PR context               |                  5 seconds | Mutations and manual refresh invalidate it     |
+| Prepared commit pair     | Until the SHA pair changes | No refetch while both objects remain available |
 
 Concurrent requests for the same missing PR context should be coalesced. Detail
 and changed-files loading must not start two identical iteration requests when
@@ -242,12 +242,12 @@ git diff --numstat -z -M <baseSha> <headSha>
 
 Map Git status to the existing contract:
 
-| Git status | DevTrees change type |
-|---|---|
-| `A` | `add` |
-| `D` | `delete` |
-| `R*` | `rename` |
-| Other tracked modifications | `edit` |
+| Git status                  | DevTrees change type |
+| --------------------------- | -------------------- |
+| `A`                         | `add`                |
+| `D`                         | `delete`             |
+| `R*`                        | `rename`             |
+| Other tracked modifications | `edit`               |
 
 For renames, set `previousPath` to the old path and `path` to the new path.
 Treat `-` values in `--numstat` as binary. Set binary addition and deletion
@@ -531,14 +531,14 @@ existing logging conventions.
 
 ## Expected Impact
 
-| Interaction | Current behavior | Target behavior |
-|---|---|---|
-| Active PR list | Git remote lookup, identity lookup, full PR-list command | Cached remote/identity and one narrow PR-list command |
-| Initial review | Duplicate remote and iteration resolution across requests | One shared PR context and one bootstrap |
-| First file diff | Iteration lookup and two ADO item downloads | Local object check, optional one-time fetch, local Git diff |
-| Subsequent file diff | Repeated ADO reads per file | Local Git only |
-| Markdown preview/raw | ADO item request per side | Local `git show` |
-| Threads and mutations | Azure DevOps request | Unchanged |
+| Interaction           | Current behavior                                          | Target behavior                                             |
+| --------------------- | --------------------------------------------------------- | ----------------------------------------------------------- |
+| Active PR list        | Git remote lookup, identity lookup, full PR-list command  | Cached remote/identity and one narrow PR-list command       |
+| Initial review        | Duplicate remote and iteration resolution across requests | One shared PR context and one bootstrap                     |
+| First file diff       | Iteration lookup and two ADO item downloads               | Local object check, optional one-time fetch, local Git diff |
+| Subsequent file diff  | Repeated ADO reads per file                               | Local Git only                                              |
+| Markdown preview/raw  | ADO item request per side                                 | Local `git show`                                            |
+| Threads and mutations | Azure DevOps request                                      | Unchanged                                                   |
 
 The dominant expected improvement is removal of repeated Azure CLI cold starts
 while navigating files. Network cost becomes a one-time fetch only when the

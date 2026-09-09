@@ -37,9 +37,6 @@ const SCHEMA: &str = "
         queue_order           INTEGER NOT NULL DEFAULT 0,
         sort_order            INTEGER NOT NULL DEFAULT 0,
         execution_target_key  TEXT NOT NULL DEFAULT '',
-        source_provider       TEXT CHECK (source_provider IN ('ado', 'github')),
-        source_id             TEXT,
-        source_url            TEXT,
         created_at            INTEGER NOT NULL,
         updated_at            INTEGER NOT NULL
     );
@@ -107,13 +104,16 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
     };
     let added_queue_status = !task_columns.iter().any(|column| column == "queue_status");
     let added_queue_order = !task_columns.iter().any(|column| column == "queue_order");
+    let has_task_sources = task_columns.iter().any(|column| {
+        matches!(
+            column.as_str(),
+            "source_provider" | "source_id" | "source_url"
+        )
+    });
     for (name, definition) in [
         ("queue_status", "TEXT NOT NULL DEFAULT 'queued'"),
         ("queue_order", "INTEGER NOT NULL DEFAULT 0"),
         ("execution_target_key", "TEXT NOT NULL DEFAULT ''"),
-        ("source_provider", "TEXT"),
-        ("source_id", "TEXT"),
-        ("source_url", "TEXT"),
     ] {
         if !task_columns.iter().any(|column| column == name) {
             tx.execute_batch(&format!(
@@ -161,15 +161,53 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
             )?;
         }
     }
+    if has_task_sources {
+        tx.execute_batch(
+            "DROP INDEX IF EXISTS idx_tasks_status_sort;
+             DROP INDEX IF EXISTS idx_tasks_running_target;
+             DROP INDEX IF EXISTS idx_tasks_source;
+             ALTER TABLE tasks RENAME TO tasks_with_sources;
+             CREATE TABLE tasks (
+                 id                    TEXT PRIMARY KEY,
+                 title                 TEXT NOT NULL,
+                 description           TEXT NOT NULL DEFAULT '',
+                 status                TEXT NOT NULL
+                     CHECK (status IN ('todo', 'in_progress', 'review', 'done')),
+                 repository_id         TEXT NOT NULL,
+                 repository_name       TEXT NOT NULL,
+                 repository_path       TEXT NOT NULL,
+                 worktree_path         TEXT NOT NULL,
+                 worktree_branch       TEXT,
+                 pending_worktree_name TEXT,
+                 copilot_session_id    TEXT,
+                 queue_status          TEXT NOT NULL DEFAULT 'queued'
+                     CHECK (queue_status IN ('queued', 'running', 'complete', 'failed')),
+                 queue_order           INTEGER NOT NULL DEFAULT 0,
+                 sort_order            INTEGER NOT NULL DEFAULT 0,
+                 execution_target_key  TEXT NOT NULL DEFAULT '',
+                 created_at            INTEGER NOT NULL,
+                 updated_at            INTEGER NOT NULL
+             );
+             INSERT INTO tasks (
+                 id, title, description, status, repository_id, repository_name,
+                 repository_path, worktree_path, worktree_branch, pending_worktree_name,
+                 copilot_session_id, queue_status, queue_order, sort_order,
+                 execution_target_key, created_at, updated_at
+             )
+             SELECT
+                 id, title, description, status, repository_id, repository_name,
+                 repository_path, worktree_path, worktree_branch, pending_worktree_name,
+                 copilot_session_id, queue_status, queue_order, sort_order,
+                 execution_target_key, created_at, updated_at
+             FROM tasks_with_sources;
+             DROP TABLE tasks_with_sources;
+             CREATE INDEX idx_tasks_status_sort ON tasks(status, sort_order ASC);",
+        )?;
+    }
     tx.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_tasks_running_target
              ON tasks(execution_target_key)
              WHERE queue_status = 'running';",
-    )?;
-    tx.execute_batch(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_source
-             ON tasks(source_provider, source_id COLLATE NOCASE)
-             WHERE source_provider IS NOT NULL AND source_id IS NOT NULL;",
     )?;
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS app_settings (
@@ -195,7 +233,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              payload TEXT NOT NULL
          );
          DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
-         PRAGMA user_version = 7;",
+         PRAGMA user_version = 8;",
     )?;
     tx.commit()?;
     Ok(())
@@ -228,7 +266,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -403,26 +441,39 @@ mod tests {
     }
 
     #[test]
-    fn task_sources_are_nullable_and_unique() {
+    fn legacy_task_sources_are_removed_without_losing_tasks() {
         let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE tasks ADD COLUMN source_provider TEXT;
+             ALTER TABLE tasks ADD COLUMN source_id TEXT;
+             ALTER TABLE tasks ADD COLUMN source_url TEXT;
+             CREATE UNIQUE INDEX idx_tasks_source
+                 ON tasks(source_provider, source_id COLLATE NOCASE)
+                 WHERE source_provider IS NOT NULL AND source_id IS NOT NULL;
+             INSERT INTO tasks
+                 (id, title, status, repository_id, repository_name, repository_path,
+                  worktree_path, source_provider, source_id, source_url, created_at, updated_at)
+             VALUES ('imported', 'Imported task', 'todo', 'repo', 'Repo', 'repo', 'repo',
+                     'github', 'owner/repo#1', 'https://example.test/item', 1, 1);",
+        )
+        .unwrap();
         initialize_schema(&conn).unwrap();
-        let insert = |id: &str, source_id: Option<&str>| {
-            conn.execute(
-                "INSERT INTO tasks
-                    (id, title, status, repository_id, repository_name, repository_path,
-                     worktree_path, source_provider, source_id, source_url, created_at, updated_at)
-                 VALUES (?1, 'Task', 'todo', 'repo', 'Repo', 'repo', 'repo',
-                         CASE WHEN ?2 IS NULL THEN NULL ELSE 'github' END,
-                         ?2,
-                         CASE WHEN ?2 IS NULL THEN NULL ELSE 'https://example.test/item' END,
-                         1, 1)",
-                rusqlite::params![id, source_id],
-            )
-        };
-        insert("manual-one", None).unwrap();
-        insert("manual-two", None).unwrap();
-        insert("imported", Some("owner/repo#1")).unwrap();
-        assert!(insert("duplicate", Some("owner/repo#1")).is_err());
+
+        let columns = conn
+            .prepare("PRAGMA table_info(tasks)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert!(!columns.iter().any(|column| column.starts_with("source_")));
+        let task: (String, String) = conn
+            .query_row("SELECT id, title FROM tasks", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(task, ("imported".into(), "Imported task".into()));
     }
 
     #[test]
