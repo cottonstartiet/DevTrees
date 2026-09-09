@@ -27,19 +27,23 @@ import {
   terminalObservationIssue,
   type TerminalSession
 } from '@shared/terminal-session'
-import type { NativeInteraction } from '@shared/native-session'
+import {
+  nativeSessionNeedsUserAction,
+  nativeSessionPresentationStatus,
+  type NativeInteraction
+} from '@shared/native-session'
 import type { Repository } from '@shared/repository'
-
-function needsUserAction(session: TerminalSession, interaction?: NativeInteraction): boolean {
-  return session.status === 'waiting-input' || Boolean(interaction)
-}
 
 function compareActiveSessions(a: TerminalSession, b: TerminalSession): number {
   return b.createdAt - a.createdAt
 }
 
-function interactionLabel(interaction?: NativeInteraction): string {
-  if (!interaction) return 'Response requested'
+function interactionLabel(
+  interaction: NativeInteraction | undefined,
+  planTransitionAvailable: boolean
+): string {
+  if (!interaction)
+    return planTransitionAvailable ? 'Plan reply or next step required' : 'Response requested'
   if (interaction.kind === 'permission' || interaction.kind === 'acpPermission')
     return 'Permission requested'
   return interaction.kind === 'elicitation' && interaction.url
@@ -60,7 +64,7 @@ function autoReviewLabel(status: AutoReviewStatus): string {
     case 'started':
       return 'Review started'
     case 'already-triggered':
-      return 'Previously triggered'
+      return 'Reviewed'
     case 'failed':
       return 'Start failed'
   }
@@ -99,7 +103,7 @@ export function DashboardPage({
     [sessions]
   )
   const sessionsNeedingAction = liveSessions.filter((session) =>
-    needsUserAction(session, interactionById[session.id])
+    nativeSessionNeedsUserAction(session, nativeById[session.id])
   ).length
 
   const openSession = React.useCallback(
@@ -124,19 +128,23 @@ export function DashboardPage({
         <DashboardCard
           title="Active sessions"
           description={
-            <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span>
-                {liveSessions.length} Copilot session{liveSessions.length === 1 ? '' : 's'} running
+            liveSessions.length > 0 ? (
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span>
+                  {liveSessions.length} Copilot session{liveSessions.length === 1 ? '' : 's'}{' '}
+                  running
+                </span>
+                {sessionsNeedingAction > 0 ? (
+                  <>
+                    <span aria-hidden="true">·</span>
+                    <span className="text-foreground font-medium">
+                      {sessionsNeedingAction} need{sessionsNeedingAction === 1 ? 's' : ''} your
+                      action
+                    </span>
+                  </>
+                ) : null}
               </span>
-              {sessionsNeedingAction > 0 ? (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <span className="text-foreground font-medium">
-                    {sessionsNeedingAction} need{sessionsNeedingAction === 1 ? 's' : ''} your input
-                  </span>
-                </>
-              ) : null}
-            </span>
+            ) : null
           }
         >
           {liveSessions.length === 0 ? (
@@ -144,9 +152,15 @@ export function DashboardPage({
           ) : (
             <div className="flex flex-col gap-2">
               {liveSessions.map((session) => {
-                const StatusIcon = TERMINAL_SESSION_STATUS_ICON[session.status]
                 const interaction = interactionById[session.id]
-                const needsAction = needsUserAction(session, interaction)
+                const snapshot = nativeById[session.id]
+                const planTransitionAvailable = Boolean(
+                  snapshot?.session.generation === session.generation &&
+                  snapshot?.planTransitionAvailable
+                )
+                const needsAction = nativeSessionNeedsUserAction(session, snapshot)
+                const presentationStatus = nativeSessionPresentationStatus(session, snapshot)
+                const StatusIcon = TERMINAL_SESSION_STATUS_ICON[presentationStatus]
                 return (
                   <div
                     key={session.id}
@@ -167,13 +181,13 @@ export function DashboardPage({
                         <span
                           className={cn(
                             'flex size-6 shrink-0 items-center justify-center rounded-md',
-                            TERMINAL_SESSION_STATUS_TONE[session.status]
+                            TERMINAL_SESSION_STATUS_TONE[presentationStatus]
                           )}
                         >
                           <StatusIcon
                             className={cn(
                               'size-3.5',
-                              session.status === 'working' && 'animate-spin'
+                              presentationStatus === 'working' && 'animate-spin'
                             )}
                           />
                         </span>
@@ -184,15 +198,15 @@ export function DashboardPage({
                           <span
                             className={cn(
                               'rounded px-1.5 py-0.5 text-[10px] font-medium',
-                              TERMINAL_SESSION_STATUS_TONE[session.status]
+                              TERMINAL_SESSION_STATUS_TONE[presentationStatus]
                             )}
                           >
-                            {TERMINAL_SESSION_STATUS_LABEL[session.status]}
+                            {TERMINAL_SESSION_STATUS_LABEL[presentationStatus]}
                           </span>
                           {needsAction ? (
                             <span className="text-foreground flex items-center gap-1 text-[10px] font-medium">
                               <Clock3Icon className="size-3" />
-                              {interactionLabel(interaction)} at{' '}
+                              {interactionLabel(interaction, planTransitionAvailable)} at{' '}
                               {sessionTime(
                                 interactionRequestedAtById[session.id] ?? session.updatedAt
                               )}
@@ -316,7 +330,8 @@ export function DashboardPage({
                         >
                           {isPending ? (
                             <Loader2Icon className="size-3 animate-spin" />
-                          ) : item.autoReviewStatus === 'started' ? (
+                          ) : item.autoReviewStatus === 'started' ||
+                            item.autoReviewStatus === 'already-triggered' ? (
                             <CircleCheckIcon className="size-3" />
                           ) : null}
                           {autoReviewLabel(item.autoReviewStatus)}

@@ -14,7 +14,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import type { TerminalTarget } from '@shared/terminal-session'
 import type { SessionLaunchMode, TaskQueueSettings } from '@shared/settings'
-import type { NativeAnswer, NativeSnapshot, PromptContent } from '@shared/native-session'
+import type {
+  NativeAnswer,
+  NativeSnapshot,
+  PlanTransitionAction,
+  PromptContent
+} from '@shared/native-session'
 import { listen } from '@tauri-apps/api/event'
 
 import type { AddRepositoryResult, Repository } from '@shared/repository'
@@ -95,6 +100,7 @@ import type { CopilotAnalyticsResult } from '@shared/copilot-analytics'
 import type {
   CreateTaskRequest,
   CreateTaskResult,
+  ClaimTaskRunRequest,
   DeleteTaskRequest,
   DeleteTaskResult,
   MoveTaskRequest,
@@ -105,6 +111,7 @@ import type {
   UpdateTaskRequest,
   UpdateTaskResult
 } from '@shared/task'
+import type { TaskImportResult } from '@shared/task-import'
 import {
   TERMINAL_SESSIONS_UPDATE_EVENT,
   type StartTerminalSessionRequest,
@@ -411,6 +418,10 @@ const api = {
       answer: NativeAnswer
     ): Promise<NativeSnapshot> =>
       invoke('native_session_respond', { target, interactionId, answer }),
+    planTransition: (
+      target: TerminalTarget,
+      action: PlanTransitionAction
+    ): Promise<NativeSnapshot> => invoke('acp_session_plan_transition', { target, action }),
     cancel: (target: TerminalTarget): Promise<void> => invoke('native_session_cancel', { target }),
     end: (target: TerminalTarget): Promise<void> => invoke('native_session_end', { target }),
     onUpdate: (cb: (snapshot: NativeSnapshot) => void): Promise<() => void> =>
@@ -430,11 +441,20 @@ const api = {
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),
     create: (req: CreateTaskRequest): Promise<CreateTaskResult> =>
-      result('tasks_create', { ...req }, (message) => ({
-        ok: false,
-        error: 'unknown',
-        message
-      })),
+      result(
+        'tasks_create',
+        {
+          ...req,
+          sourceProvider: req.sourceProvider ?? null,
+          sourceId: req.sourceId ?? null,
+          sourceUrl: req.sourceUrl ?? null
+        },
+        (message) => ({
+          ok: false,
+          error: 'unknown',
+          message
+        })
+      ),
     update: (req: UpdateTaskRequest): Promise<UpdateTaskResult> =>
       result('tasks_update', { ...req }, (message) => ({
         ok: false,
@@ -463,6 +483,26 @@ const api = {
       result('tasks_set_queue_status', { ...req }, (message) => ({
         ok: false,
         error: 'unknown',
+        message
+      })),
+    claimRun: (req: ClaimTaskRunRequest): Promise<UpdateTaskResult> =>
+      result('tasks_claim_run', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      }))
+  },
+  taskImports: {
+    ado: (repositoryPath: string): Promise<TaskImportResult> =>
+      result('ado_task_imports', { repositoryPath }, (message) => ({
+        ok: false,
+        code: 'az-failed',
+        message
+      })),
+    github: (repositoryPath: string): Promise<TaskImportResult> =>
+      result('github_task_imports', { repositoryPath }, (message) => ({
+        ok: false,
+        code: 'gh-failed',
         message
       }))
   }

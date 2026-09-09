@@ -18,7 +18,15 @@ const {
   rekeyNativeState,
   nativeFields,
   initialNativeDraft,
-  nativeFormContent
+  nativeFormContent,
+  nativeSessionNeedsUserAction,
+  nativeSessionPresentationStatus,
+  nativeSessionCanReplyToPlan,
+  acpPermissionOptionIsRemembered,
+  acpPermissionOptionScope,
+  acpCommandQuery,
+  matchingAcpCommands,
+  acpCommandDraft
 } = compiled.exports
 const snapshot = (generation, revision, interactions = []) => ({
   session: { id: 'same-session', generation, revision, transport: 'acp' },
@@ -70,6 +78,164 @@ test('a late snapshot cannot resurrect an answered request or older owner', () =
     false
   )
   assert.equal(acceptNativeSnapshot(snapshot('second', 4), answered), true)
+})
+
+test('session attention follows live status and current native interactions', () => {
+  const session = {
+    id: 'same-session',
+    generation: 'current',
+    transport: 'acp',
+    status: 'working'
+  }
+  assert.equal(nativeSessionNeedsUserAction({ ...session, status: 'waiting-input' }), true)
+  assert.equal(
+    nativeSessionNeedsUserAction(session, snapshot('current', 1, [{ id: 'request' }])),
+    true
+  )
+  assert.equal(
+    nativeSessionNeedsUserAction(session, snapshot('stale', 1, [{ id: 'request' }])),
+    false
+  )
+  assert.equal(
+    nativeSessionNeedsUserAction(
+      { ...session, status: 'done' },
+      snapshot('current', 1, [{ id: 'request' }])
+    ),
+    false
+  )
+  assert.equal(nativeSessionNeedsUserAction(session, snapshot('current', 1)), false)
+})
+
+test('session attention includes a current native plan transition', () => {
+  const session = {
+    id: 'same-session',
+    generation: 'current',
+    transport: 'acp',
+    status: 'idle'
+  }
+  const planSnapshot = {
+    ...snapshot('current', 1),
+    planTransitionAvailable: true
+  }
+  assert.equal(nativeSessionNeedsUserAction(session, planSnapshot), true)
+  assert.equal(
+    nativeSessionNeedsUserAction(session, {
+      ...planSnapshot,
+      session: { ...planSnapshot.session, generation: 'stale' }
+    }),
+    false
+  )
+  assert.equal(nativeSessionNeedsUserAction({ ...session, status: 'done' }, planSnapshot), false)
+  assert.equal(
+    nativeSessionNeedsUserAction({ ...session, transport: 'external' }, planSnapshot),
+    false
+  )
+})
+
+test('session presentation promotes current action-required states without changing ordinary idle', () => {
+  const session = {
+    id: 'same-session',
+    generation: 'current',
+    transport: 'acp',
+    status: 'idle'
+  }
+  const planSnapshot = {
+    ...snapshot('current', 1),
+    planTransitionAvailable: true
+  }
+  assert.equal(nativeSessionPresentationStatus(session, planSnapshot), 'waiting-input')
+  assert.equal(nativeSessionPresentationStatus(session, snapshot('current', 1)), 'idle')
+  assert.equal(
+    nativeSessionPresentationStatus(session, {
+      ...planSnapshot,
+      session: { ...planSnapshot.session, generation: 'stale' }
+    }),
+    'idle'
+  )
+  assert.equal(
+    nativeSessionPresentationStatus({ ...session, transport: 'external' }, planSnapshot),
+    'idle'
+  )
+  assert.equal(
+    nativeSessionPresentationStatus({ ...session, status: 'done' }, planSnapshot),
+    'done'
+  )
+})
+
+test('ACP permission choices expose one-time and remembered scope accurately', () => {
+  assert.equal(acpPermissionOptionScope('allow_once'), 'Allows only this operation.')
+  assert.equal(
+    acpPermissionOptionScope('allow_always'),
+    'Copilot remembers this choice for matching requests.'
+  )
+  assert.equal(acpPermissionOptionScope('reject_once'), 'Rejects only this operation.')
+  assert.equal(
+    acpPermissionOptionScope('reject_always'),
+    'Copilot remembers this rejection for matching requests.'
+  )
+  assert.equal(
+    acpPermissionOptionScope('future_scope'),
+    'Copilot controls the scope of this choice.'
+  )
+  assert.equal(acpPermissionOptionIsRemembered('allow_always'), true)
+  assert.equal(acpPermissionOptionIsRemembered('reject_always'), true)
+  assert.equal(acpPermissionOptionIsRemembered('allow_once'), false)
+})
+
+test('plan replies are available only for the current idle decision without structured input', () => {
+  const session = {
+    id: 'same-session',
+    generation: 'current',
+    transport: 'acp',
+    status: 'idle'
+  }
+  const planSnapshot = {
+    ...snapshot('current', 1),
+    planTransitionAvailable: true
+  }
+  assert.equal(nativeSessionCanReplyToPlan(session, planSnapshot), true)
+  assert.equal(
+    nativeSessionCanReplyToPlan(session, {
+      ...planSnapshot,
+      interactions: [{ id: 'structured-request' }]
+    }),
+    false
+  )
+  assert.equal(
+    nativeSessionCanReplyToPlan(session, {
+      ...planSnapshot,
+      session: { ...planSnapshot.session, generation: 'stale' }
+    }),
+    false
+  )
+  assert.equal(nativeSessionCanReplyToPlan({ ...session, status: 'done' }, planSnapshot), false)
+  assert.equal(
+    nativeSessionCanReplyToPlan({ ...session, transport: 'external' }, planSnapshot),
+    false
+  )
+})
+
+test('slash command suggestions only match a leading command name', () => {
+  const commands = [
+    { name: 'usage', description: 'Show token usage' },
+    { name: 'review', description: 'Review the current changes', input: { hint: '<focus>' } }
+  ]
+  assert.equal(acpCommandQuery('/'), '')
+  assert.equal(acpCommandQuery('/US'), 'us')
+  assert.equal(acpCommandQuery(' /usage'), null)
+  assert.equal(acpCommandQuery('/usage now'), null)
+  assert.deepEqual(matchingAcpCommands('/', commands), commands)
+  assert.deepEqual(matchingAcpCommands('/tok', commands), [commands[0]])
+  assert.deepEqual(matchingAcpCommands('/REV', commands), [commands[1]])
+  assert.deepEqual(matchingAcpCommands('/missing', commands), [])
+})
+
+test('selected slash commands preserve advertised argument hints', () => {
+  assert.equal(acpCommandDraft({ name: 'usage', description: '' }), '/usage')
+  assert.equal(
+    acpCommandDraft({ name: 'review', description: '', input: { hint: '<focus>' } }),
+    '/review '
+  )
 })
 
 test('draft and request identities include session, generation and opaque request id', () => {

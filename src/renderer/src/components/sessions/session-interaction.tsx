@@ -8,18 +8,117 @@ import { AcpComposer } from '@/components/sessions/acp-controls'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { nativeError } from '@/contexts/use-native-sessions'
 import {
+  acpPermissionOptionIsRemembered,
+  acpPermissionOptionScope,
   initialNativeDraft,
   nativeFields,
   nativeFormContent,
   nativeKey,
+  nativeSessionCanReplyToPlan,
   type NativeAnswer,
   type NativeField,
-  type NativeInteraction
+  type NativeInteraction,
+  type PlanTransitionAction
 } from '@shared/native-session'
 import { isTerminalSessionFinished, type TerminalSession } from '@shared/terminal-session'
 
 const selectStyle =
   'bg-background border-input focus-visible:ring-ring w-full min-w-0 rounded-md border px-2 py-2 text-sm focus-visible:outline-none focus-visible:ring-3'
+
+function PlanCompletion({
+  session,
+  compact
+}: {
+  session: TerminalSession
+  compact: boolean
+}): React.JSX.Element | null {
+  const { nativeById, nativeBusy, transitionPlan } = useTerminalSessions()
+  const snapshot = nativeById[session.id]
+  const busy = nativeBusy[nativeKey(session, 'plan-transition')] === true
+  const replyBusy = nativeBusy[nativeKey(session)] === true
+  if (
+    !snapshot ||
+    snapshot.session.generation !== session.generation ||
+    snapshot.interactions.length > 0 ||
+    (!snapshot.planTransitionAvailable && !busy)
+  )
+    return null
+  const canReply = nativeSessionCanReplyToPlan(session, snapshot)
+  const fleetAvailable = (snapshot.commands ?? []).some(
+    (command) => command.name.toLowerCase() === 'fleet'
+  )
+  const choose = (action: PlanTransitionAction): void => {
+    void transitionPlan(session, action)
+  }
+  return (
+    <section
+      id={compact ? undefined : 'native-plan-transition'}
+      tabIndex={compact ? undefined : -1}
+      aria-labelledby={`plan-complete-${session.id}`}
+      className="bg-muted/40 focus-visible:ring-ring space-y-3 rounded-md border p-3 outline-none focus-visible:ring-3"
+    >
+      <div>
+        <p id={`plan-complete-${session.id}`} className="text-sm font-medium">
+          Plan complete. Choose the next step.
+        </p>
+        <p className="text-muted-foreground text-xs">
+          {compact
+            ? 'Reply to refine the plan, or continue directly to implementation.'
+            : 'Reply to answer a question or refine the plan, or continue to implementation. Your current Copilot permission settings are preserved.'}
+        </p>
+      </div>
+      {canReply && (
+        <AcpComposer session={session} compact={compact} context="plan-followup" disabled={busy} />
+      )}
+      <div className="border-t pt-3">
+        <p className="mb-2 text-xs font-medium">Continue to implementation</p>
+      </div>
+      <fieldset
+        disabled={busy || replyBusy}
+        aria-label="Plan implementation choices"
+        className="flex flex-wrap gap-2"
+      >
+        <Button size="sm" variant="outline" onClick={() => choose('interactive')}>
+          Build on default permissions
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => choose('autopilot')}>
+          Build on autopilot
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!fleetAvailable}
+          title={
+            fleetAvailable
+              ? undefined
+              : 'This Copilot session does not advertise the /fleet command.'
+          }
+          onClick={() => choose('autopilot_fleet')}
+        >
+          Build on autopilot with fleet
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => choose('exit_only')}>
+          Exit plan mode
+        </Button>
+      </fieldset>
+      {!fleetAvailable && (
+        <p className="text-muted-foreground text-xs">
+          Fleet is unavailable because this Copilot session did not advertise the /fleet command.
+        </p>
+      )}
+      {busy && (
+        <p role="status" className="text-muted-foreground text-xs">
+          Applying the selected mode...
+        </p>
+      )}
+      {replyBusy && (
+        <p role="status" className="text-muted-foreground text-xs">
+          Sending your plan reply...
+        </p>
+      )}
+    </section>
+  )
+}
 
 function Field({
   field,
@@ -210,7 +309,7 @@ export function SessionInteraction({
       aria-label="Copilot request"
     >
       <div className="flex items-start gap-2">
-        {interaction.kind === 'permission' && (
+        {(interaction.kind === 'permission' || interaction.kind === 'acpPermission') && (
           <ShieldQuestionIcon className="mt-0.5 size-4 shrink-0" />
         )}
         <p className="min-w-0 whitespace-pre-wrap break-words text-sm font-medium">
@@ -242,21 +341,39 @@ export function SessionInteraction({
                     (a, b) =>
                       Number(a.kind.startsWith('allow')) - Number(b.kind.startsWith('allow'))
                   )
-                  .map((option) => (
-                    <Button
-                      key={option.optionId}
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => submit({ kind: 'permission', action: option.optionId })}
-                    >
-                      {option.name}
-                    </Button>
-                  ))}
+                  .map((option) => {
+                    const scope = acpPermissionOptionScope(option.kind)
+                    return (
+                      <Button
+                        key={option.optionId}
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        title={scope}
+                        aria-label={`${option.name}. ${scope}`}
+                        onClick={() => submit({ kind: 'permission', action: option.optionId })}
+                      >
+                        {option.name}
+                      </Button>
+                    )
+                  })}
               </div>
-              <p className="text-muted-foreground text-xs">
-                These permission choices are supplied by Copilot for this request.
-              </p>
+              <ul className="text-muted-foreground space-y-1 text-xs">
+                {interaction.options.map((option) => (
+                  <li key={option.optionId}>
+                    <span className="text-foreground font-medium">{option.name}:</span>{' '}
+                    {acpPermissionOptionScope(option.kind)}
+                  </li>
+                ))}
+              </ul>
+              {interaction.options.some((option) =>
+                acpPermissionOptionIsRemembered(option.kind)
+              ) && (
+                <p className="text-muted-foreground text-xs">
+                  Remembered choices are owned by Copilot CLI and apply only when a later request
+                  matches its saved permission scope.
+                </p>
+              )}
             </>
           )}
           {interaction.kind === 'permission' && (
@@ -642,8 +759,11 @@ export function NativeSessionControls({
           View {pending.length - 1} more requests
         </Button>
       )}
+      <PlanCompletion session={session} compact={compact} />
       {!finished &&
         (!compact || pending.length === 0) &&
+        !current?.planTransitionAvailable &&
+        !nativeBusy[nativeKey(session, 'plan-transition')] &&
         (session.transport === 'acp' ? (
           <AcpComposer session={session} compact={compact} />
         ) : (

@@ -4,10 +4,35 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
+const SelectOpenContext = React.createContext<((open: boolean) => void) | null>(null)
+
 function Select({
+  open: controlledOpen,
+  defaultOpen,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>): React.JSX.Element {
-  return <SelectPrimitive.Root data-slot="select" {...props} />
+  const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen ?? false)
+  const open = controlledOpen ?? uncontrolledOpen
+
+  const handleOpenChange = React.useCallback(
+    (nextOpen: boolean): void => {
+      if (controlledOpen === undefined) setUncontrolledOpen(nextOpen)
+      onOpenChange?.(nextOpen)
+    },
+    [controlledOpen, onOpenChange]
+  )
+
+  return (
+    <SelectOpenContext.Provider value={handleOpenChange}>
+      <SelectPrimitive.Root
+        data-slot="select"
+        open={open}
+        onOpenChange={handleOpenChange}
+        {...props}
+      />
+    </SelectOpenContext.Provider>
+  )
 }
 
 function SelectGroup({
@@ -52,10 +77,16 @@ function SelectContent({
   className,
   children,
   position = 'popper',
+  portalContainer,
+  onEscapeKeyDown,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Content>): React.JSX.Element {
+}: React.ComponentProps<typeof SelectPrimitive.Content> & {
+  portalContainer?: HTMLElement | null
+}): React.JSX.Element {
+  const setOpen = React.useContext(SelectOpenContext)
+
   return (
-    <SelectPrimitive.Portal>
+    <SelectPrimitive.Portal container={portalContainer}>
       <SelectPrimitive.Content
         data-slot="select-content"
         className={cn(
@@ -65,6 +96,17 @@ function SelectContent({
           className
         )}
         position={position}
+        onEscapeKeyDown={(event) => {
+          const defaultPreventedBeforeHandler = event.defaultPrevented
+          onEscapeKeyDown?.(event)
+          const consumerPreventedDefault =
+            !defaultPreventedBeforeHandler && event.defaultPrevented
+          if (consumerPreventedDefault || !setOpen) return
+
+          // A select portaled inside a modal owns Escape; close it without dismissing the dialog.
+          event.preventDefault()
+          setOpen(false)
+        }}
         {...props}
       >
         <SelectScrollUpButton />

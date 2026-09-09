@@ -70,6 +70,7 @@ import { openInWindowsTerminal } from '@/lib/system'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import type { TerminalSessionStatus } from '@shared/terminal-session'
+import { nativeSessionNeedsUserAction } from '@shared/native-session'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -403,10 +404,8 @@ export function AppSidebar({
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
   const [repositoriesOpen, setRepositoriesOpen] = React.useState(true)
-  const [reviewsOpen, setReviewsOpen] = React.useState(true)
-  const [sessionsOpen, setSessionsOpen] = React.useState(true)
   const launchCopilot = useCopilotLauncher()
-  const { sessions, selectedId, select, forget } = useTerminalSessions()
+  const { sessions, selectedId, select, forget, nativeById } = useTerminalSessions()
 
   const handleStartCopilotSession = React.useCallback(
     async (wt: Worktree, repository?: string): Promise<void> => {
@@ -535,115 +534,96 @@ export function AppSidebar({
         ) : null}
 
         {activeView === 'reviews' ? (
-          <Collapsible open={reviewsOpen} onOpenChange={setReviewsOpen} className="flex flex-col">
-            <SidebarGroup className="shrink-0">
-              <SidebarGroupLabel
-                asChild
-                className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              >
-                <CollapsibleTrigger className="group/reviews-label flex w-full items-center">
-                  <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/reviews-label:rotate-90 group-data-[collapsible=icon]:hidden" />
-                  Repositories
-                </CollapsibleTrigger>
-              </SidebarGroupLabel>
-              <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
-                <PlusIcon />
-                <span className="sr-only">Add repository</span>
-              </SidebarGroupAction>
-            </SidebarGroup>
-            <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
-              <SidebarGroupContent>
-                {repositories.length === 0 ? (
-                  <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
-                    No repositories yet. Click + to add a git repository.
-                  </p>
-                ) : (
-                  <SidebarMenu>
-                    {repositories.map((repository) => (
-                      <SidebarMenuItem key={repository.id}>
-                        <SidebarMenuButton
-                          tooltip={repository.name}
-                          isActive={activeRepositoryId === repository.id}
-                          onClick={() => onSelectRepository(repository.id)}
-                        >
-                          {repositoryIcon(repository.remoteKind)}
-                          <span className="truncate">{repository.name}</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    ))}
-                  </SidebarMenu>
-                )}
-              </SidebarGroupContent>
-            </CollapsibleContent>
-          </Collapsible>
+          <SidebarGroup className="shrink-0">
+            <SidebarGroupLabel className="h-9 text-sm font-semibold text-sidebar-foreground">
+              Repositories
+            </SidebarGroupLabel>
+            <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
+              <PlusIcon />
+              <span className="sr-only">Add repository</span>
+            </SidebarGroupAction>
+            <SidebarGroupContent>
+              {repositories.length === 0 ? (
+                <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
+                  No repositories yet. Click + to add a git repository.
+                </p>
+              ) : (
+                <SidebarMenu>
+                  {repositories.map((repository) => (
+                    <SidebarMenuItem key={repository.id}>
+                      <SidebarMenuButton
+                        tooltip={repository.name}
+                        isActive={activeRepositoryId === repository.id}
+                        onClick={() => onSelectRepository(repository.id)}
+                      >
+                        {repositoryIcon(repository.remoteKind)}
+                        <span className="truncate">{repository.name}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              )}
+            </SidebarGroupContent>
+          </SidebarGroup>
         ) : null}
 
         {activeView === 'sessions' ? (
-          <Collapsible
-            open={sessionsOpen}
-            onOpenChange={setSessionsOpen}
-            className="flex shrink-0 flex-col"
-          >
-            <SidebarGroup className="shrink-0">
-              <SidebarGroupLabel
-                asChild
-                className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              >
-                <CollapsibleTrigger className="group/se-label flex w-full items-center">
-                  <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/se-label:rotate-90 group-data-[collapsible=icon]:hidden" />
-                  Sessions
-                </CollapsibleTrigger>
-              </SidebarGroupLabel>
-            </SidebarGroup>
-            <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
-              <SidebarGroupContent>
-                {sessions.length === 0 ? (
-                  <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
-                    No sessions yet.
-                  </p>
-                ) : (
-                  <SidebarMenu>
-                    {sessions.map((session) => {
-                      const primary = session.label || session.branch || session.folderPath
-                      const repoLabel = session.repository
-                      return (
-                        <SidebarMenuItem key={session.id}>
-                          <SidebarMenuButton
-                            tooltip={repoLabel ? `${primary} · ${repoLabel}` : primary}
-                            isActive={activeView === 'sessions' && selectedId === session.id}
-                            className="h-auto py-1"
-                            onClick={() => {
-                              select(session.id)
-                              onSelectView('sessions')
-                            }}
-                          >
-                            <CircleDotIcon
-                              className={cn('size-3.5 shrink-0', SESSION_DOT_CLASS[session.status])}
-                            />
-                            <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                              <span className="truncate">{primary}</span>
-                              <span className="text-sidebar-foreground/70 truncate text-[10px]">
-                                {repoLabel ? `${repoLabel} · ` : ''}
-                                {SESSION_STATUS_LABEL[session.status]}
-                              </span>
-                            </div>
-                          </SidebarMenuButton>
-                          <SidebarMenuAction
-                            showOnHover
-                            title="Dismiss session"
-                            onClick={() => void forget(session.id)}
-                          >
-                            <XIcon />
-                            <span className="sr-only">Dismiss session</span>
-                          </SidebarMenuAction>
-                        </SidebarMenuItem>
-                      )
-                    })}
-                  </SidebarMenu>
-                )}
-              </SidebarGroupContent>
-            </CollapsibleContent>
-          </Collapsible>
+          <SidebarGroup className="shrink-0">
+            <SidebarGroupContent>
+              {sessions.length === 0 ? (
+                <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
+                  No sessions yet.
+                </p>
+              ) : (
+                <SidebarMenu>
+                  {sessions.map((session) => {
+                    const primary = session.label || session.branch || session.folderPath
+                    const repoLabel = session.repository
+                    const needsAction = nativeSessionNeedsUserAction(
+                      session,
+                      nativeById[session.id]
+                    )
+                    return (
+                      <SidebarMenuItem key={session.id}>
+                        <SidebarMenuButton
+                          tooltip={repoLabel ? `${primary} · ${repoLabel}` : primary}
+                          isActive={activeView === 'sessions' && selectedId === session.id}
+                          className={cn(
+                            'h-auto border border-transparent py-1',
+                            needsAction &&
+                              'border-amber-500/35 bg-amber-500/[0.035] hover:bg-amber-500/[0.07] data-[active=true]:border-amber-500/45 data-[active=true]:bg-amber-500/[0.09]'
+                          )}
+                          onClick={() => {
+                            select(session.id)
+                            onSelectView('sessions')
+                          }}
+                        >
+                          <CircleDotIcon
+                            className={cn('size-3.5 shrink-0', SESSION_DOT_CLASS[session.status])}
+                          />
+                          <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                            <span className="truncate">{primary}</span>
+                            <span className="text-sidebar-foreground/70 truncate text-[10px]">
+                              {repoLabel ? `${repoLabel} · ` : ''}
+                              {SESSION_STATUS_LABEL[session.status]}
+                            </span>
+                          </div>
+                        </SidebarMenuButton>
+                        <SidebarMenuAction
+                          showOnHover
+                          title="Dismiss session"
+                          onClick={() => void forget(session.id)}
+                        >
+                          <XIcon />
+                          <span className="sr-only">Dismiss session</span>
+                        </SidebarMenuAction>
+                      </SidebarMenuItem>
+                    )
+                  })}
+                </SidebarMenu>
+              )}
+            </SidebarGroupContent>
+          </SidebarGroup>
         ) : null}
       </SidebarContent>
     </Sidebar>

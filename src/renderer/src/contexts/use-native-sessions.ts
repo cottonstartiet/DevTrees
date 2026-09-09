@@ -6,6 +6,7 @@ import {
   type NativeAnswer,
   type NativeDraft,
   type NativeSnapshot,
+  type PlanTransitionAction,
   type PromptContent
 } from '@shared/native-session'
 import {
@@ -262,6 +263,14 @@ export function useNativeSessions(
     [apply, runNative]
   )
 
+  const transitionPlan = React.useCallback(
+    (session: TerminalSession, action: PlanTransitionAction): Promise<boolean> =>
+      runNative(session, nativeKey(session, 'plan-transition'), async () => {
+        apply(await window.api.nativeSessions.planTransition(target(session), action))
+      }),
+    [apply, runNative]
+  )
+
   const promptNative = React.useCallback(
     (
       session: TerminalSession,
@@ -350,6 +359,7 @@ export function useNativeSessions(
     setNativeDraft,
     refreshNative,
     respondNative,
+    transitionPlan,
     promptNative,
     stopNative,
     endNative,

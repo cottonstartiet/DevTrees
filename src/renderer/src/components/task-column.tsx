@@ -5,11 +5,13 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { TaskCard } from '@/components/task-card'
 import { cn } from '@/lib/utils'
 import type { Task, TaskStatus } from '@shared/task'
+import type { TerminalSessionStatus } from '@shared/terminal-session'
 
 export function TaskColumn({
   status,
   label,
   tasks,
+  sessionStatusByTaskId,
   onOpenTask,
   onReviewTask,
   onDoneTask,
@@ -18,6 +20,7 @@ export function TaskColumn({
   status: TaskStatus
   label: string
   tasks: Task[]
+  sessionStatusByTaskId: Partial<Record<string, TerminalSessionStatus>>
   onOpenTask: (task: Task) => void
   onReviewTask: (task: Task) => void
   onDoneTask: (task: Task) => void
@@ -43,6 +46,7 @@ export function TaskColumn({
             <TaskCard
               key={task.id}
               task={task}
+              sessionStatus={sessionStatusByTaskId[task.id]}
               onOpen={onOpenTask}
               onReview={onReviewTask}
               onDone={onDoneTask}

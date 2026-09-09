@@ -2,47 +2,18 @@ import * as React from 'react'
 import { ExternalLinkIcon, FolderGitIcon, GitBranchIcon, Loader2Icon } from 'lucide-react'
 import { toast } from 'sonner'
 
-import {
-  TERMINAL_SESSION_STATUS_LABEL,
-  TERMINAL_SESSION_STATUS_TONE
-} from '@/components/sessions/terminal-session-status'
+import { TerminalSessionStatusBadge } from '@/components/sessions/terminal-session-status-badge'
 import { TerminalTimeline } from '@/components/sessions/terminal-timeline'
 import { NativeSessionControls } from '@/components/sessions/session-interaction'
 import { endedNativeHistory, nativeKey } from '@shared/native-session'
 import { Button } from '@/components/ui/button'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
-import { cn } from '@/lib/utils'
 import {
   isTerminalSessionFinished,
   terminalObservationIssue,
-  type TerminalSession,
-  type TerminalSessionStatus
+  type TerminalSession
 } from '@shared/terminal-session'
-
-const STATUS_LABEL = TERMINAL_SESSION_STATUS_LABEL
-const STATUS_TONE = TERMINAL_SESSION_STATUS_TONE
-
-export function TerminalSessionStatusBadge({
-  status,
-  className
-}: {
-  status: TerminalSessionStatus
-  className?: string
-}): React.JSX.Element {
-  return (
-    <span
-      className={cn(
-        'inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium',
-        STATUS_TONE[status],
-        className
-      )}
-    >
-      {status === 'working' && <Loader2Icon className="size-3 animate-spin" />}
-      {STATUS_LABEL[status]}
-    </span>
-  )
-}
 
 /**
  * Native chat and external status share metadata, not interaction controls.
@@ -63,6 +34,9 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
   const native = session.transport !== 'external'
   const snapshot = nativeById[session.id]
   const currentSnapshot = snapshot?.session.generation === session.generation ? snapshot : undefined
+  const currentMode = currentSnapshot?.availableModes.find(
+    (mode) => mode.id === currentSnapshot.currentModeId
+  )
   const focusedRequest = React.useRef<string | null>(null)
 
   React.useEffect(() => {
@@ -118,13 +92,14 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
           <div className="flex items-center gap-2">
             <h2 className="truncate text-sm font-semibold">{session.label}</h2>
             <TerminalSessionStatusBadge status={session.status} />
-            <span className="text-muted-foreground text-xs">
-              {native
-                ? 'In-app chat (ACP)'
-                : session.transport === 'external'
-                  ? 'External Copilot terminal'
-                  : 'Previous session'}
-            </span>
+            {!native && (
+              <span className="text-muted-foreground text-xs">
+                {session.transport === 'external' ? 'External Copilot terminal' : 'Previous session'}
+              </span>
+            )}
+            {currentMode && (
+              <span className="text-muted-foreground text-xs">{currentMode.name} mode</span>
+            )}
             {currentSnapshot?.phase &&
               ['starting', 'loading', 'cancelling', 'ending'].includes(currentSnapshot.phase) && (
                 <span className="text-muted-foreground text-xs" role="status">

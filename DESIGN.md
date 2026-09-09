@@ -190,7 +190,7 @@ floated on a soft drop-shadow.
 A slim bottom bar surfacing repo/branch/PR state and background task progress — the cockpit's primary readout. Compact `text-xs`, muted foreground, with color only for live/error status.
 
 ### Copilot Session Modes
-Settings is the only launch-mode control: In-app chat or External Copilot terminal.
+Settings is the only transport launch control: In-app chat or External Copilot terminal.
 The SQLite-backed preference defaults to ACP for new installations, migrates SDK
 preferences to ACP, and preserves an explicit external choice. It applies to new
 and resumed sessions without moving active runtimes. External sessions use compact status and
@@ -203,6 +203,12 @@ request region and Send/Queue composer. The ACP mode is explicit in the session
 header; Stop turn, End session, and Resume are distinct.
 Do not style this surface as a consumer chat app or introduce approval modals.
 
+When a plan-mode turn completes successfully, show an inline next-step region with
+the CLI-equivalent choices: build with default permissions, build on autopilot,
+build on autopilot with fleet, or exit plan mode without acting. Preserve the
+current Copilot permission configuration, keep the task and session open, and
+surface unsupported modes or commands instead of silently falling back.
+
 Permission details precede the agent's exact offered decisions, with rejection
 options before approval options. Approval must never be the
 default action of a form or receive automatic focus. Structured fields have
@@ -210,8 +216,9 @@ labels, explicit choices, typed values and visible errors; do not silently pick
 the first option. Pending request and composer drafts are shared across Session
 and Dashboard. Only explicit navigation to a request moves focus.
 
-Commands use a compact portal popover populated by the connected agent, not a
-static terminal-command list. Agent configuration remains owned by Copilot CLI.
+Typing `/` at the beginning of the composer opens a compact, keyboard-navigable
+portal autocomplete populated by the connected agent, not a static
+terminal-command list. Agent configuration remains owned by Copilot CLI.
 Unsupported actions and content fail visibly. Attachments appear as removable
 context rows. Queue state is independent
 of turn state: show pause/resume, unsent edit/reorder/remove, and delivery-unknown
@@ -219,9 +226,10 @@ warnings without presenting ambiguous delivery as a success. Stop pauses queued
 work; reopening requires explicit conversation and queue resume. Starting,
 loading, stopping and ending states must not masquerade as idle.
 
-Dashboard offers compact responses without nested cards; complex forms link to
-the exact request. To change a conversation's launch mode, end the runtime, change
-Settings, and resume. Pending requests do not transfer.
+Dashboard offers compact responses without nested cards. Plan-completion
+decisions and plan refinement are actionable in place; complex structured forms
+link to the exact Session surface. Transport changes still require ending the
+runtime, changing Settings, and resuming. Pending requests do not transfer.
 
 ## 6. Do's and Don'ts
 

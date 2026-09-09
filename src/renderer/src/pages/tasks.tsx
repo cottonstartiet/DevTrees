@@ -7,14 +7,22 @@ import {
   useSensors,
   type DragEndEvent
 } from '@dnd-kit/core'
-import { PlusIcon } from 'lucide-react'
+import { ChevronDownIcon, CircleDotIcon, ListTodoIcon, PlusIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { TaskColumn } from '@/components/task-column'
 import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
+import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import type { Repository } from '@shared/repository'
-import type { Task, TaskStatus } from '@shared/task'
+import type { Task, TaskSourceProvider, TaskStatus } from '@shared/task'
+import type { TerminalSession, TerminalSessionStatus } from '@shared/terminal-session'
 import type { Worktree } from '@shared/worktree'
 
 interface TasksPageProps {
@@ -26,6 +34,7 @@ interface TasksPageProps {
   dialogOpen: boolean
   onDialogOpenChange: (open: boolean) => void
   activeTask: Task | null
+  importProvider: TaskSourceProvider | null
   onOpenTask: (task: Task | null) => void
 }
 
@@ -35,6 +44,7 @@ interface TasksHeaderControlsProps {
   runningCount: number
   failedCount: number
   onAddTask: () => void
+  onAddFrom: (provider: TaskSourceProvider) => void
 }
 
 export function TasksHeaderControls({
@@ -42,7 +52,8 @@ export function TasksHeaderControls({
   queuedCount,
   runningCount,
   failedCount,
-  onAddTask
+  onAddTask,
+  onAddFrom
 }: TasksHeaderControlsProps): React.JSX.Element {
   const readyCount = queuedCount + failedCount
   return (
@@ -61,12 +72,36 @@ export function TasksHeaderControls({
         <PlusIcon />
         Add task
       </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" size="sm" variant="outline">
+            Add from
+            <ChevronDownIcon />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={() => onAddFrom('ado')}>
+            <ListTodoIcon />
+            Azure DevOps task
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => onAddFrom('github')}>
+            <CircleDotIcon />
+            GitHub issue
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   )
 }
 
 function isTaskStatus(value: string): value is TaskStatus {
   return (TASK_STATUSES as readonly string[]).includes(value)
+}
+
+function isNewerSession(candidate: TerminalSession, current: TerminalSession): boolean {
+  if (candidate.updatedAt !== current.updatedAt) return candidate.updatedAt > current.updatedAt
+  if (candidate.createdAt !== current.createdAt) return candidate.createdAt > current.createdAt
+  return candidate.id.localeCompare(current.id) > 0
 }
 
 export function TasksPage({
@@ -78,9 +113,31 @@ export function TasksPage({
   dialogOpen,
   onDialogOpenChange,
   activeTask,
+  importProvider,
   onOpenTask
 }: TasksPageProps): React.JSX.Element {
   const { tasks, tasksByStatus, createTask, updateTask, deleteTask } = useTaskBoard()
+  const { sessions, byId: sessionsById } = useTerminalSessions()
+  const sessionStatusByTaskId = React.useMemo(() => {
+    const newestSessionByTaskId = new Map<string, TerminalSession>()
+    for (const session of sessions) {
+      if (!session.taskId) continue
+      const current = newestSessionByTaskId.get(session.taskId)
+      if (!current || isNewerSession(session, current)) {
+        newestSessionByTaskId.set(session.taskId, session)
+      }
+    }
+
+    const statuses: Partial<Record<string, TerminalSessionStatus>> = {}
+    for (const task of tasks) {
+      const persistedSession = task.copilotSessionId
+        ? sessionsById[task.copilotSessionId]
+        : undefined
+      const session = persistedSession ?? newestSessionByTaskId.get(task.id)
+      if (session) statuses[task.id] = session.status
+    }
+    return statuses
+  }, [sessions, sessionsById, tasks])
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
@@ -118,6 +175,7 @@ export function TasksPage({
                 status={status}
                 label={TASK_STATUS_LABELS[status]}
                 tasks={tasksByStatus[status]}
+                sessionStatusByTaskId={sessionStatusByTaskId}
                 onOpenTask={onOpenTask}
                 onReviewTask={(task) => void onReviewTask(task)}
                 onDoneTask={(task) => void onMoveTask(task, 'done')}
@@ -132,6 +190,7 @@ export function TasksPage({
         open={dialogOpen}
         onOpenChange={onDialogOpenChange}
         task={activeTask}
+        importProvider={importProvider}
         repositories={repositories}
         worktreesByRepositoryId={worktreesByRepositoryId}
         onCreate={async ({
@@ -140,9 +199,12 @@ export function TasksPage({
           repository,
           worktreePath,
           worktreeBranch,
-          pendingWorktreeName
+          pendingWorktreeName,
+          sourceProvider,
+          sourceId,
+          sourceUrl
         }) => {
-          await createTask({
+          const created = await createTask({
             title,
             description,
             repositoryId: repository.id,
@@ -150,8 +212,12 @@ export function TasksPage({
             repositoryPath: repository.path,
             worktreePath,
             worktreeBranch,
-            pendingWorktreeName
+            pendingWorktreeName,
+            sourceProvider,
+            sourceId,
+            sourceUrl
           })
+          return created !== null
         }}
         onUpdate={async ({
           task,

@@ -51,8 +51,9 @@ New installations default to ACP. An existing SDK preference migrates to ACP;
 an explicit external preference is preserved. Changing this setting never moves
 a running conversation.
 
-**/ Commands** lists the commands and skills advertised by the connected agent,
-including their argument hints. The list is replaced when Copilot updates it.
+Type `/` at the beginning of the composer to list and filter the commands and
+skills advertised by the connected agent, including their argument hints. The
+list is replaced when Copilot updates it.
 Commands are sent as one text block without attachments. Unadvertised commands
 are blocked rather than accidentally sent to the model. The deliberate literal
 message option adds an explanatory text prefix so it cannot execute as a slash

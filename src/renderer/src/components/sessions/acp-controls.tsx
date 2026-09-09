@@ -2,10 +2,13 @@ import * as React from 'react'
 import { PaperclipIcon, SendIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import {
+  acpCommandDraft,
+  acpCommandQuery,
+  matchingAcpCommands,
   nativeKey,
   parsePromptAttachments,
   type PromptContent,
@@ -125,7 +128,17 @@ function fileContent(file: File): Promise<PromptContent> {
   })
 }
 
-export function AcpComposer({ session, compact }: { session: TerminalSession; compact: boolean }) {
+export function AcpComposer({
+  session,
+  compact,
+  context = 'default',
+  disabled = false
+}: {
+  session: TerminalSession
+  compact: boolean
+  context?: 'default' | 'plan-followup'
+  disabled?: boolean
+}) {
   const { nativeById, nativeDrafts, setNativeDraft, nativeBusy, promptNative, queueNative } =
     useTerminalSessions()
   const snapshot = nativeById[session.id]
@@ -134,8 +147,8 @@ export function AcpComposer({ session, compact }: { session: TerminalSession; co
   const message = String(draft.message ?? '')
   const [error, setError] = React.useState<string | null>(null)
   const [attaching, setAttaching] = React.useState(false)
-  const [commandSearch, setCommandSearch] = React.useState('')
-  const [commandsOpen, setCommandsOpen] = React.useState(false)
+  const [commandSelection, setCommandSelection] = React.useState(0)
+  const [commandsDismissed, setCommandsDismissed] = React.useState(false)
   const literal = draft.literal === true
   const setLiteral = (value: boolean): void =>
     setNativeDraft(key, (current) => ({ ...current, literal: value }))
@@ -153,13 +166,33 @@ export function AcpComposer({ session, compact }: { session: TerminalSession; co
   const attachments = parsed.content
   const phase = snapshot?.phase
   const canSubmit = Boolean(
-    snapshot && !['starting', 'loading', 'ending', 'ended', 'failed'].includes(phase ?? 'starting')
+    !disabled &&
+    snapshot &&
+    !['starting', 'loading', 'ending', 'ended', 'failed'].includes(phase ?? 'starting')
   )
   const queue = snapshot?.queue ?? []
   const pending = queue.filter((item) => !['completed', 'cancelled'].includes(item.status))
-  const commands = (snapshot?.commands ?? []).filter((command) =>
-    `${command.name} ${command.description}`.toLowerCase().includes(commandSearch.toLowerCase())
+  const commandQuery = acpCommandQuery(message)
+  const commands = React.useMemo(
+    () => matchingAcpCommands(message, snapshot?.commands ?? []),
+    [message, snapshot?.commands]
   )
+  const commandsOpen = Boolean(
+    canSubmit && snapshot?.commandsReady && commandQuery !== null && !commandsDismissed
+  )
+  const commandListId = React.useId()
+  const selectedCommandIndex =
+    commands.length > 0 ? Math.min(commandSelection, commands.length - 1) : 0
+  const selectCommand = (command: (typeof commands)[number]): void => {
+    setNativeDraft(key, (current) => ({
+      ...current,
+      message: acpCommandDraft(command),
+      literal: false
+    }))
+    setCommandsDismissed(true)
+    setCommandSelection(0)
+    setTimeout(() => composer.current?.focus(), 0)
+  }
   const send = async (): Promise<void> => {
     if (
       !canSubmit ||
@@ -174,7 +207,7 @@ export function AcpComposer({ session, compact }: { session: TerminalSession; co
   }
   return (
     <div className="space-y-3">
-      {!compact && (
+      {!compact && context === 'default' && (
         <div className="flex flex-wrap items-center gap-2">
           {snapshot?.capabilities?.sessionCapabilities?.list && (
             <Popover>
@@ -315,32 +348,122 @@ export function AcpComposer({ session, compact }: { session: TerminalSession; co
             Clear invalid attachment draft
           </Button>
         )}
-        <Textarea
-          ref={composer}
-          aria-label="Message Copilot"
-          rows={compact ? 2 : 3}
-          placeholder={
-            phase === 'idle'
-              ? 'Message Copilot or choose a /command...'
-              : 'Queue your next instruction...'
-          }
-          value={message}
-          onChange={(event) => {
-            const message = event.target.value
-            setNativeDraft(key, (current) => ({ ...current, message }))
+        <Popover
+          open={commandsOpen}
+          onOpenChange={(open) => {
+            if (!open) setCommandsDismissed(true)
           }}
-          onKeyDown={(event) => {
-            if (
-              (event.ctrlKey || event.metaKey) &&
-              event.key === 'Enter' &&
-              canSubmit &&
-              !nativeBusy[key]
-            ) {
-              event.preventDefault()
-              void send()
-            }
-          }}
-        />
+        >
+          <PopoverAnchor asChild>
+            <Textarea
+              ref={composer}
+              role="combobox"
+              aria-label={context === 'plan-followup' ? 'Reply about the plan' : 'Message Copilot'}
+              aria-autocomplete="list"
+              aria-controls={commandsOpen ? commandListId : undefined}
+              aria-expanded={commandsOpen}
+              aria-activedescendant={
+                commandsOpen && commands.length > 0
+                  ? `${commandListId}-${selectedCommandIndex}`
+                  : undefined
+              }
+              rows={compact ? 2 : 3}
+              placeholder={
+                context === 'plan-followup'
+                  ? "Answer Copilot's question or request changes to the plan.\nCtrl+Enter to submit."
+                  : `${
+                      phase === 'idle'
+                        ? 'Message Copilot or type / for commands.'
+                        : 'Queue your next instruction.'
+                    }\nCtrl+Enter to submit. Stop pauses the queue; reopening never sends saved items automatically.`
+              }
+              disabled={disabled}
+              value={message}
+              onChange={(event) => {
+                const message = event.target.value
+                setCommandSelection(0)
+                setCommandsDismissed(false)
+                setNativeDraft(key, (current) => ({ ...current, message }))
+              }}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return
+                if (
+                  (event.ctrlKey || event.metaKey) &&
+                  event.key === 'Enter' &&
+                  canSubmit &&
+                  !nativeBusy[key]
+                ) {
+                  event.preventDefault()
+                  void send()
+                  return
+                }
+                if (!commandsOpen) return
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setCommandsDismissed(true)
+                  return
+                }
+                if (commands.length === 0) return
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault()
+                  setCommandSelection((current) => (current + 1) % commands.length)
+                  return
+                }
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  setCommandSelection(
+                    (current) => (current - 1 + commands.length) % commands.length
+                  )
+                  return
+                }
+                if (
+                  (event.key === 'Enter' && !event.shiftKey && !event.altKey) ||
+                  event.key === 'Tab'
+                ) {
+                  event.preventDefault()
+                  selectCommand(commands[selectedCommandIndex])
+                }
+              }}
+            />
+          </PopoverAnchor>
+          <PopoverContent
+            align="start"
+            className="w-96 max-w-[calc(100vw-2rem)] p-2"
+            onOpenAutoFocus={(event) => event.preventDefault()}
+            onCloseAutoFocus={(event) => event.preventDefault()}
+          >
+            <div id={commandListId} role="listbox" aria-label="Copilot commands">
+              <div className="max-h-64 overflow-y-auto">
+                {commands.map((command, index) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={index === selectedCommandIndex}
+                    id={`${commandListId}-${index}`}
+                    key={command.name}
+                    className="hover:bg-accent focus-visible:ring-ring aria-selected:bg-accent block w-full rounded p-2 text-left focus-visible:ring-3 focus-visible:outline-none"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setCommandSelection(index)}
+                    onClick={() => selectCommand(command)}
+                  >
+                    <span className="block text-sm font-medium">
+                      /{command.name}{' '}
+                      <span className="text-muted-foreground font-normal">
+                        {command.input?.hint}
+                      </span>
+                    </span>
+                    <span className="text-muted-foreground block text-xs">
+                      {command.description}
+                    </span>
+                  </button>
+                ))}
+                {commands.length === 0 && (
+                  <p className="text-muted-foreground p-2 text-sm">No matching commands.</p>
+                )}
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
         {attachments.map((block, index) => (
           <div className="flex items-center gap-2 text-xs" key={index}>
             <span className="min-w-0 flex-1 truncate">
@@ -355,6 +478,7 @@ export function AcpComposer({ session, compact }: { session: TerminalSession; co
               size="icon"
               type="button"
               aria-label={`Remove attachment ${index + 1}`}
+              disabled={disabled}
               onClick={() =>
                 setNativeDraft(key, {
                   ...draft,
@@ -367,50 +491,6 @@ export function AcpComposer({ session, compact }: { session: TerminalSession; co
           </div>
         ))}
         <div className="flex flex-wrap items-center gap-2">
-          <Popover open={commandsOpen} onOpenChange={setCommandsOpen}>
-            <PopoverTrigger asChild>
-              <Button type="button" size="sm" variant="ghost" disabled={!snapshot?.commandsReady}>
-                / Commands
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-96 max-w-[90vw] p-2">
-              <input
-                className="border-input mb-2 w-full rounded border p-2 text-sm"
-                aria-label="Find a Copilot command"
-                value={commandSearch}
-                onChange={(event) => setCommandSearch(event.target.value)}
-              />
-              <div className="max-h-64 overflow-y-auto">
-                {commands.map((command) => (
-                  <button
-                    type="button"
-                    key={command.name}
-                    className="hover:bg-accent focus-visible:ring-ring block w-full rounded p-2 text-left focus-visible:ring-3"
-                    onClick={() => {
-                      setNativeDraft(key, {
-                        ...draft,
-                        message: `/${command.name}${command.input?.hint ? ' ' : ''}`
-                      })
-                      setLiteral(false)
-                      setCommandsOpen(false)
-                      setTimeout(() => composer.current?.focus(), 0)
-                    }}
-                  >
-                    <span className="block text-sm font-medium">
-                      /{command.name}{' '}
-                      <span className="font-normal text-muted-foreground">
-                        {command.input?.hint}
-                      </span>
-                    </span>
-                    <span className="text-muted-foreground block text-xs">
-                      {command.description}
-                    </span>
-                  </button>
-                ))}
-                {commands.length === 0 && <p className="p-2 text-sm">No matching commands.</p>}
-              </div>
-            </PopoverContent>
-          </Popover>
           <input
             ref={input}
             type="file"
@@ -472,9 +552,11 @@ export function AcpComposer({ session, compact }: { session: TerminalSession; co
             <SendIcon className="size-3.5" />
             {nativeBusy[key]
               ? 'Saving...'
-              : phase === 'idle' && !snapshot?.queuePaused
-                ? 'Send'
-                : 'Queue'}
+              : context === 'plan-followup'
+                ? 'Send reply'
+                : phase === 'idle' && !snapshot?.queuePaused
+                  ? 'Send'
+                  : 'Queue'}
           </Button>
         </div>
         {message.trimStart().startsWith('/') && (
@@ -482,15 +564,12 @@ export function AcpComposer({ session, compact }: { session: TerminalSession; co
             <input
               type="checkbox"
               checked={literal}
+              disabled={disabled}
               onChange={(event) => setLiteral(event.target.checked)}
             />
             Send as literal message instead of executing a command
           </label>
         )}
-        <p className="text-muted-foreground text-xs">
-          Ctrl+Enter to submit. Stop pauses the queue; reopening never sends saved items
-          automatically.
-        </p>
       </form>
     </div>
   )

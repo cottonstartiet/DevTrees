@@ -25,6 +25,10 @@ pub struct Task {
     pub queue_status: String,
     pub queue_order: i64,
     pub sort_order: i64,
+    pub execution_target_key: String,
+    pub source_provider: Option<String>,
+    pub source_id: Option<String>,
+    pub source_url: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -129,6 +133,39 @@ fn is_valid_status(status: &str) -> bool {
     matches!(status, "todo" | "in_progress" | "review" | "done")
 }
 
+fn normalize_target_part(value: &str, path: bool) -> String {
+    let mut normalized = value.trim().replace('/', "\\").to_lowercase();
+    if path {
+        while normalized.contains("\\\\") {
+            normalized = normalized.replace("\\\\", "\\");
+        }
+        while normalized.ends_with('\\') && !normalized.ends_with(":\\") {
+            normalized.pop();
+        }
+    }
+    normalized
+}
+
+pub(crate) fn execution_target_key(
+    repository_id: &str,
+    worktree_path: &str,
+    pending_worktree_name: Option<&str>,
+) -> String {
+    let repository = normalize_target_part(repository_id, false);
+    let (kind, target) = match pending_worktree_name.filter(|name| !name.trim().is_empty()) {
+        Some(name) => ("planned", normalize_target_part(name, false)),
+        None => ("path", normalize_target_part(worktree_path, true)),
+    };
+    format!(
+        "r{}:{}|{}{}:{}",
+        repository.len(),
+        repository,
+        kind,
+        target.len(),
+        target
+    )
+}
+
 fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     Ok(Task {
         id: row.get(0)?,
@@ -145,15 +182,19 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         queue_status: row.get(11)?,
         queue_order: row.get(12)?,
         sort_order: row.get(13)?,
-        created_at: row.get(14)?,
-        updated_at: row.get(15)?,
+        execution_target_key: row.get(14)?,
+        source_provider: row.get(15)?,
+        source_id: row.get(16)?,
+        source_url: row.get(17)?,
+        created_at: row.get(18)?,
+        updated_at: row.get(19)?,
     })
 }
 
 const SELECT_COLUMNS: &str = "id, title, description, status, repository_id, repository_name,
      repository_path, worktree_path, worktree_branch, pending_worktree_name,
      copilot_session_id, queue_status, queue_order, sort_order,
-     created_at, updated_at";
+     execution_target_key, source_provider, source_id, source_url, created_at, updated_at";
 
 fn load_tasks(conn: &Connection) -> rusqlite::Result<Vec<Task>> {
     let sql = format!("SELECT {SELECT_COLUMNS} FROM tasks ORDER BY status ASC, sort_order ASC");
@@ -212,6 +253,9 @@ pub async fn tasks_create(
     worktree_path: String,
     worktree_branch: Option<String>,
     pending_worktree_name: Option<String>,
+    source_provider: Option<String>,
+    source_id: Option<String>,
+    source_url: Option<String>,
 ) -> AppResult<TaskResult> {
     let trimmed_title = title.trim();
     if trimmed_title.is_empty() {
@@ -225,17 +269,55 @@ pub async fn tasks_create(
         .0
         .lock()
         .map_err(|_| AppError::msg("db mutex poisoned"))?;
+    let source = match (source_provider, source_id, source_url) {
+        (None, None, None) => None,
+        (Some(provider), Some(source_id), Some(source_url))
+            if matches!(provider.as_str(), "ado" | "github")
+                && !source_id.trim().is_empty()
+                && !source_url.trim().is_empty() =>
+        {
+            Some((provider, source_id, source_url))
+        }
+        _ => {
+            return Ok(TaskResult::err(
+                "unknown",
+                Some("Task source metadata is incomplete or invalid.".into()),
+            ))
+        }
+    };
+    if let Some((provider, source_id, _)) = &source {
+        let duplicate: Option<String> = conn
+            .query_row(
+                "SELECT id FROM tasks
+                 WHERE source_provider = ?1 AND source_id = ?2 COLLATE NOCASE",
+                rusqlite::params![provider, source_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if duplicate.is_some() {
+            return Ok(TaskResult::err(
+                "duplicate-source",
+                Some("This external item has already been added as a task.".into()),
+            ));
+        }
+    }
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
     let sort_order = next_sort_order(&conn, "todo");
     let queue_order = next_queue_order(&conn);
+    let execution_target_key = execution_target_key(
+        &repository_id,
+        &worktree_path,
+        pending_worktree_name.as_deref(),
+    );
     conn.execute(
         "INSERT INTO tasks (
             id, title, description, status, repository_id, repository_name, repository_path,
             worktree_path, worktree_branch, pending_worktree_name, copilot_session_id,
-            queue_status, queue_order, sort_order, created_at, updated_at
+            queue_status, queue_order, sort_order, execution_target_key,
+            source_provider, source_id, source_url, created_at, updated_at
          ) VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?6, ?7, ?8, ?9, NULL,
-                   'queued', ?10, ?11, ?12, ?12)",
+                   'queued', ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
         rusqlite::params![
             id,
             trimmed_title,
@@ -248,6 +330,10 @@ pub async fn tasks_create(
             pending_worktree_name,
             queue_order,
             sort_order,
+            execution_target_key,
+            source.as_ref().map(|value| &value.0),
+            source.as_ref().map(|value| &value.1),
+            source.as_ref().map(|value| &value.2),
             now
         ],
     )?;
@@ -292,10 +378,15 @@ pub async fn tasks_update(
     }
 
     let now = now_ms();
+    let execution_target_key = execution_target_key(
+        &repository_id,
+        &worktree_path,
+        pending_worktree_name.as_deref(),
+    );
     conn.execute(
         "UPDATE tasks SET title = ?2, description = ?3, repository_id = ?4, repository_name = ?5,
             repository_path = ?6, worktree_path = ?7, worktree_branch = ?8,
-            pending_worktree_name = ?9, updated_at = ?10
+            pending_worktree_name = ?9, execution_target_key = ?10, updated_at = ?11
          WHERE id = ?1",
         rusqlite::params![
             id,
@@ -307,6 +398,7 @@ pub async fn tasks_update(
             worktree_path,
             worktree_branch,
             pending_worktree_name,
+            execution_target_key,
             now
         ],
     )?;
@@ -456,6 +548,12 @@ pub async fn tasks_set_queue_status(
             Some("Invalid task queue status.".into()),
         ));
     }
+    if queue_status == "running" {
+        return Ok(TaskResult::err(
+            "unknown",
+            Some("Use the task run claim to reserve its worktree.".into()),
+        ));
+    }
     let conn = state
         .0
         .lock()
@@ -470,5 +568,164 @@ pub async fn tasks_set_queue_status(
     match load_task(&conn, &id)? {
         Some(task) => Ok(TaskResult::ok(task)),
         None => Ok(TaskResult::err("not-found", None)),
+    }
+}
+
+fn claim_task_run(conn: &mut Connection, id: &str) -> rusqlite::Result<TaskResult> {
+    let tx = conn.transaction()?;
+    let Some(task) = load_task(&tx, id)? else {
+        return Ok(TaskResult::err("not-found", None));
+    };
+    let conflicting_title: Option<String> = tx
+        .query_row(
+            "SELECT title FROM tasks
+             WHERE execution_target_key = ?1 AND id != ?2
+               AND (
+                 queue_status = 'running'
+                 OR EXISTS (
+                   SELECT 1 FROM terminal_sessions
+                   WHERE terminal_sessions.id = tasks.copilot_session_id
+                     AND terminal_sessions.status IN ('starting', 'working', 'waiting-input')
+                 )
+               )
+             ORDER BY updated_at ASC LIMIT 1",
+            rusqlite::params![task.execution_target_key, id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(title) = conflicting_title {
+        return Ok(TaskResult::err(
+            "target-busy",
+            Some(format!(
+                "\"{title}\" is already running in this repository worktree."
+            )),
+        ));
+    }
+    tx.execute(
+        "UPDATE tasks SET queue_status = 'running', updated_at = ?2 WHERE id = ?1",
+        rusqlite::params![id, now_ms()],
+    )?;
+    let claimed = load_task(&tx, id)?.expect("claimed task must still exist");
+    tx.commit()?;
+    Ok(TaskResult::ok(claimed))
+}
+
+#[tauri::command]
+pub async fn tasks_claim_run(state: State<'_, DbState>, id: String) -> AppResult<TaskResult> {
+    let mut conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("db mutex poisoned"))?;
+    Ok(claim_task_run(&mut conn, &id)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn connection() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE tasks (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL, repository_id TEXT NOT NULL, repository_name TEXT NOT NULL,
+                repository_path TEXT NOT NULL, worktree_path TEXT NOT NULL, worktree_branch TEXT,
+                pending_worktree_name TEXT, copilot_session_id TEXT, queue_status TEXT NOT NULL,
+                queue_order INTEGER NOT NULL, sort_order INTEGER NOT NULL,
+                execution_target_key TEXT NOT NULL, source_provider TEXT, source_id TEXT,
+                source_url TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE terminal_sessions (
+                id TEXT PRIMARY KEY, status TEXT NOT NULL
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    fn insert(conn: &Connection, id: &str, target: &str, queue_status: &str) {
+        conn.execute(
+            "INSERT INTO tasks
+                (id, title, status, repository_id, repository_name, repository_path,
+                 worktree_path, queue_status, queue_order, sort_order, execution_target_key,
+                 created_at, updated_at)
+             VALUES (?1, ?1, 'todo', 'repo', 'Repo', 'C:\\repo', 'C:\\repo',
+                     ?3, 0, 0, ?2, 1, 1)",
+            rusqlite::params![id, target, queue_status],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn target_keys_normalize_case_separators_and_trailing_slashes() {
+        assert_eq!(
+            execution_target_key("Repo-ID", "C:/Work/Tree/", None),
+            execution_target_key("repo-id", "c:\\work\\tree", None)
+        );
+        assert_eq!(
+            execution_target_key("Repo-ID", "C:\\Repo", Some(" Feature-One ")),
+            execution_target_key("repo-id", "ignored", Some("feature-one"))
+        );
+    }
+
+    #[test]
+    fn claim_serializes_one_target_and_allows_independent_targets() {
+        let mut conn = connection();
+        insert(&conn, "running", "target-a", "running");
+        insert(&conn, "blocked", "target-a", "queued");
+        insert(&conn, "independent", "target-b", "queued");
+
+        let blocked = claim_task_run(&mut conn, "blocked").unwrap();
+        assert!(!blocked.ok);
+        assert_eq!(blocked.error.as_deref(), Some("target-busy"));
+        let status: String = conn
+            .query_row(
+                "SELECT queue_status FROM tasks WHERE id = 'blocked'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "queued");
+
+        let independent = claim_task_run(&mut conn, "independent").unwrap();
+        assert!(independent.ok);
+    }
+
+    #[test]
+    fn completed_or_failed_tasks_release_the_target() {
+        for released_status in ["complete", "failed"] {
+            let mut conn = connection();
+            insert(&conn, "previous", "target", released_status);
+            insert(&conn, "next", "target", "queued");
+            assert!(claim_task_run(&mut conn, "next").unwrap().ok);
+        }
+    }
+
+    #[test]
+    fn active_linked_session_keeps_the_target_after_board_completion() {
+        let mut conn = connection();
+        insert(&conn, "active", "target", "complete");
+        conn.execute(
+            "UPDATE tasks SET copilot_session_id = 'session' WHERE id = 'active'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO terminal_sessions (id, status) VALUES ('session', 'working')",
+            [],
+        )
+        .unwrap();
+        insert(&conn, "next", "target", "queued");
+
+        let blocked = claim_task_run(&mut conn, "next").unwrap();
+        assert!(!blocked.ok);
+        assert_eq!(blocked.error.as_deref(), Some("target-busy"));
+
+        conn.execute(
+            "UPDATE terminal_sessions SET status = 'idle' WHERE id = 'session'",
+            [],
+        )
+        .unwrap();
+        assert!(claim_task_run(&mut conn, "next").unwrap().ok);
     }
 }

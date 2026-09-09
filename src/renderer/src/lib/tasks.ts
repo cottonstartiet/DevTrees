@@ -1,6 +1,7 @@
 import type {
   CreateTaskRequest,
   CreateTaskResult,
+  ClaimTaskRunRequest,
   DeleteTaskRequest,
   DeleteTaskResult,
   MoveTaskRequest,
@@ -40,4 +41,8 @@ export function setTaskCopilotSession(
 
 export function setTaskQueueStatus(req: SetTaskQueueStatusRequest): Promise<UpdateTaskResult> {
   return window.api.tasks.setQueueStatus(req)
+}
+
+export function claimTaskRun(req: ClaimTaskRunRequest): Promise<UpdateTaskResult> {
+  return window.api.tasks.claimRun(req)
 }

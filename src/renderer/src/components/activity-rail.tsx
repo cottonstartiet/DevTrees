@@ -14,6 +14,7 @@ import type { AppView } from '@/components/app-sidebar'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { cn } from '@/lib/utils'
 import { isTerminalSessionFinished } from '@shared/terminal-session'
+import { nativeSessionNeedsUserAction } from '@shared/native-session'
 
 const TOP_ITEMS: ReadonlyArray<{
   view: AppView
@@ -47,7 +48,7 @@ function RailButton({
   const active = view === activeView
   const accessibleLabel =
     attentionCount > 0
-      ? `${label}, ${attentionCount} running ${attentionCount === 1 ? 'session needs' : 'sessions need'} your input`
+      ? `${label}, ${attentionCount} running ${attentionCount === 1 ? 'session needs' : 'sessions need'} your action`
       : label
   return (
     <button
@@ -91,13 +92,7 @@ export function ActivityRail({
     () =>
       sessions.filter((session) => {
         if (isTerminalSessionFinished(session.status)) return false
-        if (session.status === 'waiting-input') return true
-
-        const snapshot = nativeById[session.id]
-        return (
-          snapshot?.session.generation === session.generation &&
-          (snapshot?.interactions.length ?? 0) > 0
-        )
+        return nativeSessionNeedsUserAction(session, nativeById[session.id])
       }).length,
     [nativeById, sessions]
   )

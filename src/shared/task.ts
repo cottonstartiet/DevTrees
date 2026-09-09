@@ -1,5 +1,33 @@
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done'
 export type TaskQueueStatus = 'queued' | 'running' | 'complete' | 'failed'
+export type TaskSourceProvider = 'ado' | 'github'
+
+export function taskLaunchInitialMode(status: TaskStatus): 'plan' | undefined {
+  return status === 'todo' ? 'plan' : undefined
+}
+
+type QueueTarget = {
+  executionTargetKey: string
+}
+
+export function selectTaskQueueCandidates<T extends QueueTarget>(
+  queuedTasks: readonly T[],
+  runningTasks: readonly QueueTarget[],
+  dispatchingTargets: Iterable<string>,
+  available: number
+): T[] {
+  if (available <= 0) return []
+  const occupiedTargets = new Set(runningTasks.map((task) => task.executionTargetKey))
+  for (const target of dispatchingTargets) occupiedTargets.add(target)
+  const selected: T[] = []
+  for (const task of queuedTasks) {
+    if (occupiedTargets.has(task.executionTargetKey)) continue
+    occupiedTargets.add(task.executionTargetKey)
+    selected.push(task)
+    if (selected.length === available) break
+  }
+  return selected
+}
 
 export type Task = {
   id: string
@@ -16,6 +44,10 @@ export type Task = {
   queueStatus: TaskQueueStatus
   queueOrder: number
   sortOrder: number
+  executionTargetKey: string
+  sourceProvider: TaskSourceProvider | null
+  sourceId: string | null
+  sourceUrl: string | null
   createdAt: number
   updatedAt: number
 }
@@ -29,9 +61,17 @@ export type CreateTaskRequest = {
   worktreePath: string
   worktreeBranch: string | null
   pendingWorktreeName: string | null
+  sourceProvider?: TaskSourceProvider | null
+  sourceId?: string | null
+  sourceUrl?: string | null
 }
 
-export type TaskErrorCode = 'invalid-title' | 'not-found' | 'unknown'
+export type TaskErrorCode =
+  | 'invalid-title'
+  | 'duplicate-source'
+  | 'not-found'
+  | 'target-busy'
+  | 'unknown'
 
 export type CreateTaskResult =
   | { ok: true; task: Task }
@@ -80,6 +120,10 @@ export type SetTaskQueueStatusRequest = {
   queueStatus: TaskQueueStatus
 }
 
+export type ClaimTaskRunRequest = {
+  id: string
+}
+
 export const TaskIpcChannels = {
   List: 'tasks:list',
   Create: 'tasks:create',
@@ -87,5 +131,6 @@ export const TaskIpcChannels = {
   Move: 'tasks:move',
   Delete: 'tasks:delete',
   setCopilotSession: 'tasks:set-copilot-session',
-  setQueueStatus: 'tasks:set-queue-status'
+  setQueueStatus: 'tasks:set-queue-status',
+  claimRun: 'tasks:claim-run'
 } as const

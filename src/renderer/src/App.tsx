@@ -33,7 +33,7 @@ import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
 import { TasksPage, TasksHeaderControls } from '@/pages/tasks'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Repository } from '@shared/repository'
-import type { Task } from '@shared/task'
+import type { Task, TaskSourceProvider } from '@shared/task'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
 
 function worktreeLabel(path: string): string {
@@ -47,6 +47,7 @@ interface TasksPageContainerProps {
   dialogOpen: boolean
   onDialogOpenChange: (open: boolean) => void
   activeTask: Task | null
+  importProvider: TaskSourceProvider | null
   onOpenTask: (task: Task | null) => void
   queue: TaskQueueController
 }
@@ -57,6 +58,7 @@ function TasksPageContainer({
   dialogOpen,
   onDialogOpenChange,
   activeTask,
+  importProvider,
   onOpenTask,
   queue
 }: TasksPageContainerProps): React.JSX.Element {
@@ -70,6 +72,7 @@ function TasksPageContainer({
       dialogOpen={dialogOpen}
       onDialogOpenChange={onDialogOpenChange}
       activeTask={activeTask}
+      importProvider={importProvider}
       onOpenTask={onOpenTask}
     />
   )
@@ -262,15 +265,32 @@ function AppShell(): React.JSX.Element {
   const { tasks: allTasks } = useTaskBoard()
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [activeTaskForDialog, setActiveTaskForDialog] = useState<Task | null>(null)
+  const [taskImportProvider, setTaskImportProvider] = useState<TaskSourceProvider | null>(null)
 
   const handleOpenAddTaskDialog = useCallback((): void => {
     setActiveTaskForDialog(null)
+    setTaskImportProvider(null)
+    setTaskDialogOpen(true)
+  }, [])
+
+  const handleOpenTaskImportDialog = useCallback((provider: TaskSourceProvider): void => {
+    setActiveTaskForDialog(null)
+    setTaskImportProvider(provider)
     setTaskDialogOpen(true)
   }, [])
 
   const handleOpenTaskDialog = useCallback((task: Task | null): void => {
     setActiveTaskForDialog(task)
+    setTaskImportProvider(null)
     setTaskDialogOpen(true)
+  }, [])
+
+  const handleTaskDialogOpenChange = useCallback((open: boolean): void => {
+    setTaskDialogOpen(open)
+    if (!open) {
+      setActiveTaskForDialog(null)
+      setTaskImportProvider(null)
+    }
   }, [])
 
   const headerTitle =
@@ -642,6 +662,7 @@ function AppShell(): React.JSX.Element {
                           runningCount={taskQueue.runningCount}
                           failedCount={taskQueue.failedCount}
                           onAddTask={handleOpenAddTaskDialog}
+                          onAddFrom={handleOpenTaskImportDialog}
                         />
                       )}
                     </header>
@@ -661,8 +682,9 @@ function AppShell(): React.JSX.Element {
                         repositories={repositories}
                         worktreesByRepositoryId={worktreesByRepositoryId}
                         dialogOpen={taskDialogOpen}
-                        onDialogOpenChange={setTaskDialogOpen}
+                        onDialogOpenChange={handleTaskDialogOpenChange}
                         activeTask={activeTaskForDialog}
+                        importProvider={taskImportProvider}
                         onOpenTask={handleOpenTaskDialog}
                         queue={taskQueue}
                       />

@@ -3,9 +3,11 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { FolderGit2Icon, GitBranchIcon, LoaderCircleIcon } from 'lucide-react'
 
+import { TerminalSessionStatusBadge } from '@/components/sessions/terminal-session-status-badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { Task } from '@shared/task'
+import type { TerminalSessionStatus } from '@shared/terminal-session'
 
 function worktreeLabel(path: string): string {
   const idx = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
@@ -14,12 +16,14 @@ function worktreeLabel(path: string): string {
 
 export function TaskCard({
   task,
+  sessionStatus,
   onOpen,
   onReview,
   onDone,
   canReview
 }: {
   task: Task
+  sessionStatus: TerminalSessionStatus | undefined
   onOpen: (task: Task) => void
   onReview: (task: Task) => void
   onDone: (task: Task) => void
@@ -70,10 +74,17 @@ export function TaskCard({
             ) : null}
             {queueLabel}
           </span>
+        ) : task.status === 'in_progress' && sessionStatus ? (
+          <TerminalSessionStatusBadge status={sessionStatus} className="rounded px-1.5" />
         ) : null}
       </div>
       {task.description ? (
         <p className="text-muted-foreground line-clamp-2 text-xs break-words">{task.description}</p>
+      ) : null}
+      {task.sourceProvider && task.sourceId ? (
+        <p className="text-muted-foreground truncate text-xs">
+          {task.sourceProvider === 'ado' ? 'Azure DevOps' : 'GitHub'} · {task.sourceId}
+        </p>
       ) : null}
       <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
         <span className="inline-flex items-center gap-1">
@@ -89,9 +100,9 @@ export function TaskCard({
               : (task.worktreeBranch ?? worktreeLabel(task.worktreePath))}
         </span>
       </div>
-      {task.status === 'in_progress' ? (
+      {task.status === 'in_progress' || task.status === 'review' ? (
         <div className="mt-1 flex flex-wrap gap-2">
-          {canReview ? (
+          {task.status === 'in_progress' && canReview ? (
             <Button
               type="button"
               size="sm"

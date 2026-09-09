@@ -8,10 +8,15 @@ import {
 } from '@/contexts/terminal-sessions-context'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { buildTaskCodeReviewPrompt } from '@/lib/copilot-task-review-prompt'
-import { setTaskCopilotSession } from '@/lib/tasks'
+import { claimTaskRun, setTaskCopilotSession } from '@/lib/tasks'
 import { listWorktreesForRepository } from '@/lib/worktrees'
 import type { Repository } from '@shared/repository'
-import type { Task, TaskStatus } from '@shared/task'
+import {
+  selectTaskQueueCandidates,
+  taskLaunchInitialMode,
+  type Task,
+  type TaskStatus
+} from '@shared/task'
 import type { TaskQueueSettings } from '@shared/settings'
 import type { WorktreeStatusResult } from '@shared/worktree'
 
@@ -49,7 +54,7 @@ export function useTaskQueue({
   const { byId: terminalSessionsById, observationNow } = useTerminalSessions()
   const launchCopilot = useCopilotLauncher()
   const [settings, setSettings] = React.useState<TaskQueueSettings>(DEFAULT_SETTINGS)
-  const dispatchingRef = React.useRef(new Set<string>())
+  const dispatchingRef = React.useRef(new Map<string, string>())
   const reconcilingRef = React.useRef(new Set<string>())
   const settlingRef = React.useRef(new Set<string>())
 
@@ -160,24 +165,20 @@ export function useTaskQueue({
   const executeTask = React.useCallback(
     async (task: Task, foreground: boolean): Promise<void> => {
       if (dispatchingRef.current.has(task.id)) return
-      dispatchingRef.current.add(task.id)
+      dispatchingRef.current.set(task.id, task.executionTargetKey)
+      let claimed = false
       const failExecution = async (): Promise<void> => {
+        if (!claimed) return
         if (task.status === 'todo') await moveTask(task.id, 'todo')
         await setTaskQueueStatus(task.id, 'failed')
       }
       try {
-        const queuedTask = await setTaskQueueStatus(task.id, 'running')
-        if (!queuedTask) return
-
-        if (task.status === 'todo') {
-          await moveTask(task.id, 'in_progress')
-        }
-
-        const resolvedTask = await materializeTaskWorktree(queuedTask)
+        const resolvedTask = await materializeTaskWorktree(task)
         if (!resolvedTask) {
-          await failExecution()
+          await setTaskQueueStatus(task.id, 'failed')
           return
         }
+        dispatchingRef.current.set(task.id, resolvedTask.executionTargetKey)
 
         const linkedId = resolvedTask.copilotSessionId
         const linkedTerminal = linkedId ? terminalSessionsById[linkedId] : undefined
@@ -202,32 +203,49 @@ export function useTaskQueue({
         }
 
         if (!(await ensureWorktree(resolvedTask))) {
-          await failExecution()
+          await setTaskQueueStatus(task.id, 'failed')
           return
         }
+
+        const claim = await claimTaskRun({ id: resolvedTask.id })
+        if (!claim.ok) {
+          if (claim.error === 'target-busy') {
+            if (foreground)
+              toast.info(claim.message ?? 'Another task is already using this worktree.')
+            return
+          }
+          toast.error(claim.message ?? 'Could not reserve this worktree for the task.')
+          return
+        }
+        claimed = true
+        setTaskLocal(claim.task)
+
+        if (task.status === 'todo') {
+          await moveTask(task.id, 'in_progress')
+        }
+
+        const claimedTask = { ...resolvedTask, queueStatus: 'running' as const }
 
         const isReview = task.status === 'review'
         const prompt = isReview
           ? buildTaskCodeReviewPrompt({
-              folderPath: resolvedTask.worktreePath,
-              taskTitle: resolvedTask.title,
-              taskDescription: resolvedTask.description,
-              repositoryName: resolvedTask.repositoryName,
-              branch: resolvedTask.worktreeBranch
+              folderPath: claimedTask.worktreePath,
+              taskTitle: claimedTask.title,
+              taskDescription: claimedTask.description,
+              repositoryName: claimedTask.repositoryName,
+              branch: claimedTask.worktreeBranch
             })
-          : [resolvedTask.title.trim(), resolvedTask.description.trim()]
-              .filter(Boolean)
-              .join('\n\n')
+          : [claimedTask.title.trim(), claimedTask.description.trim()].filter(Boolean).join('\n\n')
         const result = await launchCopilot({
-          folderPath: resolvedTask.worktreePath,
+          folderPath: claimedTask.worktreePath,
           prompt,
-          initialMode: isReview ? undefined : 'plan',
+          initialMode: taskLaunchInitialMode(task.status),
           label: isReview
-            ? `Review: ${resolvedTask.title.trim() || resolvedTask.repositoryName}`
-            : resolvedTask.title.trim() || resolvedTask.repositoryName,
-          branch: resolvedTask.worktreeBranch ?? undefined,
-          repository: resolvedTask.repositoryName,
-          taskId: resolvedTask.id,
+            ? `Review: ${claimedTask.title.trim() || claimedTask.repositoryName}`
+            : claimedTask.title.trim() || claimedTask.repositoryName,
+          branch: claimedTask.worktreeBranch ?? undefined,
+          repository: claimedTask.repositoryName,
+          taskId: claimedTask.id,
           background: !foreground
         })
 
@@ -243,14 +261,14 @@ export function useTaskQueue({
         }
 
         const runningTask = {
-          ...resolvedTask,
+          ...claimedTask,
           status: isReview ? ('review' as const) : ('in_progress' as const),
           copilotSessionId: result.sessionId,
           queueStatus: 'running' as const
         }
         setTaskLocal(runningTask)
         const linked = await setTaskCopilotSession({
-          id: resolvedTask.id,
+          id: claimedTask.id,
           copilotSessionId: result.sessionId
         })
         if (linked.ok) setTaskLocal({ ...linked.task, queueStatus: 'running' })
@@ -258,8 +276,8 @@ export function useTaskQueue({
 
         toast.success(
           isReview
-            ? `Code review started for "${resolvedTask.title}".`
-            : `Copilot started for "${resolvedTask.title}".`
+            ? `Code review started for "${claimedTask.title}".`
+            : `Copilot started for "${claimedTask.title}".`
         )
       } catch (error) {
         console.error('[task-queue] task execution failed:', error)
@@ -309,10 +327,16 @@ export function useTaskQueue({
     if (settings.mode !== 'automatic') return
     const available = settings.concurrency - runningTasks.length - dispatchingRef.current.size
     if (available <= 0) return
-    for (const task of queuedTasks.slice(0, available)) {
+    const selected = selectTaskQueueCandidates(
+      queuedTasks,
+      runningTasks,
+      dispatchingRef.current.values(),
+      available
+    )
+    for (const task of selected) {
       void executeTask(task, false)
     }
-  }, [executeTask, queuedTasks, runningTasks.length, settings])
+  }, [executeTask, queuedTasks, runningTasks, settings])
 
   React.useEffect(() => {
     for (const task of runningTasks) {
@@ -389,6 +413,23 @@ export function useTaskQueue({
     return false
   }, [runningTasks.length, settings.concurrency])
 
+  const hasAvailableTarget = React.useCallback(
+    (task: Task): boolean => {
+      const busy =
+        runningTasks.some(
+          (running) =>
+            running.id !== task.id && running.executionTargetKey === task.executionTargetKey
+        ) ||
+        Array.from(dispatchingRef.current.entries()).some(
+          ([id, target]) => id !== task.id && target === task.executionTargetKey
+        )
+      if (!busy) return true
+      toast.info('Another task is already using this repository worktree.')
+      return false
+    },
+    [runningTasks]
+  )
+
   const handleMoveTask = React.useCallback(
     async (task: Task, status: TaskStatus, beforeId?: string | null): Promise<void> => {
       const startsTask =
@@ -398,6 +439,7 @@ export function useTaskQueue({
 
       if (startsTask) {
         if (!hasAvailableSlot()) return
+        if (!hasAvailableTarget(task)) return
         await executeTask(task, true)
         return
       }
@@ -408,6 +450,7 @@ export function useTaskQueue({
           return
         }
         if (!hasAvailableSlot()) return
+        if (!hasAvailableTarget(task)) return
         await moveTask(task.id, 'review', beforeId)
         await executeTask({ ...task, status: 'review' }, true)
         return
@@ -415,7 +458,7 @@ export function useTaskQueue({
 
       await moveTask(task.id, status, beforeId)
     },
-    [canReviewTask, executeTask, hasAvailableSlot, moveTask, settings.mode]
+    [canReviewTask, executeTask, hasAvailableSlot, hasAvailableTarget, moveTask, settings.mode]
   )
 
   const reviewTask = React.useCallback(

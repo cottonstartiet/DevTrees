@@ -16,6 +16,7 @@ mod session_attention;
 mod session_interactions;
 mod settings;
 mod system;
+mod task_imports;
 mod tasks;
 mod terminal_sessions;
 mod worktrees;
@@ -141,6 +142,9 @@ pub fn run() {
             tasks::tasks_delete,
             tasks::tasks_set_copilot_session,
             tasks::tasks_set_queue_status,
+            tasks::tasks_claim_run,
+            task_imports::ado_task_imports,
+            task_imports::github_task_imports,
             terminal_sessions::terminal_sessions_list,
             terminal_sessions::terminal_sessions_start,
             terminal_sessions::terminal_sessions_history,
@@ -148,6 +152,7 @@ pub fn run() {
             terminal_sessions::terminal_sessions_forget,
             copilot_acp_sessions::native_session_snapshot,
             copilot_acp_sessions::native_session_respond,
+            copilot_acp_sessions::acp_session_plan_transition,
             copilot_acp_sessions::native_session_cancel,
             copilot_acp_sessions::native_session_end,
             copilot_acp_sessions::acp_session_enqueue,

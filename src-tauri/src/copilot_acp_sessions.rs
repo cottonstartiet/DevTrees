@@ -33,7 +33,7 @@ use crate::{
     },
     terminal_sessions::{self, StartTerminalSessionRequest, TerminalSessionResult},
 };
-use state::{QueuedPrompt, Snapshot, State};
+use state::{QueuedPrompt, SessionMode, Snapshot, State};
 
 fn error(value: impl std::fmt::Display) -> AppError {
     AppError::msg(value.to_string())
@@ -414,6 +414,15 @@ fn protocol_error(e: impl std::fmt::Display) -> acp::Error {
     acp::Error::internal_error().data(e.to_string())
 }
 
+fn permission_outcome(answer: InteractionAnswer) -> acp::RequestPermissionOutcome {
+    match answer {
+        InteractionAnswer::Permission { action } => {
+            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(action))
+        }
+        _ => acp::RequestPermissionOutcome::Cancelled,
+    }
+}
+
 async fn permission(
     owner: Arc<Managed>,
     request: acp::RequestPermissionRequest,
@@ -446,12 +455,7 @@ async fn permission(
             detail: serde_json::to_string_pretty(&value["toolCall"]).unwrap_or_default(),
         })
         .await;
-    match answer {
-        InteractionAnswer::Permission { action } => acp::RequestPermissionResponse::new(
-            acp::RequestPermissionOutcome::Selected(acp::SelectedPermissionOutcome::new(action)),
-        ),
-        _ => acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled),
-    }
+    acp::RequestPermissionResponse::new(permission_outcome(answer))
 }
 
 async fn elicitation(
@@ -567,6 +571,7 @@ async fn dispatch_queue(owner: Arc<Managed>) -> AppResult<()> {
                     state.snapshot.queue[index].status = "dispatching".into();
                     state.active_prompt = Some(item.id.clone());
                     state.snapshot.phase = "working".into();
+                    state.snapshot.plan_transition_available = false;
                     state.changed();
                     owner.persist_queue(&state)?;
                     state.begin_prompt(&item);
@@ -827,23 +832,23 @@ async fn run_inner(
             let actual_id = req.resume_session_id.clone()
                 .or_else(|| setup["sessionId"].as_str().map(str::to_owned))
                 .ok_or_else(|| protocol_error("Copilot did not return a session ID."))?;
+            let available_modes: Vec<SessionMode> = setup["modes"]["availableModes"]
+                .as_array()
+                .map(|modes| serde_json::from_value(Value::Array(modes.clone())))
+                .transpose()
+                .map_err(|e| protocol_error(format!("Copilot returned invalid session modes: {e}")))?
+                .unwrap_or_default();
+            let mut current_mode_id = setup["modes"]["currentModeId"].as_str().map(str::to_owned);
             if req.resume_session_id.is_none() {
                 if let Some(initial_mode) = req.initial_mode.as_ref() {
                     let requested = initial_mode.as_str();
-                    let modes = setup["modes"]["availableModes"]
-                        .as_array()
-                        .ok_or_else(|| protocol_error("Copilot did not advertise session modes."))?;
-                    let mode_id = modes
+                    let mode_id = available_modes
                         .iter()
                         .find(|mode| {
-                            mode["id"]
-                                .as_str()
-                                .is_some_and(|id| id.eq_ignore_ascii_case(requested))
-                                || mode["name"]
-                                    .as_str()
-                                    .is_some_and(|name| name.eq_ignore_ascii_case(requested))
+                            mode.id.eq_ignore_ascii_case(requested)
+                                || mode.name.eq_ignore_ascii_case(requested)
                         })
-                        .and_then(|mode| mode["id"].as_str())
+                        .map(|mode| mode.id.as_str())
                         .ok_or_else(|| {
                             protocol_error(format!(
                                 "Copilot does not support the requested {requested} mode."
@@ -862,6 +867,7 @@ async fn run_inner(
                         .await
                         .map_err(protocol_error)??;
                     }
+                    current_mode_id = Some(mode_id.into());
                 }
             }
             let previous_id = connected_owner.id().map_err(protocol_error)?;
@@ -873,6 +879,8 @@ async fn run_inner(
                     let mut state = connected_owner.state.lock().map_err(protocol_error)?;
                     state.snapshot.session.id = actual_id.clone();
                     state.snapshot.replaces_id = Some(previous_id.clone());
+                    state.snapshot.available_modes = available_modes.clone();
+                    state.snapshot.current_mode_id = current_mode_id.clone();
                 }
                 let manager = connected_owner.app.state::<SessionManager>();
                 let mut sessions = manager.sessions.lock().map_err(protocol_error)?;
@@ -882,6 +890,8 @@ async fn run_inner(
             connected_owner.restore_queue().map_err(protocol_error)?;
             {
                 let mut state = connected_owner.state.lock().map_err(protocol_error)?;
+                state.snapshot.available_modes = available_modes;
+                state.snapshot.current_mode_id = current_mode_id;
                 state.snapshot.phase = if req.resume_session_id.is_some() { "idle" } else { "starting" }.into();
                 state.snapshot.session.last_activity = "Ready for your instruction".into();
                 state.changed();
@@ -998,6 +1008,75 @@ fn enqueue(owner: &Managed, id: String, prompt: Vec<Value>, literal: bool) -> Ap
     Ok(())
 }
 
+fn restore_plan_transition(owner: &Managed) {
+    if let Ok(mut state) = owner.state.lock() {
+        if state.current_mode_matches("plan")
+            && state.snapshot.phase == "idle"
+            && state.snapshot.interactions.is_empty()
+        {
+            state.snapshot.plan_transition_available = true;
+            state.changed();
+        }
+    }
+    if let Err(e) = owner.publish() {
+        eprintln!("[ACP] restoring plan transition: {e}");
+    }
+}
+
+async fn set_session_mode(owner: &Managed, requested: &str) -> AppResult<()> {
+    let mode_id = {
+        let state = owner.state.lock().map_err(error)?;
+        state.mode_id(requested).map(str::to_owned).ok_or_else(|| {
+            error(format!(
+                "Copilot does not support the requested {requested} mode."
+            ))
+        })?
+    };
+    let request: acp::SetSessionModeRequest = serde_json::from_value(json!({
+        "sessionId": owner.id()?,
+        "modeId": &mode_id
+    }))?;
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        owner.connection()?.send_request(request).block_task(),
+    )
+    .await
+    .map_err(|_| error("Copilot did not confirm the mode change."))?
+    .map_err(error)?;
+    owner.state.lock().map_err(error)?.set_current_mode(mode_id);
+    Ok(())
+}
+
+fn stage_plan_continuation(owner: &Managed, fleet: bool) -> AppResult<()> {
+    let _write = owner.queue_write.lock().map_err(error)?;
+    let mut state = owner.state.lock().map_err(error)?;
+    let previous = state.snapshot.queue.clone();
+    let prompts = if fleet {
+        vec!["/fleet", "Implement the approved plan."]
+    } else {
+        vec!["Implement the approved plan."]
+    };
+    for prompt in prompts {
+        if let Err(e) = state.stage_prompt(
+            uuid::Uuid::new_v4().to_string(),
+            vec![json!({"type":"text","text":prompt})],
+            false,
+        ) {
+            state.snapshot.queue = previous;
+            return Err(e);
+        }
+    }
+    if let Err(e) = owner.persist_queue(&state) {
+        state.snapshot.queue = previous;
+        return Err(e);
+    }
+    state.changed();
+    drop(state);
+    owner.publish()?;
+    owner.wake.notify_one();
+    Ok(())
+}
+
 pub async fn start(
     app: AppHandle,
     req: StartTerminalSessionRequest,
@@ -1055,6 +1134,72 @@ pub async fn start(
 #[tauri::command]
 pub fn native_session_snapshot(app: AppHandle, target: Target) -> AppResult<Snapshot> {
     get(&app, &target)?.publish()
+}
+
+#[tauri::command]
+pub async fn acp_session_plan_transition(
+    app: AppHandle,
+    target: Target,
+    action: String,
+) -> AppResult<Snapshot> {
+    let owner = get(&app, &target)?;
+    if owner.stopping.load(Ordering::SeqCst) {
+        return Err(error("The session is stopping."));
+    }
+    {
+        let mut state = owner.state.lock().map_err(error)?;
+        if !state.snapshot.plan_transition_available
+            || !state.current_mode_matches("plan")
+            || !state.snapshot.interactions.is_empty()
+        {
+            return Err(error("This plan transition is no longer available."));
+        }
+        if !matches!(
+            action.as_str(),
+            "interactive" | "autopilot" | "autopilot_fleet" | "exit_only"
+        ) {
+            return Err(error("Unsupported plan transition."));
+        }
+        if action == "autopilot_fleet"
+            && !state.snapshot.commands.iter().any(|command| {
+                command["name"]
+                    .as_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("fleet"))
+            })
+        {
+            return Err(error(
+                "This Copilot session does not advertise the /fleet command.",
+            ));
+        }
+        state.snapshot.plan_transition_available = false;
+        state.changed();
+    }
+    owner.publish()?;
+
+    let requested_mode = if matches!(action.as_str(), "autopilot" | "autopilot_fleet") {
+        "autopilot"
+    } else {
+        "interactive"
+    };
+    if let Err(e) = set_session_mode(&owner, requested_mode).await {
+        restore_plan_transition(&owner);
+        return Err(e);
+    }
+    if action != "exit_only" {
+        if let Err(e) = stage_plan_continuation(&owner, action == "autopilot_fleet") {
+            if let Err(mode_error) = set_session_mode(&owner, "plan").await {
+                owner.fail(format!(
+                    "Could not queue implementation after changing mode: {e}. Restoring plan mode also failed: {mode_error}"
+                ));
+                return Err(e);
+            }
+            restore_plan_transition(&owner);
+            return Err(e);
+        }
+    } else {
+        owner.publish()?;
+    }
+    owner.publish()
 }
 
 #[tauri::command]

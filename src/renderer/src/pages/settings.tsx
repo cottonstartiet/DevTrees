@@ -150,7 +150,7 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
           Task queue
         </h1>
         <p className="text-muted-foreground text-sm">
-          Add any number of tasks and control how many To Do and Review tasks can run together.
+          Control global task concurrency while keeping each repository worktree conflict-free.
         </p>
       </div>
 
@@ -199,7 +199,8 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
             Concurrency
           </label>
           <p id="task-queue-concurrency-help" className="text-muted-foreground text-xs leading-5">
-            Maximum To Do work and code reviews running at the same time. The default is 2.
+            Maximum tasks running across all worktrees. Tasks for the same worktree run one at a
+            time. The default is 2.
           </p>
         </div>
         <Input
@@ -226,7 +227,7 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
         <p className="text-muted-foreground max-w-prose text-xs leading-5">
           In Manual mode, moving a To Do task to In Progress starts its Copilot session; moving an
           In Progress task to Review starts its code review. These starts still respect the
-          concurrency limit.
+          concurrency limit and wait for the selected worktree to be free.
         </p>
       </div>
 

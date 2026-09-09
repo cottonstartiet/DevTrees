@@ -146,7 +146,7 @@ export function TerminalSessionsProvider({
       statusRef.current[session.id] = session.status
 
       const message = notify ? notification(session, previous) : null
-      if (message?.kind === 'attention') {
+      if (message?.kind === 'attention' && session.transport === 'external') {
         notifyUserActionWhenBackground(message.title, message.description)
       }
 

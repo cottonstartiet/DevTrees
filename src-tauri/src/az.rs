@@ -136,6 +136,7 @@ pub fn classify_az_generic_failure(stderr: &str) -> Option<(String, String)> {
             Regex::new(r"(?i)azure-devops.*not installed").unwrap(),
             Regex::new(r"(?i)'repos' is misspelled").unwrap(),
             Regex::new(r"(?i)'pipelines' is misspelled").unwrap(),
+            Regex::new(r"(?i)'boards' is misspelled").unwrap(),
         ]
     });
     if extension_missing.iter().any(|re| re.is_match(stderr)) {

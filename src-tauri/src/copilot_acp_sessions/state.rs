@@ -27,6 +27,13 @@ pub struct QueuedPrompt {
     pub error: Option<String>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMode {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -44,6 +51,9 @@ pub struct Snapshot {
     pub phase: String,
     pub replaces_id: Option<String>,
     pub usage: Option<Value>,
+    pub available_modes: Vec<SessionMode>,
+    pub current_mode_id: Option<String>,
+    pub plan_transition_available: bool,
 }
 
 pub struct State {
@@ -107,6 +117,9 @@ impl State {
                 phase: "starting".into(),
                 replaces_id: None,
                 usage: None,
+                available_modes: Vec::new(),
+                current_mode_id: None,
+                plan_transition_available: false,
             },
             next_seq: 0,
             messages: HashMap::new(),
@@ -149,6 +162,39 @@ impl State {
             }
         };
         self.dirty = true;
+    }
+
+    pub fn mode_id(&self, expected: &str) -> Option<&str> {
+        self.snapshot
+            .available_modes
+            .iter()
+            .find(|mode| {
+                mode.id.eq_ignore_ascii_case(expected) || mode.name.eq_ignore_ascii_case(expected)
+            })
+            .map(|mode| mode.id.as_str())
+    }
+
+    pub fn current_mode_matches(&self, expected: &str) -> bool {
+        self.snapshot
+            .current_mode_id
+            .as_deref()
+            .and_then(|current| {
+                self.snapshot
+                    .available_modes
+                    .iter()
+                    .find(|mode| mode.id.eq_ignore_ascii_case(current))
+            })
+            .is_some_and(|mode| {
+                mode.id.eq_ignore_ascii_case(expected) || mode.name.eq_ignore_ascii_case(expected)
+            })
+    }
+
+    pub fn set_current_mode(&mut self, mode_id: String) {
+        self.snapshot.current_mode_id = Some(mode_id);
+        if !self.current_mode_matches("plan") {
+            self.snapshot.plan_transition_available = false;
+        }
+        self.changed();
     }
 
     pub fn notice(&mut self, text: impl Into<String>, error: bool) {
@@ -286,6 +332,7 @@ impl State {
                 "The queue exceeds 32 MiB. Remove an item before adding more attachments.",
             ));
         }
+        self.snapshot.plan_transition_available = false;
         Ok(true)
     }
 
@@ -330,7 +377,15 @@ impl State {
                     .unwrap_or_default();
                 self.snapshot.commands_ready = true;
             }
-            "config_option_update" | "current_mode_update" => {}
+            "config_option_update" => {}
+            "current_mode_update" => {
+                if let Some(mode_id) = update["currentModeId"]
+                    .as_str()
+                    .or_else(|| update["modeId"].as_str())
+                {
+                    self.set_current_mode(mode_id.into());
+                }
+            }
             "usage_update" => self.snapshot.usage = Some(update.clone()),
             "session_info_update" => {
                 if let Some(title) = update["title"].as_str() {
@@ -524,6 +579,14 @@ impl State {
         if self.snapshot.phase != "ending" {
             self.snapshot.phase = "idle".into();
         }
+        self.snapshot.plan_transition_available = stop == "end_turn"
+            && self.current_mode_matches("plan")
+            && self.snapshot.interactions.is_empty()
+            && !self
+                .snapshot
+                .queue
+                .iter()
+                .any(|item| item.status == "queued");
         self.snapshot.session.last_activity = format!("Turn finished: {stop}");
         self.changed();
     }
@@ -552,6 +615,119 @@ mod tests {
             observed_at: None,
             observation_error: None,
         })
+    }
+
+    fn modes(state: &mut State, current: &str) {
+        state.snapshot.available_modes = vec![
+            SessionMode {
+                id: "interactive".into(),
+                name: "Interactive".into(),
+            },
+            SessionMode {
+                id: "plan".into(),
+                name: "Plan".into(),
+            },
+            SessionMode {
+                id: "autopilot".into(),
+                name: "Autopilot".into(),
+            },
+        ];
+        state.snapshot.current_mode_id = Some(current.into());
+    }
+
+    #[test]
+    fn successful_plan_turn_offers_transition() {
+        let mut state = state();
+        modes(&mut state, "plan");
+        state.turn_finished("end_turn");
+        assert!(state.snapshot.plan_transition_available);
+
+        state
+            .stage_prompt(
+                "next".into(),
+                vec![json!({"type":"text","text":"Continue"})],
+                false,
+            )
+            .unwrap();
+        assert!(!state.snapshot.plan_transition_available);
+        assert!(state.current_mode_matches("plan"));
+    }
+
+    #[test]
+    fn cancelled_or_interactive_turn_does_not_offer_transition() {
+        let mut state = state();
+        modes(&mut state, "plan");
+        state.turn_finished("cancelled");
+        assert!(!state.snapshot.plan_transition_available);
+
+        state.set_current_mode("interactive".into());
+        state.turn_finished("end_turn");
+        assert!(!state.snapshot.plan_transition_available);
+    }
+
+    #[test]
+    fn queued_follow_up_suppresses_plan_transition() {
+        let mut state = state();
+        modes(&mut state, "plan");
+        state
+            .stage_prompt(
+                "active".into(),
+                vec![json!({"type":"text","text":"Create a plan"})],
+                false,
+            )
+            .unwrap();
+        state.active_prompt = Some("active".into());
+        state
+            .stage_prompt(
+                "next".into(),
+                vec![json!({"type":"text","text":"Revise it"})],
+                false,
+            )
+            .unwrap();
+
+        state.turn_finished("end_turn");
+        assert!(!state.snapshot.plan_transition_available);
+    }
+
+    #[test]
+    fn pending_input_suppresses_plan_transition() {
+        let mut state = state();
+        modes(&mut state, "plan");
+        state.snapshot.interactions.push(NativeInteraction {
+            id: "input".into(),
+            created_at: 0,
+            request: crate::session_interactions::InteractionRequest::Elicitation {
+                message: "Choose a scope".into(),
+                schema: Some(json!({"properties":{"scope":{"type":"string"}}})),
+                url: None,
+                unsupported: None,
+            },
+        });
+
+        state.turn_finished("end_turn");
+        assert!(!state.snapshot.plan_transition_available);
+    }
+
+    #[test]
+    fn current_mode_updates_clear_stale_plan_transition() {
+        let mut state = state();
+        modes(&mut state, "plan");
+        state.snapshot.plan_transition_available = true;
+        state.ingest(json!({
+            "sessionUpdate":"current_mode_update",
+            "currentModeId":"autopilot"
+        }));
+        assert_eq!(state.snapshot.current_mode_id.as_deref(), Some("autopilot"));
+        assert!(!state.snapshot.plan_transition_available);
+    }
+
+    #[test]
+    fn plan_mode_resolves_by_id_or_display_name() {
+        let mut state = state();
+        modes(&mut state, "interactive");
+        assert_eq!(state.mode_id("plan"), Some("plan"));
+        assert_eq!(state.mode_id("Plan"), Some("plan"));
+        assert_eq!(state.mode_id("unsupported"), None);
     }
 
     #[test]

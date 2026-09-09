@@ -36,6 +36,10 @@ const SCHEMA: &str = "
             CHECK (queue_status IN ('queued', 'running', 'complete', 'failed')),
         queue_order           INTEGER NOT NULL DEFAULT 0,
         sort_order            INTEGER NOT NULL DEFAULT 0,
+        execution_target_key  TEXT NOT NULL DEFAULT '',
+        source_provider       TEXT CHECK (source_provider IN ('ado', 'github')),
+        source_id             TEXT,
+        source_url            TEXT,
         created_at            INTEGER NOT NULL,
         updated_at            INTEGER NOT NULL
     );
@@ -106,6 +110,10 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
     for (name, definition) in [
         ("queue_status", "TEXT NOT NULL DEFAULT 'queued'"),
         ("queue_order", "INTEGER NOT NULL DEFAULT 0"),
+        ("execution_target_key", "TEXT NOT NULL DEFAULT ''"),
+        ("source_provider", "TEXT"),
+        ("source_id", "TEXT"),
+        ("source_url", "TEXT"),
     ] {
         if !task_columns.iter().any(|column| column == name) {
             tx.execute_batch(&format!(
@@ -125,6 +133,44 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
     if added_queue_order {
         tx.execute("UPDATE tasks SET queue_order = rowid", [])?;
     }
+    {
+        let mut statement = tx.prepare(
+            "SELECT id, repository_id, worktree_path, pending_worktree_name
+             FROM tasks WHERE execution_target_key = ''",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        for (id, repository_id, worktree_path, pending_worktree_name) in rows {
+            let key = crate::tasks::execution_target_key(
+                &repository_id,
+                &worktree_path,
+                pending_worktree_name.as_deref(),
+            );
+            tx.execute(
+                "UPDATE tasks SET execution_target_key = ?2 WHERE id = ?1",
+                rusqlite::params![id, key],
+            )?;
+        }
+    }
+    tx.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_running_target
+             ON tasks(execution_target_key)
+             WHERE queue_status = 'running';",
+    )?;
+    tx.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_source
+             ON tasks(source_provider, source_id COLLATE NOCASE)
+             WHERE source_provider IS NOT NULL AND source_id IS NOT NULL;",
+    )?;
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
@@ -149,7 +195,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              payload TEXT NOT NULL
          );
          DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
-         PRAGMA user_version = 6;",
+         PRAGMA user_version = 7;",
     )?;
     tx.commit()?;
     Ok(())
@@ -182,7 +228,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -305,10 +351,10 @@ mod tests {
             .unwrap();
         assert_eq!(repository, ("Repo".into(), 0));
 
-        let task: (String, String, String, i64, String) = conn
+        let task: (String, String, String, i64, String, String) = conn
             .query_row(
                 "SELECT copilot_session_id, pending_worktree_name, description, sort_order,
-                        queue_status
+                        queue_status, execution_target_key
                  FROM tasks",
                 [],
                 |row| {
@@ -318,6 +364,7 @@ mod tests {
                         row.get(2)?,
                         row.get(3)?,
                         row.get(4)?,
+                        row.get(5)?,
                     ))
                 },
             )
@@ -329,7 +376,8 @@ mod tests {
                 "planned".into(),
                 "".into(),
                 0,
-                "queued".into()
+                "queued".into(),
+                crate::tasks::execution_target_key("repo", "repo", Some("planned"))
             )
         );
 
@@ -352,5 +400,59 @@ mod tests {
         conn.close().unwrap();
         fs::remove_file(data_dir.join(DB_FILE)).unwrap();
         fs::remove_dir(data_dir).unwrap();
+    }
+
+    #[test]
+    fn task_sources_are_nullable_and_unique() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_schema(&conn).unwrap();
+        let insert = |id: &str, source_id: Option<&str>| {
+            conn.execute(
+                "INSERT INTO tasks
+                    (id, title, status, repository_id, repository_name, repository_path,
+                     worktree_path, source_provider, source_id, source_url, created_at, updated_at)
+                 VALUES (?1, 'Task', 'todo', 'repo', 'Repo', 'repo', 'repo',
+                         CASE WHEN ?2 IS NULL THEN NULL ELSE 'github' END,
+                         ?2,
+                         CASE WHEN ?2 IS NULL THEN NULL ELSE 'https://example.test/item' END,
+                         1, 1)",
+                rusqlite::params![id, source_id],
+            )
+        };
+        insert("manual-one", None).unwrap();
+        insert("manual-two", None).unwrap();
+        insert("imported", Some("owner/repo#1")).unwrap();
+        assert!(insert("duplicate", Some("owner/repo#1")).is_err());
+    }
+
+    #[test]
+    fn existing_tasks_receive_execution_target_keys() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn.execute(
+            "INSERT INTO tasks
+                (id, title, status, repository_id, repository_name, repository_path,
+                 worktree_path, pending_worktree_name, created_at, updated_at)
+             VALUES ('task', 'Task', 'todo', 'Repo-ID', 'Repo', 'C:\\Repo',
+                     'C:\\Repo', 'Feature-One', 1, 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute("UPDATE tasks SET execution_target_key = ''", [])
+            .unwrap();
+
+        initialize_schema(&conn).unwrap();
+
+        let key: String = conn
+            .query_row(
+                "SELECT execution_target_key FROM tasks WHERE id = 'task'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            key,
+            crate::tasks::execution_target_key("Repo-ID", "C:\\Repo", Some("Feature-One"))
+        );
     }
 }

@@ -1,12 +1,22 @@
-import type { TerminalSession, TerminalTimelineEntry } from './terminal-session'
+import type {
+  TerminalSession,
+  TerminalSessionStatus,
+  TerminalTimelineEntry
+} from './terminal-session'
 
 export type PermissionScope = { action: string; label: string; description: string }
+
+export type AcpPermissionOption = {
+  optionId: string
+  name: string
+  kind: 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always' | string
+}
 
 export type NativeInteraction = { id: string; createdAt: number } & (
   | {
       kind: 'acpPermission'
       message: string
-      options: { optionId: string; name: string; kind: string }[]
+      options: AcpPermissionOption[]
       detail: string
     }
   | {
@@ -62,9 +72,90 @@ export type NativeSnapshot = {
   phase?: string
   replacesId?: string | null
   usage?: { used: number; size: number; cost?: { amount: number; currency: string } } | null
+  availableModes: { id: string; name: string }[]
+  currentModeId?: string | null
+  planTransitionAvailable: boolean
 }
 
+export function nativeSessionNeedsUserAction(
+  session: TerminalSession,
+  snapshot?: NativeSnapshot
+): boolean {
+  if (session.status === 'done' || session.status === 'error') return false
+  if (session.status === 'waiting-input') return true
+  return Boolean(
+    session.transport !== 'external' &&
+    snapshot &&
+    snapshot.session.id === session.id &&
+    snapshot.session.generation === session.generation &&
+    (snapshot.interactions.length > 0 || snapshot.planTransitionAvailable)
+  )
+}
+
+export function nativeSessionPresentationStatus(
+  session: TerminalSession,
+  snapshot?: NativeSnapshot
+): TerminalSessionStatus {
+  return nativeSessionNeedsUserAction(session, snapshot) ? 'waiting-input' : session.status
+}
+
+export function nativeSessionCanReplyToPlan(
+  session: TerminalSession,
+  snapshot?: NativeSnapshot
+): boolean {
+  return Boolean(
+    session.transport === 'acp' &&
+    session.status !== 'done' &&
+    session.status !== 'error' &&
+    snapshot &&
+    snapshot.session.id === session.id &&
+    snapshot.session.generation === session.generation &&
+    snapshot.planTransitionAvailable &&
+    snapshot.interactions.length === 0
+  )
+}
+
+export type PlanTransitionAction = 'interactive' | 'autopilot' | 'autopilot_fleet' | 'exit_only'
+
 export type AcpCommand = { name: string; description: string; input?: { hint: string } }
+
+export function acpPermissionOptionScope(kind: string): string {
+  switch (kind) {
+    case 'allow_once':
+      return 'Allows only this operation.'
+    case 'allow_always':
+      return 'Copilot remembers this choice for matching requests.'
+    case 'reject_once':
+      return 'Rejects only this operation.'
+    case 'reject_always':
+      return 'Copilot remembers this rejection for matching requests.'
+    default:
+      return 'Copilot controls the scope of this choice.'
+  }
+}
+
+export function acpPermissionOptionIsRemembered(kind: string): boolean {
+  return kind === 'allow_always' || kind === 'reject_always'
+}
+
+export function acpCommandQuery(message: string): string | null {
+  if (!message.startsWith('/')) return null
+  const query = message.slice(1)
+  return /\s/.test(query) ? null : query.toLowerCase()
+}
+
+export function matchingAcpCommands(message: string, commands: AcpCommand[]): AcpCommand[] {
+  const query = acpCommandQuery(message)
+  if (query === null) return []
+  return commands.filter((command) =>
+    `${command.name} ${command.description}`.toLowerCase().includes(query)
+  )
+}
+
+export function acpCommandDraft(command: AcpCommand): string {
+  return `/${command.name}${command.input?.hint ? ' ' : ''}`
+}
+
 export type PromptContent =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string }

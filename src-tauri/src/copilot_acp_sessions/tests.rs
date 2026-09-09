@@ -25,6 +25,23 @@ fn acp_exact_permission_options_reject_invented_grants() {
 }
 
 #[test]
+fn acp_permission_response_preserves_the_current_opaque_option_id() {
+    let response =
+        acp::RequestPermissionResponse::new(permission_outcome(InteractionAnswer::Permission {
+            action: "opaque:remember-this-request".into(),
+        }));
+    let value = serde_json::to_value(response).unwrap();
+    assert_eq!(value["outcome"]["outcome"], "selected");
+    assert_eq!(value["outcome"]["optionId"], "opaque:remember-this-request");
+
+    let cancelled = serde_json::to_value(acp::RequestPermissionResponse::new(permission_outcome(
+        InteractionAnswer::Cancel,
+    )))
+    .unwrap();
+    assert_eq!(cancelled["outcome"]["outcome"], "cancelled");
+}
+
+#[test]
 fn acp_live_round_trip_is_explicitly_opt_in() {
     // CI remains deterministic and never consumes model credits or starts the user's CLI.
     assert!(state::MAX_PROMPT_BYTES < process::MAX_FRAME_BYTES);
