@@ -91,6 +91,8 @@ pub fn run() {
             system::system_set_keep_awake,
             settings::settings_session_launch_mode,
             settings::settings_set_session_launch_mode,
+            settings::settings_copilot_permission_profile,
+            settings::settings_set_copilot_permission_profile,
             settings::settings_task_queue,
             settings::settings_set_task_queue,
             ado::ado_pr_threads,

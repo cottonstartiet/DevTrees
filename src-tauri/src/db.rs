@@ -85,6 +85,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
     };
     for (name, definition) in [
         ("transport", "TEXT NOT NULL DEFAULT 'external'"),
+        ("permission_profile", "TEXT NOT NULL DEFAULT 'default'"),
         ("generation", "TEXT"),
         ("revision", "INTEGER NOT NULL DEFAULT 0"),
     ] {
@@ -217,6 +218,8 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
          INSERT OR IGNORE INTO app_settings (key, value)
              VALUES ('session_launch_mode', 'acp');
          INSERT OR IGNORE INTO app_settings (key, value)
+             VALUES ('copilot_permission_profile', 'default');
+         INSERT OR IGNORE INTO app_settings (key, value)
              VALUES ('task_queue_mode', 'manual');
          INSERT OR IGNORE INTO app_settings (key, value)
              VALUES ('task_queue_concurrency', '2');
@@ -233,7 +236,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              payload TEXT NOT NULL
          );
          DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
-         PRAGMA user_version = 8;",
+         PRAGMA user_version = 9;",
     )?;
     tx.commit()?;
     Ok(())
@@ -266,7 +269,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -294,7 +297,7 @@ mod tests {
                     row.get(0)
                 })
                 .unwrap();
-            assert_eq!(count, if table == "app_settings" { 3 } else { 0 });
+            assert_eq!(count, if table == "app_settings" { 4 } else { 0 });
         }
         let concurrency: String = conn
             .query_row(
@@ -304,6 +307,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(concurrency, "2");
+        assert_eq!(
+            crate::settings::read_permission_profile(&conn).unwrap(),
+            crate::settings::CopilotPermissionProfile::Default
+        );
     }
 
     #[test]
@@ -339,10 +346,19 @@ mod tests {
         );
         conn.execute("UPDATE app_settings SET value='sdk'", [])
             .unwrap();
+        conn.execute(
+            "UPDATE app_settings SET value='allow-all' WHERE key='copilot_permission_profile'",
+            [],
+        )
+        .unwrap();
         initialize_schema(&conn).unwrap();
         assert_eq!(
             crate::settings::read_launch_mode(&conn).unwrap(),
             crate::settings::SessionLaunchMode::Acp
+        );
+        assert_eq!(
+            crate::settings::read_permission_profile(&conn).unwrap(),
+            crate::settings::CopilotPermissionProfile::AllowAll
         );
         conn.execute("UPDATE app_settings SET value='pty'", [])
             .unwrap();
@@ -366,8 +382,10 @@ mod tests {
              VALUES ('task', 'Task', 'todo', 'repo', 'Repo', 'repo',
                      'repo', 'planned', 'session', 1, 1);
              INSERT INTO terminal_sessions
-                (id, task_id, folder_path, label, status, cursor, seq, managed, created_at, updated_at)
-             VALUES ('session', 'task', 'repo', 'Session', 'idle', 123, 7, 1, 1, 1);
+                (id, task_id, folder_path, label, status, cursor, seq, managed,
+                 permission_profile, created_at, updated_at)
+             VALUES ('session', 'task', 'repo', 'Session', 'idle', 123, 7, 1,
+                     'allow-all', 1, 1);
              INSERT INTO auto_review_triggers
                 (repository_path, provider, pull_request_id, triggered_at)
              VALUES ('repo', 'github', 42, 1);",
@@ -419,14 +437,22 @@ mod tests {
             )
         );
 
-        let session: (String, i64, i64, i64) = conn
+        let session: (String, i64, i64, i64, String) = conn
             .query_row(
-                "SELECT task_id, managed, cursor, seq FROM terminal_sessions",
+                "SELECT task_id, managed, cursor, seq, permission_profile FROM terminal_sessions",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .unwrap();
-        assert_eq!(session, ("task".into(), 1, 123, 7));
+        assert_eq!(session, ("task".into(), 1, 123, 7, "allow-all".into()));
         let review_trigger: (String, String, i64) = conn
             .query_row(
                 "SELECT repository_path, provider, pull_request_id FROM auto_review_triggers",

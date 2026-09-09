@@ -22,6 +22,7 @@ const {
   nativeSessionNeedsUserAction,
   nativeSessionPresentationStatus,
   nativeSessionCanReplyToPlan,
+  latestNativeAssistantResponse,
   acpPermissionOptionIsRemembered,
   acpPermissionOptionScope,
   acpCommandQuery,
@@ -263,6 +264,33 @@ test('ended native history cannot advertise old tools or permissions as live', (
   }
   assert.equal(entries[0].success, null)
   assert.equal(entries[1].resolution, null)
+})
+
+test('latest assistant response comes from the current session generation', () => {
+  const current = snapshot('current', 3)
+  current.entries = [
+    { kind: 'assistantMessage', seq: 1, text: 'Earlier response' },
+    { kind: 'userMessage', seq: 2, text: 'Follow-up' },
+    { kind: 'assistantMessage', seq: 3, text: 'Most recent full response' }
+  ]
+
+  assert.equal(latestNativeAssistantResponse(current.session, current), 'Most recent full response')
+  assert.equal(latestNativeAssistantResponse(current.session, { ...current, entries: [] }), null)
+  assert.equal(
+    latestNativeAssistantResponse({ ...current.session, generation: 'new-generation' }, current),
+    null
+  )
+  assert.equal(latestNativeAssistantResponse(current.session), null)
+})
+
+test('latest assistant response ignores empty assistant entries', () => {
+  const current = snapshot('current', 3)
+  current.entries = [
+    { kind: 'assistantMessage', seq: 1, text: 'Complete response' },
+    { kind: 'assistantMessage', seq: 2, text: '   ' }
+  ]
+
+  assert.equal(latestNativeAssistantResponse(current.session, current), 'Complete response')
 })
 
 test('forms preserve JSON types and do not silently select a first choice', () => {

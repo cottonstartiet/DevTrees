@@ -35,6 +35,7 @@ export type TerminalSession = {
   createdAt: number
   updatedAt: number
   transport: 'sdk' | 'acp' | 'external'
+  permissionProfile: import('./settings').CopilotPermissionProfile
   generation?: string | null
   revision: number
   observedAt?: number | null
@@ -170,6 +171,8 @@ export type TerminalTimelineEntry =
       description: string
       /** `null` while the prompt is still unanswered in the terminal. */
       resolution?: string | null
+      /** ACP decision kind such as `allow_once` or `allow_always`. */
+      selectionKind?: string | null
     }
   | {
       kind: 'notice'

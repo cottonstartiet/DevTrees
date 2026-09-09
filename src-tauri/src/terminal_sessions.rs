@@ -122,6 +122,7 @@ pub struct TerminalSession {
     pub created_at: i64,
     pub updated_at: i64,
     pub transport: String,
+    pub permission_profile: crate::settings::CopilotPermissionProfile,
     pub generation: Option<String>,
     pub revision: u64,
     pub observed_at: Option<i64>,
@@ -171,6 +172,8 @@ pub struct StartTerminalSessionRequest {
     pub resume_session_id: Option<String>,
     #[serde(default)]
     pub initial_mode: Option<CopilotSessionMode>,
+    #[serde(default)]
+    pub permission_profile: Option<crate::settings::CopilotPermissionProfile>,
     #[serde(default)]
     pub task_id: Option<String>,
     #[serde(default)]
@@ -290,6 +293,8 @@ pub enum TerminalTimelineEntry {
         description: String,
         /// `None` while the prompt is still unanswered in the terminal.
         resolution: Option<String>,
+        /// ACP decision kind such as `allow_once` or `allow_always`.
+        selection_kind: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Notice {
@@ -398,8 +403,9 @@ fn upsert(
     db.execute(
         "INSERT INTO terminal_sessions (
            id, task_id, folder_path, label, repository, branch,
-           status, last_activity, pending_prompt, cursor, created_at, updated_at, seq, managed, transport, generation, revision
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+           status, last_activity, pending_prompt, cursor, created_at, updated_at, seq, managed,
+           transport, permission_profile, generation, revision
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(id) DO UPDATE SET
            task_id = excluded.task_id,
            folder_path = excluded.folder_path,
@@ -414,6 +420,7 @@ fn upsert(
            seq = excluded.seq,
            managed = excluded.managed,
            transport = excluded.transport,
+           permission_profile = excluded.permission_profile,
            generation = excluded.generation,
            revision = excluded.revision",
         rusqlite::params![
@@ -432,6 +439,7 @@ fn upsert(
             seq as i64,
             i64::from(managed),
             session.transport,
+            session.permission_profile.as_str(),
             session.generation,
             session.revision as i64,
         ],
@@ -441,12 +449,31 @@ fn upsert(
 
 const SELECT_COLUMNS: &str =
     "id, task_id, folder_path, label, repository, branch, status, last_activity, \
-     pending_prompt, cursor, created_at, updated_at, seq, managed, transport, generation, revision";
+     pending_prompt, cursor, created_at, updated_at, seq, managed, transport, permission_profile, \
+     generation, revision";
+
+fn parse_permission_profile(
+    value: String,
+) -> rusqlite::Result<crate::settings::CopilotPermissionProfile> {
+    match value.as_str() {
+        "default" => Ok(crate::settings::CopilotPermissionProfile::Default),
+        "allow-all" => Ok(crate::settings::CopilotPermissionProfile::AllowAll),
+        value => Err(rusqlite::Error::FromSqlConversionFailure(
+            15,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("invalid Copilot permission profile: {value}"),
+            )),
+        )),
+    }
+}
 
 fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
     let status: String = row.get(6)?;
     let cursor: i64 = row.get(9)?;
     let seq: i64 = row.get(12)?;
+    let permission_profile = parse_permission_profile(row.get(15)?)?;
     Ok(Watch {
         session: TerminalSession {
             id: row.get(0)?,
@@ -461,8 +488,9 @@ fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
             created_at: row.get(10)?,
             updated_at: row.get(11)?,
             transport: row.get(14)?,
-            generation: row.get(15)?,
-            revision: row.get::<_, i64>(16)?.max(0) as u64,
+            permission_profile,
+            generation: row.get(16)?,
+            revision: row.get::<_, i64>(17)?.max(0) as u64,
             observed_at: None,
             observation_error: None,
         },
@@ -641,6 +669,7 @@ fn timeline_entry(
                 timestamp,
                 description: describe_permission(&event.data),
                 resolution: None,
+                selection_kind: None,
             };
             open.push(entry.clone());
             Some(entry)
@@ -1807,6 +1836,10 @@ fn start_external(
         created_at: now,
         updated_at: now,
         transport: "external".into(),
+        permission_profile: req
+            .permission_profile
+            .or_else(|| previous.map(|session| session.permission_profile))
+            .unwrap_or(crate::settings::CopilotPermissionProfile::Default),
         generation: Some(uuid::Uuid::new_v4().to_string()),
         revision: (now as u64).max(previous.map_or(1, |session| session.revision + 1)),
         observed_at: None,
@@ -1905,6 +1938,7 @@ fn watch_terminal_session(
         created_at,
         updated_at: now,
         transport: "external".into(),
+        permission_profile: crate::settings::CopilotPermissionProfile::Default,
         generation: None,
         revision: existing
             .as_ref()
@@ -2006,6 +2040,10 @@ pub(crate) fn watch_managed_session(
             created_at: previous.map_or(now, |watch| watch.session.created_at),
             updated_at: now,
             transport: transport.into(),
+            permission_profile: req
+                .permission_profile
+                .or_else(|| previous.map(|watch| watch.session.permission_profile))
+                .unwrap_or(crate::settings::CopilotPermissionProfile::Default),
             generation: Some(generation.into()),
             revision: (now as u64).max(previous.map_or(1, |watch| watch.session.revision + 1)),
             observed_at: None,
@@ -2361,6 +2399,24 @@ pub async fn terminal_sessions_start(
         req.prompt = None;
         req.initial_mode = None;
     }
+    let saved_permission_profile = if req.resume_session_id.is_some() {
+        let db = app.state::<DbState>();
+        let saved =
+            db.0.lock()
+                .map_err(|_| AppError::msg("Database mutex poisoned."))?;
+        load_one(&saved, &id)?.map(|watch| watch.session.permission_profile)
+    } else {
+        None
+    };
+    req.permission_profile = Some(if let Some(profile) = saved_permission_profile {
+        profile
+    } else {
+        let db = app.state::<DbState>();
+        let settings =
+            db.0.lock()
+                .map_err(|_| AppError::msg("Database mutex poisoned."))?;
+        crate::settings::read_permission_profile(&settings)?
+    });
     let _reservation = LaunchReservation::new(&app, &id)?;
     if session_is_running(&app, &id)? {
         return Err(AppError::msg(
@@ -2610,11 +2666,25 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             transport: "external".into(),
+            permission_profile: crate::settings::CopilotPermissionProfile::Default,
             generation: None,
             revision: 0,
             observed_at: None,
             observation_error: None,
         }
+    }
+
+    #[test]
+    fn saved_permission_profiles_are_strictly_parsed() {
+        assert_eq!(
+            parse_permission_profile("default".into()).unwrap(),
+            crate::settings::CopilotPermissionProfile::Default
+        );
+        assert_eq!(
+            parse_permission_profile("allow-all".into()).unwrap(),
+            crate::settings::CopilotPermissionProfile::AllowAll
+        );
+        assert!(parse_permission_profile("unexpected".into()).is_err());
     }
 
     fn event(json: &str) -> RawEvent {

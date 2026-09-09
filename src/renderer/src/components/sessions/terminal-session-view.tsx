@@ -14,6 +14,7 @@ import {
   terminalObservationIssue,
   type TerminalSession
 } from '@shared/terminal-session'
+import { copilotPermissionProfileLabel } from '@shared/settings'
 
 const modeBadgeClassName =
   'bg-muted inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[11px] font-medium'
@@ -114,6 +115,14 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             {currentMode && <span className={modeBadgeClassName}>{currentMode.name}</span>}
+            {native && (
+              <span
+                className={modeBadgeClassName}
+                title="Permission profile fixed when this in-app session started"
+              >
+                {copilotPermissionProfileLabel(session.permissionProfile)}
+              </span>
+            )}
             <TerminalSessionStatusBadge status={session.status} />
             {session.repository && (
               <span className="flex items-center gap-1">

@@ -16,6 +16,22 @@ pub enum SessionLaunchMode {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum CopilotPermissionProfile {
+    Default,
+    AllowAll,
+}
+
+impl CopilotPermissionProfile {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::AllowAll => "allow-all",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskQueueMode {
     Automatic,
@@ -51,6 +67,30 @@ fn write_launch_mode(db: &Connection, mode: SessionLaunchMode) -> AppResult<()> 
             SessionLaunchMode::Acp => "acp",
             SessionLaunchMode::External => "external",
         }],
+    )?;
+    Ok(())
+}
+
+pub(crate) fn read_permission_profile(db: &Connection) -> AppResult<CopilotPermissionProfile> {
+    let value: String = db.query_row(
+        "SELECT value FROM app_settings WHERE key = 'copilot_permission_profile'",
+        [],
+        |row| row.get(0),
+    )?;
+    match value.as_str() {
+        "default" => Ok(CopilotPermissionProfile::Default),
+        "allow-all" => Ok(CopilotPermissionProfile::AllowAll),
+        _ => Err(AppError::msg(
+            "The saved Copilot permission profile is invalid.",
+        )),
+    }
+}
+
+fn write_permission_profile(db: &Connection, profile: CopilotPermissionProfile) -> AppResult<()> {
+    db.execute(
+        "INSERT INTO app_settings (key, value) VALUES ('copilot_permission_profile', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [profile.as_str()],
     )?;
     Ok(())
 }
@@ -124,6 +164,29 @@ pub fn settings_set_session_launch_mode(app: AppHandle, mode: SessionLaunchMode)
 }
 
 #[tauri::command]
+pub fn settings_copilot_permission_profile(app: AppHandle) -> AppResult<CopilotPermissionProfile> {
+    let state = app.state::<DbState>();
+    let db = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("Database mutex poisoned."))?;
+    read_permission_profile(&db)
+}
+
+#[tauri::command]
+pub fn settings_set_copilot_permission_profile(
+    app: AppHandle,
+    profile: CopilotPermissionProfile,
+) -> AppResult<()> {
+    let state = app.state::<DbState>();
+    let db = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("Database mutex poisoned."))?;
+    write_permission_profile(&db, profile)
+}
+
+#[tauri::command]
 pub fn settings_task_queue(app: AppHandle) -> AppResult<TaskQueueSettings> {
     let state = app.state::<DbState>();
     let db = state
@@ -161,6 +224,28 @@ mod tests {
             .unwrap();
         assert!(read_launch_mode(&db).is_err());
         assert!(serde_json::from_str::<SessionLaunchMode>("\"pty\"").is_err());
+    }
+
+    #[test]
+    fn permission_profile_roundtrips_and_rejects_invalid_values() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+            .unwrap();
+        assert!(read_permission_profile(&db).is_err());
+        for profile in [
+            CopilotPermissionProfile::Default,
+            CopilotPermissionProfile::AllowAll,
+        ] {
+            write_permission_profile(&db, profile).unwrap();
+            assert_eq!(read_permission_profile(&db).unwrap(), profile);
+        }
+        db.execute(
+            "UPDATE app_settings SET value='invalid' WHERE key='copilot_permission_profile'",
+            [],
+        )
+        .unwrap();
+        assert!(read_permission_profile(&db).is_err());
+        assert!(serde_json::from_str::<CopilotPermissionProfile>("\"custom\"").is_err());
     }
 
     #[test]

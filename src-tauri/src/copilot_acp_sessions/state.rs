@@ -208,6 +208,41 @@ impl State {
         self.push(entry);
     }
 
+    pub fn permission_requested(&mut self, description: String) -> u64 {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.push(TerminalTimelineEntry::Permission {
+            seq,
+            timestamp: None,
+            description,
+            resolution: None,
+            selection_kind: None,
+        });
+        seq
+    }
+
+    pub fn resolve_permission(
+        &mut self,
+        seq: u64,
+        resolution: String,
+        selection_kind: Option<String>,
+    ) {
+        if let Some(TerminalTimelineEntry::Permission {
+            resolution: current,
+            selection_kind: current_kind,
+            ..
+        }) = self
+            .snapshot
+            .entries
+            .iter_mut()
+            .find(|entry| entry.seq() == seq)
+        {
+            *current = Some(resolution);
+            *current_kind = selection_kind;
+            self.changed();
+        }
+    }
+
     fn push(&mut self, entry: TerminalTimelineEntry) {
         self.snapshot.entries.push(entry);
         if self.snapshot.entries.len() > MAX_ENTRIES {
@@ -610,6 +645,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             transport: "acp".into(),
+            permission_profile: crate::settings::CopilotPermissionProfile::Default,
             generation: Some("one".into()),
             revision: 0,
             observed_at: None,

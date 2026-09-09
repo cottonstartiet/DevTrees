@@ -13,6 +13,7 @@ import {
 import { MarkdownBody } from '@/components/pr-review/markdown-body'
 import { AcpEntry } from '@/components/sessions/acp-content'
 import { cn } from '@/lib/utils'
+import { acpPermissionOptionScope } from '@shared/native-session'
 import type { TerminalTimelineEntry } from '@shared/terminal-session'
 
 function formatTime(timestamp?: string | null): string {
@@ -133,6 +134,11 @@ function Entry({ entry }: { entry: TerminalTimelineEntry }): React.JSX.Element |
           <p className="text-xs text-muted-foreground">
             {entry.resolution ?? 'Awaiting your answer.'}
           </p>
+          {entry.selectionKind && (
+            <p className="text-xs text-muted-foreground">
+              {acpPermissionOptionScope(entry.selectionKind)}
+            </p>
+          )}
         </Row>
       )
     case 'notice':

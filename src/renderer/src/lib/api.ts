@@ -13,7 +13,11 @@
  */
 import { invoke } from '@tauri-apps/api/core'
 import type { TerminalTarget } from '@shared/terminal-session'
-import type { SessionLaunchMode, TaskQueueSettings } from '@shared/settings'
+import type {
+  CopilotPermissionProfile,
+  SessionLaunchMode,
+  TaskQueueSettings
+} from '@shared/settings'
 import type {
   NativeAnswer,
   NativeSnapshot,
@@ -397,6 +401,10 @@ const api = {
     sessionLaunchMode: (): Promise<SessionLaunchMode> => invoke('settings_session_launch_mode'),
     setSessionLaunchMode: (mode: SessionLaunchMode): Promise<void> =>
       invoke('settings_set_session_launch_mode', { mode }),
+    copilotPermissionProfile: (): Promise<CopilotPermissionProfile> =>
+      invoke('settings_copilot_permission_profile'),
+    setCopilotPermissionProfile: (profile: CopilotPermissionProfile): Promise<void> =>
+      invoke('settings_set_copilot_permission_profile', { profile }),
     taskQueue: (): Promise<TaskQueueSettings> => invoke('settings_task_queue'),
     setTaskQueue: (settings: TaskQueueSettings): Promise<void> =>
       invoke('settings_set_task_queue', { settings })

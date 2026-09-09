@@ -46,6 +46,14 @@ fn now() -> i64 {
         .as_millis() as i64
 }
 
+fn copilot_server_args(profile: crate::settings::CopilotPermissionProfile) -> Vec<&'static str> {
+    let mut args = vec!["--acp", "--stdio", "--no-auto-update", "--no-remote"];
+    if profile == crate::settings::CopilotPermissionProfile::AllowAll {
+        args.push("--allow-all");
+    }
+    args
+}
+
 pub(crate) fn installed_cli() -> AppResult<PathBuf> {
     if let Some(path) = std::env::var_os("COPILOT_CLI_PATH") {
         let path = PathBuf::from(path);
@@ -423,6 +431,26 @@ fn permission_outcome(answer: InteractionAnswer) -> acp::RequestPermissionOutcom
     }
 }
 
+fn permission_resolution(
+    options: &[crate::terminal_sessions::TerminalSessionPermissionOption],
+    answer: &InteractionAnswer,
+) -> (String, Option<String>) {
+    let InteractionAnswer::Permission { action } = answer else {
+        return ("Cancelled".into(), None);
+    };
+    let Some(option) = options.iter().find(|option| option.option_id == *action) else {
+        return ("Cancelled".into(), None);
+    };
+    let detail = match option.kind.as_str() {
+        "allow_once" => "Allowed once",
+        "allow_always" => "Saved as a project-scoped approval when supported",
+        "reject_once" => "Rejected once",
+        "reject_always" => "Saved as a project-scoped rejection when supported",
+        _ => option.name.as_str(),
+    };
+    (detail.into(), Some(option.kind.clone()))
+}
+
 async fn permission(
     owner: Arc<Managed>,
     request: acp::RequestPermissionRequest,
@@ -438,23 +466,43 @@ async fn permission(
             return acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled);
         }
     };
-    let options = match serde_json::from_value(value["options"].clone()) {
-        Ok(options) => options,
+    let options: Vec<crate::terminal_sessions::TerminalSessionPermissionOption> =
+        match serde_json::from_value(value["options"].clone()) {
+            Ok(options) => options,
+            Err(e) => {
+                owner.fail(format!("Invalid permission options: {e}"));
+                return acp::RequestPermissionResponse::new(
+                    acp::RequestPermissionOutcome::Cancelled,
+                );
+            }
+        };
+    let message = value["toolCall"]["title"]
+        .as_str()
+        .unwrap_or("Copilot requests permission")
+        .to_string();
+    let timeline_seq = match owner.state.lock() {
+        Ok(mut state) => state.permission_requested(message.clone()),
         Err(e) => {
-            owner.fail(format!("Invalid permission options: {e}"));
+            owner.fail(e.to_string());
             return acp::RequestPermissionResponse::new(acp::RequestPermissionOutcome::Cancelled);
         }
     };
     let answer = owner
+        .clone()
         .ask(InteractionRequest::AcpPermission {
-            message: value["toolCall"]["title"]
-                .as_str()
-                .unwrap_or("Copilot requests permission")
-                .into(),
-            options,
+            message,
+            options: options.clone(),
             detail: serde_json::to_string_pretty(&value["toolCall"]).unwrap_or_default(),
         })
         .await;
+    let (resolution, selection_kind) = permission_resolution(&options, &answer);
+    match owner.state.lock() {
+        Ok(mut state) => state.resolve_permission(timeline_seq, resolution, selection_kind),
+        Err(e) => owner.fail(e.to_string()),
+    }
+    if let Err(e) = owner.publish() {
+        owner.fail(format!("Could not publish the permission result: {e}"));
+    }
     acp::RequestPermissionResponse::new(permission_outcome(answer))
 }
 
@@ -679,8 +727,11 @@ async fn run_inner(
         return Err(error("Session startup was cancelled."));
     }
     let mut command = tokio::process::Command::new(installed_cli()?);
+    let permission_profile = req
+        .permission_profile
+        .unwrap_or(crate::settings::CopilotPermissionProfile::Default);
     command
-        .args(["--acp", "--stdio", "--no-auto-update", "--no-remote"])
+        .args(copilot_server_args(permission_profile))
         .current_dir(&req.folder_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

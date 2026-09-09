@@ -21,7 +21,9 @@ import { getAppInfo } from '@/lib/system'
 import { saveTaskQueueSettings } from '@/lib/task-queue-settings'
 import type { AppInfo } from '@shared/system'
 import {
+  copilotPermissionProfileLabel,
   sessionLaunchModeLabel,
+  type CopilotPermissionProfile,
   type SessionLaunchMode,
   type TaskQueueMode,
   type TaskQueueSettings
@@ -132,6 +134,20 @@ const SESSION_MODE_OPTIONS: ReadonlyArray<{
 }> = [
   { value: 'external', Icon: SquareTerminalIcon },
   { value: 'acp', Icon: MessageSquareIcon }
+]
+
+const PERMISSION_PROFILE_OPTIONS: ReadonlyArray<{
+  value: CopilotPermissionProfile
+  description: string
+}> = [
+  {
+    value: 'default',
+    description: 'Ask when Copilot needs access not already saved for the project.'
+  },
+  {
+    value: 'allow-all',
+    description: 'Approve all tools, paths, and URLs when an in-app session starts.'
+  }
 ]
 
 const QUEUE_MODE_OPTIONS: ReadonlyArray<{
@@ -361,16 +377,24 @@ function AppearanceSettings(): React.JSX.Element {
 
 function CopilotSessionSettings(): React.JSX.Element {
   const [mode, setMode] = React.useState<SessionLaunchMode | null>(null)
+  const [permissionProfile, setPermissionProfile] = React.useState<CopilotPermissionProfile | null>(
+    null
+  )
   const [busy, setBusy] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [loadRevision, setLoadRevision] = React.useState(0)
 
   React.useEffect(() => {
     let active = true
-    void window.api.settings
-      .sessionLaunchMode()
-      .then((mode) => {
-        if (active) setMode(mode)
+    void Promise.all([
+      window.api.settings.sessionLaunchMode(),
+      window.api.settings.copilotPermissionProfile()
+    ])
+      .then(([mode, profile]) => {
+        if (active) {
+          setMode(mode)
+          setPermissionProfile(profile)
+        }
       })
       .catch((error) => {
         if (active) setError(`Could not load the session setting: ${String(error)}`)
@@ -396,6 +420,19 @@ function CopilotSessionSettings(): React.JSX.Element {
     }
   }
 
+  const savePermissionProfile = async (next: CopilotPermissionProfile): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      await window.api.settings.setCopilotPermissionProfile(next)
+      setPermissionProfile(next)
+    } catch (error) {
+      setError(`Could not save the permission profile: ${String(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <section aria-labelledby="copilot-settings-title" className="flex max-w-2xl flex-col gap-6">
       <div className="flex flex-col gap-1">
@@ -415,7 +452,7 @@ function CopilotSessionSettings(): React.JSX.Element {
           <p id="session-launch-help" className="text-muted-foreground max-w-xl text-xs leading-5">
             Running sessions stay where they are. End a session before resuming it in a different
             mode. External sessions show live status only while DevTrees is open. In-app sessions
-            use the configuration already set in Copilot CLI.
+            use the permission profile below plus project approvals already saved by Copilot CLI.
           </p>
         </div>
         <div
@@ -466,6 +503,54 @@ function CopilotSessionSettings(): React.JSX.Element {
           >
             Retry
           </Button>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-3 border-t pt-5">
+        <div className="flex flex-col gap-1">
+          <h2 id="permission-profile-label" className="text-sm font-medium">
+            In-app permission profile
+          </h2>
+          <p
+            id="permission-profile-help"
+            className="text-muted-foreground max-w-xl text-xs leading-5"
+          >
+            Applies when a session starts and stays attached to that conversation when resumed.
+            Copilot still owns project-scoped remembered approvals in its local permission store.
+          </p>
+        </div>
+        <div
+          role="radiogroup"
+          aria-labelledby="permission-profile-label"
+          aria-describedby="permission-profile-help"
+          aria-busy={busy}
+          className="grid grid-cols-2 gap-2"
+        >
+          {PERMISSION_PROFILE_OPTIONS.map((option) => (
+            <label key={option.value} className="min-w-0">
+              <input
+                type="radio"
+                name="copilot-permission-profile"
+                value={option.value}
+                checked={permissionProfile === option.value}
+                disabled={busy || permissionProfile === null}
+                onChange={() => void savePermissionProfile(option.value)}
+                className="peer sr-only"
+              />
+              <span className="text-muted-foreground hover:bg-accent hover:text-accent-foreground peer-checked:bg-secondary peer-checked:text-secondary-foreground peer-focus-visible:ring-ring/50 flex min-h-20 cursor-pointer flex-col justify-center gap-1 rounded-md border px-3 py-3 text-left transition-colors peer-focus-visible:ring-3 peer-disabled:pointer-events-none peer-disabled:cursor-default peer-disabled:opacity-50">
+                <span className="text-sm font-medium">
+                  {copilotPermissionProfileLabel(option.value)}
+                </span>
+                <span className="text-xs leading-5">{option.description}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        {permissionProfile === 'allow-all' && (
+          <p className="text-muted-foreground max-w-xl text-xs leading-5">
+            New in-app sessions will not show approval prompts. Use this only for repositories and
+            tools you trust.
+          </p>
         )}
       </div>
     </section>

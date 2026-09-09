@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 
 import { DashboardCard } from '@/components/detail/dashboard-card'
+import { MarkdownBody } from '@/components/pr-review/markdown-body'
 import { NativeSessionControls } from '@/components/sessions/session-interaction'
 import {
   TERMINAL_SESSION_STATUS_ICON,
@@ -28,6 +29,7 @@ import {
   type TerminalSession
 } from '@shared/terminal-session'
 import {
+  latestNativeAssistantResponse,
   nativeSessionNeedsUserAction,
   nativeSessionPresentationStatus,
   type NativeInteraction
@@ -160,6 +162,9 @@ export function DashboardPage({
                 )
                 const needsAction = nativeSessionNeedsUserAction(session, snapshot)
                 const presentationStatus = nativeSessionPresentationStatus(session, snapshot)
+                const observationIssue = terminalObservationIssue(session, observationNow)
+                const latestResponse = latestNativeAssistantResponse(session, snapshot)
+                const statusMessage = observationIssue || session.pendingPrompt
                 const StatusIcon = TERMINAL_SESSION_STATUS_ICON[presentationStatus]
                 return (
                   <div
@@ -218,22 +223,30 @@ export function DashboardPage({
                             {[session.repository, session.branch].filter(Boolean).join(' · ')}
                           </p>
                         )}
-                        <p
-                          className={cn(
-                            'text-xs leading-relaxed',
-                            needsAction ? 'text-foreground' : 'text-muted-foreground'
-                          )}
-                        >
-                          {terminalObservationIssue(session, observationNow) ||
-                            session.pendingPrompt ||
-                            session.lastActivity}
-                        </p>
                       </div>
                       <span className="text-muted-foreground flex shrink-0 items-center gap-1 pt-0.5 text-[10px]">
                         Open session
                         <ArrowUpRightIcon className="size-3" />
                       </span>
                     </button>
+                    <div className="border-t px-3 py-3">
+                      {statusMessage ? (
+                        <p
+                          className={cn(
+                            'text-xs leading-relaxed',
+                            needsAction ? 'text-foreground' : 'text-muted-foreground'
+                          )}
+                        >
+                          {statusMessage}
+                        </p>
+                      ) : latestResponse ? (
+                        <MarkdownBody text={latestResponse} />
+                      ) : (
+                        <p className="text-muted-foreground text-xs leading-relaxed">
+                          {session.lastActivity}
+                        </p>
+                      )}
+                    </div>
                     {session.transport !== 'external' && (
                       <NativeSessionControls
                         session={session}

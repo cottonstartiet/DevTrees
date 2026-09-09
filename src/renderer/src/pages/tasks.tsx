@@ -7,13 +7,14 @@ import {
   useSensors,
   type DragEndEvent
 } from '@dnd-kit/core'
-import { LoaderCircleIcon, PauseIcon, PlayIcon, PlusIcon } from 'lucide-react'
+import { LoaderCircleIcon, PlusIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { TaskColumn } from '@/components/task-column'
 import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
+import { cn } from '@/lib/utils'
 import type { Repository } from '@shared/repository'
 import type { TaskQueueMode } from '@shared/settings'
 import type { Task, TaskStatus } from '@shared/task'
@@ -56,7 +57,6 @@ export function TasksHeaderControls({
 }: TasksHeaderControlsProps): React.JSX.Element {
   const readyCount = queuedCount + failedCount
   const isAutomatic = mode === 'automatic'
-  const nextMode = isAutomatic ? 'manual' : 'automatic'
   return (
     <div className="ml-auto flex items-center gap-3">
       <div className="text-muted-foreground flex items-center gap-2 text-xs">
@@ -71,21 +71,38 @@ export function TasksHeaderControls({
       </div>
       <Button
         type="button"
-        variant={isAutomatic ? 'secondary' : 'outline'}
+        role="switch"
+        variant="outline"
         size="sm"
-        aria-label={`Switch task execution to ${nextMode}`}
-        aria-pressed={isAutomatic}
+        aria-checked={isAutomatic}
         disabled={modeBusy}
-        onClick={() => void onModeChange(nextMode)}
+        className="gap-2.5 motion-reduce:transition-none"
+        onClick={() => void onModeChange(isAutomatic ? 'manual' : 'automatic')}
       >
-        {modeBusy ? (
-          <LoaderCircleIcon className="motion-reduce:animate-none animate-spin" />
-        ) : isAutomatic ? (
-          <PauseIcon />
-        ) : (
-          <PlayIcon />
-        )}
-        {isAutomatic ? 'Automatic' : 'Manual'}
+        Factory
+        <span
+          aria-hidden="true"
+          className={cn(
+            'relative h-5 w-9 shrink-0 rounded-full border transition-colors motion-reduce:transition-none',
+            isAutomatic ? 'border-primary bg-primary' : 'border-input bg-input'
+          )}
+        >
+          {modeBusy ? (
+            <LoaderCircleIcon
+              className={cn(
+                'absolute top-0.5 size-3.5 animate-spin motion-reduce:animate-none',
+                isAutomatic ? 'left-[18px] text-primary-foreground' : 'left-0.5 text-foreground'
+              )}
+            />
+          ) : (
+            <span
+              className={cn(
+                'bg-background absolute top-0.5 block size-3.5 rounded-full transition-transform motion-reduce:transition-none',
+                isAutomatic ? 'translate-x-[18px]' : 'translate-x-0.5'
+              )}
+            />
+          )}
+        </span>
       </Button>
       <Button type="button" size="sm" onClick={onAddTask}>
         <PlusIcon />

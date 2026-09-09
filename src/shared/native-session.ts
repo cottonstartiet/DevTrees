@@ -115,6 +115,24 @@ export function nativeSessionCanReplyToPlan(
   )
 }
 
+export function latestNativeAssistantResponse(
+  session: Pick<TerminalSession, 'id' | 'generation'>,
+  snapshot?: NativeSnapshot
+): string | null {
+  if (
+    !snapshot ||
+    snapshot.session.id !== session.id ||
+    snapshot.session.generation !== session.generation
+  ) {
+    return null
+  }
+  for (let index = snapshot.entries.length - 1; index >= 0; index--) {
+    const entry = snapshot.entries[index]
+    if (entry.kind === 'assistantMessage' && entry.text.trim()) return entry.text
+  }
+  return null
+}
+
 export type PlanTransitionAction = 'interactive' | 'autopilot' | 'autopilot_fleet' | 'exit_only'
 
 export type AcpCommand = { name: string; description: string; input?: { hint: string } }
@@ -124,11 +142,11 @@ export function acpPermissionOptionScope(kind: string): string {
     case 'allow_once':
       return 'Allows only this operation.'
     case 'allow_always':
-      return 'Copilot remembers this choice for matching requests.'
+      return 'Copilot saves this project-scoped approval for matching requests when supported.'
     case 'reject_once':
       return 'Rejects only this operation.'
     case 'reject_always':
-      return 'Copilot remembers this rejection for matching requests.'
+      return 'Copilot saves this project-scoped rejection for matching requests when supported.'
     default:
       return 'Copilot controls the scope of this choice.'
   }

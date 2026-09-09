@@ -42,6 +42,64 @@ fn acp_permission_response_preserves_the_current_opaque_option_id() {
 }
 
 #[test]
+fn permission_profile_controls_only_validated_copilot_flags() {
+    assert_eq!(
+        copilot_server_args(crate::settings::CopilotPermissionProfile::Default),
+        ["--acp", "--stdio", "--no-auto-update", "--no-remote"]
+    );
+    assert_eq!(
+        copilot_server_args(crate::settings::CopilotPermissionProfile::AllowAll),
+        [
+            "--acp",
+            "--stdio",
+            "--no-auto-update",
+            "--no-remote",
+            "--allow-all"
+        ]
+    );
+}
+
+#[test]
+fn permission_history_uses_the_current_offered_option_kind() {
+    let options: Vec<crate::terminal_sessions::TerminalSessionPermissionOption> =
+        serde_json::from_value(json!([
+            {"optionId":"once","name":"Allow once","kind":"allow_once"},
+            {"optionId":"always","name":"Allow always","kind":"allow_always"},
+            {"optionId":"no","name":"Reject","kind":"reject_once"},
+            {"optionId":"never","name":"Always reject","kind":"reject_always"}
+        ]))
+        .unwrap();
+    for (action, expected, kind) in [
+        ("once", "Allowed once", "allow_once"),
+        (
+            "always",
+            "Saved as a project-scoped approval when supported",
+            "allow_always",
+        ),
+        ("no", "Rejected once", "reject_once"),
+        (
+            "never",
+            "Saved as a project-scoped rejection when supported",
+            "reject_always",
+        ),
+    ] {
+        assert_eq!(
+            permission_resolution(
+                &options,
+                &InteractionAnswer::Permission {
+                    action: action.into()
+                }
+            ),
+            (expected.into(), Some(kind.into()))
+        );
+    }
+    assert_eq!(
+        permission_resolution(&options, &InteractionAnswer::Cancel),
+        ("Cancelled".into(), None)
+    );
+}
+
+#[test]
 fn acp_live_round_trip_is_explicitly_opt_in() {
     // CI remains deterministic and never consumes model credits or starts the user's CLI.
     assert!(state::MAX_PROMPT_BYTES < process::MAX_FRAME_BYTES);
