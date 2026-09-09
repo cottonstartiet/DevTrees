@@ -16,11 +16,7 @@ import { PrReviewProvider } from '@/contexts/pr-review-context'
 import { TasksProvider } from '@/contexts/tasks-context'
 import { TaskBoardProvider, useTaskBoard } from '@/contexts/task-board-context'
 import { ThemeProvider } from '@/contexts/theme-context'
-import {
-  TerminalSessionsProvider,
-  useTerminalSessions,
-  isTerminalSessionFinished
-} from '@/contexts/terminal-sessions-context'
+import { TerminalSessionsProvider } from '@/contexts/terminal-sessions-context'
 import { DashboardProvider } from '@/contexts/dashboard-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useRepositories } from '@/hooks/use-repositories'
@@ -35,13 +31,9 @@ import { ReviewsPage } from '@/pages/reviews'
 import { SettingsPage } from '@/pages/settings'
 import { SessionsPage, SessionsHeaderControls } from '@/pages/sessions'
 import { TasksPage, TasksHeaderControls } from '@/pages/tasks'
-import { setTaskCopilotSession } from '@/lib/tasks'
-import { listWorktreesForRepository } from '@/lib/worktrees'
-import { useCopilotLauncher } from '@/lib/copilot-launch'
-import { buildTaskCodeReviewPrompt } from '@/lib/copilot-task-review-prompt'
 import type { ExistingPullRequest } from '@shared/repo'
 import type { Repository } from '@shared/repository'
-import type { Task, TaskStatus } from '@shared/task'
+import type { Task } from '@shared/task'
 import type { Worktree, WorktreeStatusResult } from '@shared/worktree'
 
 function worktreeLabel(path: string): string {
@@ -52,331 +44,29 @@ function worktreeLabel(path: string): string {
 interface TasksPageContainerProps {
   repositories: Repository[]
   worktreesByRepositoryId: Record<string, Worktree[]>
-  createWorktree: (repository: Repository, name: string) => Promise<boolean>
-  refreshWorktreesFor: (repositoryId: string) => Promise<void>
-  checkWorktreeStatus: (path: string) => Promise<WorktreeStatusResult>
   dialogOpen: boolean
   onDialogOpenChange: (open: boolean) => void
   activeTask: Task | null
   onOpenTask: (task: Task | null) => void
-  queue?: TaskQueueController
+  queue: TaskQueueController
 }
 
-/** Owns the "Start task" action, launching a managed Copilot session for the task. */
 function TasksPageContainer({
   repositories,
   worktreesByRepositoryId,
-  createWorktree,
-  refreshWorktreesFor,
-  checkWorktreeStatus,
   dialogOpen,
   onDialogOpenChange,
   activeTask,
   onOpenTask,
   queue
 }: TasksPageContainerProps): React.JSX.Element {
-  const { byId: terminalSessionsById } = useTerminalSessions()
-  const launchCopilot = useCopilotLauncher()
-  const { moveTask, setTaskLocal, updateTask } = useTaskBoard()
-
-  const materializeTaskWorktree = useCallback(
-    async (task: Task): Promise<Task | null> => {
-      const name = task.pendingWorktreeName
-      if (!name) return task
-
-      const repository = repositories.find((r) => r.id === task.repositoryId)
-      if (!repository) {
-        toast.error('The repository for this task is unavailable.')
-        return null
-      }
-
-      try {
-        let worktree = (await listWorktreesForRepository(repository.path)).find(
-          (candidate) => !candidate.isMain && worktreeLabel(candidate.path) === name
-        )
-        if (!worktree) {
-          const created = await createWorktree(repository, name)
-          if (!created) return null
-          worktree = (await listWorktreesForRepository(repository.path)).find(
-            (candidate) => !candidate.isMain && worktreeLabel(candidate.path) === name
-          )
-        }
-        if (!worktree) {
-          toast.error('The new worktree was created but could not be resolved.')
-          return null
-        }
-
-        const updated = await updateTask({
-          id: task.id,
-          title: task.title,
-          description: task.description,
-          repositoryId: task.repositoryId,
-          repositoryName: task.repositoryName,
-          repositoryPath: task.repositoryPath,
-          worktreePath: worktree.path,
-          worktreeBranch: worktree.branch,
-          pendingWorktreeName: null
-        })
-        if (!updated) return null
-        await refreshWorktreesFor(repository.id)
-        return updated
-      } catch (error) {
-        console.error('[tasks] failed to prepare planned worktree:', error)
-        toast.error(
-          error instanceof Error ? error.message : 'Could not prepare the worktree for this task.'
-        )
-        return null
-      }
-    },
-    [createWorktree, refreshWorktreesFor, repositories, updateTask]
-  )
-
-  const handleMoveTask = useCallback(
-    async (task: Task, status: TaskStatus, beforeId?: string | null): Promise<void> => {
-      // Commit the user's status change to the board before preparing any worktree.
-      // The provider applies this optimistically, so slower setup continues off the interaction path.
-      const movePromise = moveTask(task.id, status, beforeId)
-      const resolved = status === 'in_progress' ? await materializeTaskWorktree(task) : task
-      if (!resolved) {
-        await movePromise
-        return
-      }
-      await movePromise
-    },
-    [materializeTaskWorktree, moveTask]
-  )
-
-  const handleStartTask = useCallback(
-    async (task: Task): Promise<void> => {
-      if (task.status === 'todo') {
-        // Move immediately; worktree preparation and session launch continue asynchronously.
-        void moveTask(task.id, 'in_progress')
-      }
-
-      const resolvedTask = await materializeTaskWorktree(task)
-      if (!resolvedTask) return
-
-      // Already running? Don't spawn a second terminal for the same task.
-      const linkedId = resolvedTask.copilotSessionId
-      const linkedTerminal = linkedId ? terminalSessionsById[linkedId] : undefined
-      if (linkedTerminal != null && !isTerminalSessionFinished(linkedTerminal.status)) {
-        toast.info('A Copilot session for this task is already running.')
-        return
-      }
-      if (linkedId) {
-        try {
-          if (await window.api.terminalSessions.isRunning(linkedId)) {
-            toast.info(
-              'This task is still running in Copilot. End that session before starting another.'
-            )
-            return
-          }
-        } catch (error) {
-          toast.error(`Could not check the task's Copilot session: ${String(error)}`)
-          return
-        }
-      }
-
-      // The worktree may have been deleted outside the app since the task was created.
-      const worktreePath = resolvedTask.worktreePath
-      const repository = repositories.find((r) => r.id === resolvedTask.repositoryId) ?? null
-      try {
-        const status = await checkWorktreeStatus(worktreePath)
-        const missing =
-          (status.ok && status.folderMissing) || (!status.ok && status.error === 'not-found')
-        if (missing) {
-          if (!repository) {
-            toast.error('The worktree for this task is missing and its repository is unavailable.')
-            return
-          }
-          const recreated = await createWorktree(repository, worktreeLabel(worktreePath))
-          const after = recreated ? await checkWorktreeStatus(worktreePath) : null
-          const stillMissing =
-            !after ||
-            (after.ok && after.folderMissing) ||
-            (!after.ok && after.error === 'not-found')
-          if (stillMissing) {
-            toast.error('Could not recreate the missing worktree for this task.')
-            return
-          }
-        }
-      } catch (error) {
-        console.error('[tasks] worktree status check failed:', error)
-      }
-
-      const prompt = [resolvedTask.title.trim(), resolvedTask.description.trim()]
-        .filter(Boolean)
-        .join('\n\n')
-      const result = await launchCopilot({
-        folderPath: worktreePath,
-        prompt,
-        initialMode: 'plan',
-        label: resolvedTask.title.trim() || resolvedTask.repositoryName,
-        branch: resolvedTask.worktreeBranch ?? undefined,
-        repository: resolvedTask.repositoryName,
-        taskId: resolvedTask.id
-      })
-
-      if (!result.ok) {
-        toast.error(result.error || 'Could not start a Copilot session for this task.')
-        return
-      }
-
-      // Link the mirrored CLI session to the task, so a second Start reuses it.
-      const sessionId = result.sessionId
-      setTaskLocal({ ...resolvedTask, status: 'in_progress', copilotSessionId: sessionId })
-      try {
-        const res = await setTaskCopilotSession({
-          id: resolvedTask.id,
-          copilotSessionId: sessionId
-        })
-        if (res.ok) setTaskLocal(res.task)
-        else toast.error(res.message ?? 'Could not link the session to this task.')
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : 'Could not link the session to this task.'
-        )
-      }
-
-      toast.success(`Copilot started for "${resolvedTask.title}".`)
-    },
-    [
-      checkWorktreeStatus,
-      createWorktree,
-      launchCopilot,
-      moveTask,
-      materializeTaskWorktree,
-      repositories,
-      setTaskLocal,
-      terminalSessionsById
-    ]
-  )
-
-  const canReviewTask = useCallback(
-    (task: Task): boolean => {
-      if (task.status !== 'in_progress') return false
-      const linkedId = task.copilotSessionId
-      if (!linkedId) return false
-      const session = terminalSessionsById[linkedId]
-      // Transient external rows disappear on exit. The action checks ownership
-      // before launching a review; absence alone is not proof of completion.
-      if (!session) return true
-      // "Work is done" = the session finished, or its turn ended and it is idle at the prompt.
-      return isTerminalSessionFinished(session.status) || session.status === 'idle'
-    },
-    [terminalSessionsById]
-  )
-
-  const handleReviewTask = useCallback(
-    async (task: Task): Promise<void> => {
-      // Reflect the workflow transition immediately while review setup runs in the background.
-      void moveTask(task.id, 'review')
-
-      if (task.copilotSessionId && !terminalSessionsById[task.copilotSessionId]) {
-        try {
-          if (await window.api.terminalSessions.isRunning(task.copilotSessionId)) {
-            toast.info('End the task session in its external terminal before starting a review.')
-            return
-          }
-        } catch (error) {
-          toast.error(`Could not check whether the task session ended: ${String(error)}`)
-          return
-        }
-      }
-      const worktreePath = task.worktreePath
-      const repository = repositories.find((r) => r.id === task.repositoryId) ?? null
-      try {
-        const status = await checkWorktreeStatus(worktreePath)
-        const missing =
-          (status.ok && status.folderMissing) || (!status.ok && status.error === 'not-found')
-        if (missing) {
-          if (!repository) {
-            toast.error('The worktree for this task is missing and its repository is unavailable.')
-            return
-          }
-          const recreated = await createWorktree(repository, worktreeLabel(worktreePath))
-          const after = recreated ? await checkWorktreeStatus(worktreePath) : null
-          const stillMissing =
-            !after ||
-            (after.ok && after.folderMissing) ||
-            (!after.ok && after.error === 'not-found')
-          if (stillMissing) {
-            toast.error('Could not find the worktree to review for this task.')
-            return
-          }
-        }
-      } catch (error) {
-        console.error('[tasks] worktree status check failed:', error)
-      }
-
-      const prompt = buildTaskCodeReviewPrompt({
-        folderPath: worktreePath,
-        taskTitle: task.title,
-        taskDescription: task.description,
-        repositoryName: task.repositoryName,
-        branch: task.worktreeBranch
-      })
-
-      const result = await launchCopilot({
-        folderPath: worktreePath,
-        prompt,
-        label: `Review: ${task.title.trim() || task.repositoryName}`,
-        branch: task.worktreeBranch ?? undefined,
-        repository: task.repositoryName,
-        taskId: task.id
-      })
-
-      if (!result.ok) {
-        toast.error(result.error || 'Could not start the code review for this task.')
-        return
-      }
-
-      // The review session becomes the task's current session, so the card tracks it.
-      const sessionId = result.sessionId
-      setTaskLocal({ ...task, status: 'review', copilotSessionId: sessionId })
-      try {
-        const res = await setTaskCopilotSession({ id: task.id, copilotSessionId: sessionId })
-        if (res.ok) setTaskLocal(res.task)
-        else toast.error(res.message ?? 'Could not link the review session to this task.')
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : 'Could not link the review session to this task.'
-        )
-      }
-
-      toast.success(`Code review started for "${task.title}".`)
-    },
-    [
-      checkWorktreeStatus,
-      createWorktree,
-      launchCopilot,
-      moveTask,
-      repositories,
-      setTaskLocal,
-      terminalSessionsById
-    ]
-  )
-
-  const taskActions =
-    queue ??
-    ({
-      startTask: handleStartTask,
-      moveTask: handleMoveTask,
-      reviewTask: handleReviewTask,
-      canReviewTask
-    } satisfies Pick<
-      TaskQueueController,
-      'startTask' | 'moveTask' | 'reviewTask' | 'canReviewTask'
-    >)
-
   return (
     <TasksPage
       repositories={repositories}
       worktreesByRepositoryId={worktreesByRepositoryId}
-      onStartTask={taskActions.startTask}
-      onMoveTask={taskActions.moveTask}
-      onReviewTask={taskActions.reviewTask}
-      canReviewTask={taskActions.canReviewTask}
+      onMoveTask={queue.moveTask}
+      onReviewTask={queue.reviewTask}
+      canReviewTask={queue.canReviewTask}
       dialogOpen={dialogOpen}
       onDialogOpenChange={onDialogOpenChange}
       activeTask={activeTask}
@@ -951,9 +641,6 @@ function AppShell(): React.JSX.Element {
                           queuedCount={taskQueue.queuedCount}
                           runningCount={taskQueue.runningCount}
                           failedCount={taskQueue.failedCount}
-                          queueMode={taskQueue.settings.mode}
-                          queueRunning={taskQueue.manualRunActive}
-                          onRunQueue={taskQueue.runQueue}
                           onAddTask={handleOpenAddTaskDialog}
                         />
                       )}
@@ -973,9 +660,6 @@ function AppShell(): React.JSX.Element {
                       <TasksPageContainer
                         repositories={repositories}
                         worktreesByRepositoryId={worktreesByRepositoryId}
-                        createWorktree={createWorktree}
-                        refreshWorktreesFor={refreshWorktreesFor}
-                        checkWorktreeStatus={checkWorktreeStatus}
                         dialogOpen={taskDialogOpen}
                         onDialogOpenChange={setTaskDialogOpen}
                         activeTask={activeTaskForDialog}

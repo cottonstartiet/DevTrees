@@ -82,12 +82,12 @@ const QUEUE_MODE_OPTIONS: ReadonlyArray<{
   {
     value: 'automatic',
     label: 'Automatic',
-    description: 'Start queued tasks whenever capacity is available.'
+    description: 'Start the next To Do or Review task whenever capacity is available.'
   },
   {
     value: 'manual',
     label: 'Manual',
-    description: 'Wait for Run queue before starting queued tasks.'
+    description: 'Start work only when you move a task to In Progress or Review.'
   }
 ]
 
@@ -150,7 +150,7 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
           Task queue
         </h1>
         <p className="text-muted-foreground text-sm">
-          Control when queued To Do and Review tasks start.
+          Add any number of tasks and control how many To Do and Review tasks can run together.
         </p>
       </div>
 
@@ -160,7 +160,8 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
             Execution
           </h2>
           <p id="queue-mode-help" className="text-muted-foreground text-xs">
-            Automatic mode keeps the queue moving. Manual mode starts only after an explicit run.
+            Automatic mode fills available slots from the queue. Manual mode uses board moves as the
+            start action.
           </p>
         </div>
         <div
@@ -198,7 +199,7 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
             Concurrency
           </label>
           <p id="task-queue-concurrency-help" className="text-muted-foreground text-xs leading-5">
-            Maximum Copilot tasks running at the same time. New installations start at 2.
+            Maximum To Do work and code reviews running at the same time. The default is 2.
           </p>
         </div>
         <Input
@@ -218,6 +219,15 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
           }}
           className="w-20"
         />
+      </div>
+
+      <div className="flex flex-col gap-1 border-t pt-5">
+        <h2 className="text-sm font-medium">Manual transitions</h2>
+        <p className="text-muted-foreground max-w-prose text-xs leading-5">
+          In Manual mode, moving a To Do task to In Progress starts its Copilot session; moving an
+          In Progress task to Review starts its code review. These starts still respect the
+          concurrency limit.
+        </p>
       </div>
 
       {busy && (

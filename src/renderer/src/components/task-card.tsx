@@ -15,14 +15,12 @@ function worktreeLabel(path: string): string {
 export function TaskCard({
   task,
   onOpen,
-  onStart,
   onReview,
   onDone,
   canReview
 }: {
   task: Task
   onOpen: (task: Task) => void
-  onStart: (task: Task) => void
   onReview: (task: Task) => void
   onDone: (task: Task) => void
   canReview: boolean
@@ -91,35 +89,6 @@ export function TaskCard({
               : (task.worktreeBranch ?? worktreeLabel(task.worktreePath))}
         </span>
       </div>
-      {task.status === 'todo' && task.queueStatus !== 'running' ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          className="mt-1 self-start"
-          onClick={(e) => {
-            e.stopPropagation()
-            onStart(task)
-          }}
-        >
-          {task.queueStatus === 'failed' ? 'Retry' : 'Start now'}
-        </Button>
-      ) : null}
-      {task.status === 'review' &&
-      (task.queueStatus === 'queued' || task.queueStatus === 'failed') ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          className="mt-1 self-start"
-          onClick={(e) => {
-            e.stopPropagation()
-            onStart(task)
-          }}
-        >
-          {task.queueStatus === 'failed' ? 'Retry review' : 'Run review now'}
-        </Button>
-      ) : null}
       {task.status === 'in_progress' ? (
         <div className="mt-1 flex flex-wrap gap-2">
           {canReview ? (

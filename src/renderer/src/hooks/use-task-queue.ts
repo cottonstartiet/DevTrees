@@ -32,9 +32,6 @@ export interface TaskQueueController {
   queuedCount: number
   runningCount: number
   failedCount: number
-  manualRunActive: boolean
-  runQueue: () => void
-  startTask: (task: Task) => Promise<void>
   moveTask: (task: Task, status: TaskStatus, beforeId?: string | null) => Promise<void>
   reviewTask: (task: Task) => Promise<void>
   canReviewTask: (task: Task) => boolean
@@ -52,7 +49,6 @@ export function useTaskQueue({
   const { byId: terminalSessionsById, observationNow } = useTerminalSessions()
   const launchCopilot = useCopilotLauncher()
   const [settings, setSettings] = React.useState<TaskQueueSettings>(DEFAULT_SETTINGS)
-  const [manualRunActive, setManualRunActive] = React.useState(false)
   const dispatchingRef = React.useRef(new Set<string>())
   const reconcilingRef = React.useRef(new Set<string>())
   const settlingRef = React.useRef(new Set<string>())
@@ -310,25 +306,13 @@ export function useTaskQueue({
   )
 
   React.useEffect(() => {
-    const shouldDrain = settings.mode === 'automatic' || manualRunActive
-    if (!shouldDrain) return
+    if (settings.mode !== 'automatic') return
     const available = settings.concurrency - runningTasks.length - dispatchingRef.current.size
     if (available <= 0) return
     for (const task of queuedTasks.slice(0, available)) {
       void executeTask(task, false)
     }
-  }, [executeTask, manualRunActive, queuedTasks, runningTasks.length, settings])
-
-  React.useEffect(() => {
-    if (
-      manualRunActive &&
-      queuedTasks.length === 0 &&
-      runningTasks.length === 0 &&
-      dispatchingRef.current.size === 0
-    ) {
-      setManualRunActive(false)
-    }
-  }, [manualRunActive, queuedTasks.length, runningTasks.length])
+  }, [executeTask, queuedTasks, runningTasks.length, settings])
 
   React.useEffect(() => {
     for (const task of runningTasks) {
@@ -385,15 +369,6 @@ export function useTaskQueue({
     }
   }, [moveTask, observationNow, runningTasks, setTaskQueueStatus, terminalSessionsById])
 
-  const handleMoveTask = React.useCallback(
-    async (task: Task, status: TaskStatus, beforeId?: string | null): Promise<void> => {
-      const movePromise = moveTask(task.id, status, beforeId)
-      if (status === 'in_progress') await materializeTaskWorktree(task)
-      await movePromise
-    },
-    [materializeTaskWorktree, moveTask]
-  )
-
   const canReviewTask = React.useCallback(
     (task: Task): boolean => {
       if (task.status !== 'in_progress' || task.queueStatus === 'running') return false
@@ -406,11 +381,48 @@ export function useTaskQueue({
     [terminalSessionsById]
   )
 
+  const hasAvailableSlot = React.useCallback((): boolean => {
+    if (runningTasks.length + dispatchingRef.current.size < settings.concurrency) return true
+    toast.info(
+      `${settings.concurrency} ${settings.concurrency === 1 ? 'task is' : 'tasks are'} already running. Finish one before starting another.`
+    )
+    return false
+  }, [runningTasks.length, settings.concurrency])
+
+  const handleMoveTask = React.useCallback(
+    async (task: Task, status: TaskStatus, beforeId?: string | null): Promise<void> => {
+      const startsTask =
+        settings.mode === 'manual' && task.status === 'todo' && status === 'in_progress'
+      const startsReview =
+        settings.mode === 'manual' && task.status === 'in_progress' && status === 'review'
+
+      if (startsTask) {
+        if (!hasAvailableSlot()) return
+        await executeTask(task, true)
+        return
+      }
+
+      if (startsReview) {
+        if (!canReviewTask(task)) {
+          toast.info('Finish the task session before moving it to Review.')
+          return
+        }
+        if (!hasAvailableSlot()) return
+        await moveTask(task.id, 'review', beforeId)
+        await executeTask({ ...task, status: 'review' }, true)
+        return
+      }
+
+      await moveTask(task.id, status, beforeId)
+    },
+    [canReviewTask, executeTask, hasAvailableSlot, moveTask, settings.mode]
+  )
+
   const reviewTask = React.useCallback(
     async (task: Task): Promise<void> => {
-      await moveTask(task.id, 'review')
+      await handleMoveTask(task, 'review')
     },
-    [moveTask]
+    [handleMoveTask]
   )
 
   return {
@@ -418,19 +430,6 @@ export function useTaskQueue({
     queuedCount: queuedTasks.length,
     runningCount: runningTasks.length,
     failedCount: failedTasks.length,
-    manualRunActive,
-    runQueue: () => {
-      void Promise.all(failedTasks.map((task) => setTaskQueueStatus(task.id, 'queued'))).then(() =>
-        setManualRunActive(true)
-      )
-    },
-    startTask: async (task) => {
-      if (runningTasks.length + dispatchingRef.current.size >= settings.concurrency) {
-        toast.info(`The task queue is already using all ${settings.concurrency} slots.`)
-        return
-      }
-      await executeTask(task, true)
-    },
     moveTask: handleMoveTask,
     reviewTask,
     canReviewTask

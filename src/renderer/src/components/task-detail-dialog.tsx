@@ -68,7 +68,6 @@ export interface TaskDetailDialogProps {
     pendingWorktreeName: string | null
   }) => Promise<void>
   onDelete: (task: Task) => Promise<void>
-  onStart: (task: Task) => Promise<void>
 }
 
 type TaskFormProps = Omit<TaskDetailDialogProps, 'open'>
@@ -85,8 +84,7 @@ function TaskDetailForm({
   worktreesByRepositoryId,
   onCreate,
   onUpdate,
-  onDelete,
-  onStart
+  onDelete
 }: TaskFormProps): React.JSX.Element {
   const isEdit = task != null
 
@@ -183,17 +181,6 @@ function TaskDetailForm({
     setBusy(true)
     try {
       await onDelete(task)
-      onOpenChange(false)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const handleStart = async (): Promise<void> => {
-    if (!task) return
-    setBusy(true)
-    try {
-      await onStart(task)
       onOpenChange(false)
     } finally {
       setBusy(false)
@@ -314,11 +301,6 @@ function TaskDetailForm({
             ) : null}
           </div>
           <div className="flex gap-2">
-            {isEdit && task?.status === 'todo' ? (
-              <Button type="button" variant="secondary" disabled={busy} onClick={handleStart}>
-                Start
-              </Button>
-            ) : null}
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               {readOnly ? 'Close' : 'Cancel'}
             </Button>

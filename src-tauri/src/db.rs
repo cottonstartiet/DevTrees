@@ -212,6 +212,14 @@ mod tests {
                 .unwrap();
             assert_eq!(count, if table == "app_settings" { 3 } else { 0 });
         }
+        let concurrency: String = conn
+            .query_row(
+                "SELECT value FROM app_settings WHERE key = 'task_queue_concurrency'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(concurrency, "2");
     }
 
     #[test]

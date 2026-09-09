@@ -183,6 +183,21 @@ mod tests {
                 concurrency: 2,
             }
         );
+        write_task_queue_settings(
+            &db,
+            TaskQueueSettings {
+                mode: TaskQueueMode::Manual,
+                concurrency: 4,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            read_task_queue_settings(&db).unwrap(),
+            TaskQueueSettings {
+                mode: TaskQueueMode::Manual,
+                concurrency: 4,
+            }
+        );
         assert!(write_task_queue_settings(
             &db,
             TaskQueueSettings {

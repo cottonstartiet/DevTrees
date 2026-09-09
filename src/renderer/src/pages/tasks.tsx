@@ -7,7 +7,7 @@ import {
   useSensors,
   type DragEndEvent
 } from '@dnd-kit/core'
-import { LoaderCircleIcon, PlayIcon, PlusIcon } from 'lucide-react'
+import { PlusIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { TaskColumn } from '@/components/task-column'
@@ -15,13 +15,11 @@ import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
 import type { Repository } from '@shared/repository'
 import type { Task, TaskStatus } from '@shared/task'
-import type { TaskQueueMode } from '@shared/settings'
 import type { Worktree } from '@shared/worktree'
 
 interface TasksPageProps {
   repositories: Repository[]
   worktreesByRepositoryId: Record<string, Worktree[]>
-  onStartTask: (task: Task) => Promise<void>
   onMoveTask: (task: Task, status: TaskStatus, beforeId?: string | null) => Promise<void>
   onReviewTask: (task: Task) => Promise<void>
   canReviewTask: (task: Task) => boolean
@@ -36,9 +34,6 @@ interface TasksHeaderControlsProps {
   queuedCount: number
   runningCount: number
   failedCount: number
-  queueMode: TaskQueueMode
-  queueRunning: boolean
-  onRunQueue: () => void
   onAddTask: () => void
 }
 
@@ -47,9 +42,6 @@ export function TasksHeaderControls({
   queuedCount,
   runningCount,
   failedCount,
-  queueMode,
-  queueRunning,
-  onRunQueue,
   onAddTask
 }: TasksHeaderControlsProps): React.JSX.Element {
   const readyCount = queuedCount + failedCount
@@ -65,26 +57,6 @@ export function TasksHeaderControls({
         <span>{readyCount} queued</span>
         {failedCount > 0 ? <span className="text-destructive">{failedCount} failed</span> : null}
       </div>
-      {queueMode === 'manual' ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          disabled={queueRunning || readyCount === 0}
-          onClick={onRunQueue}
-        >
-          {queueRunning ? (
-            <LoaderCircleIcon className="motion-reduce:animate-none animate-spin" />
-          ) : (
-            <PlayIcon />
-          )}
-          {queueRunning ? 'Queue running' : 'Run queue'}
-        </Button>
-      ) : (
-        <span className="bg-secondary text-secondary-foreground rounded-md px-2 py-1 text-xs font-medium">
-          Auto
-        </span>
-      )}
       <Button type="button" size="sm" onClick={onAddTask}>
         <PlusIcon />
         Add task
@@ -100,7 +72,6 @@ function isTaskStatus(value: string): value is TaskStatus {
 export function TasksPage({
   repositories,
   worktreesByRepositoryId,
-  onStartTask,
   onMoveTask,
   onReviewTask,
   canReviewTask,
@@ -148,7 +119,6 @@ export function TasksPage({
                 label={TASK_STATUS_LABELS[status]}
                 tasks={tasksByStatus[status]}
                 onOpenTask={onOpenTask}
-                onStartTask={(task) => void onStartTask(task)}
                 onReviewTask={(task) => void onReviewTask(task)}
                 onDoneTask={(task) => void onMoveTask(task, 'done')}
                 canReviewTask={canReviewTask}
@@ -207,7 +177,6 @@ export function TasksPage({
         onDelete={async (task) => {
           await deleteTask(task.id)
         }}
-        onStart={onStartTask}
       />
     </>
   )

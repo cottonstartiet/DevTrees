@@ -11,7 +11,6 @@ export function TaskColumn({
   label,
   tasks,
   onOpenTask,
-  onStartTask,
   onReviewTask,
   onDoneTask,
   canReviewTask
@@ -20,7 +19,6 @@ export function TaskColumn({
   label: string
   tasks: Task[]
   onOpenTask: (task: Task) => void
-  onStartTask: (task: Task) => void
   onReviewTask: (task: Task) => void
   onDoneTask: (task: Task) => void
   canReviewTask: (task: Task) => boolean
@@ -46,7 +44,6 @@ export function TaskColumn({
               key={task.id}
               task={task}
               onOpen={onOpenTask}
-              onStart={onStartTask}
               onReview={onReviewTask}
               onDone={onDoneTask}
               canReview={canReviewTask(task)}
