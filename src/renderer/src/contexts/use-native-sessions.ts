@@ -2,9 +2,11 @@ import * as React from 'react'
 import {
   acceptNativeSnapshot,
   nativeKey,
+  rekeyNativeState,
   type NativeAnswer,
   type NativeDraft,
-  type NativeSnapshot
+  type NativeSnapshot,
+  type PromptContent
 } from '@shared/native-session'
 import {
   isTerminalSessionFinished,
@@ -13,7 +15,7 @@ import {
 } from '@shared/terminal-session'
 
 function target(session: TerminalSession): TerminalTarget {
-  if (!session.generation || session.transport !== 'sdk')
+  if (!session.generation || session.transport === 'external')
     throw new Error('This is not a connected native session.')
   return { id: session.id, generation: session.generation }
 }
@@ -26,7 +28,8 @@ export function nativeError(error: unknown): string {
 export function useNativeSessions(
   sessions: Record<string, TerminalSession | undefined>,
   ingest: (session: TerminalSession, notify: boolean) => void,
-  onInteraction: (session: TerminalSession, requestId: string, message: string) => void
+  onInteraction: (session: TerminalSession, requestId: string, message: string) => void,
+  onRekey: (previous: string, actual: string) => void
 ) {
   const [nativeById, setNativeById] = React.useState<Record<string, NativeSnapshot | undefined>>({})
   const [nativeDrafts, setNativeDrafts] = React.useState<Record<string, NativeDraft | undefined>>(
@@ -37,6 +40,7 @@ export function useNativeSessions(
   const snapshots = React.useRef(nativeById)
   const known = React.useRef(sessions)
   const submitting = React.useRef(new Set<string>())
+  const promptSubmissions = React.useRef(new Map<string, { fingerprint: string; id: string }>())
   const ignored = React.useRef(new Set<string>())
   React.useEffect(() => {
     known.current = sessions
@@ -51,6 +55,18 @@ export function useNativeSessions(
       )
         return
       const previous = snapshots.current[id]
+      if (
+        snapshot.replacesId &&
+        snapshot.replacesId !== id &&
+        !ignored.current.has(snapshot.replacesId)
+      ) {
+        const previousId = snapshot.replacesId
+        setNativeDrafts((current) => rekeyNativeState(current, previousId, snapshot.session))
+        setNativeErrors((current) => rekeyNativeState(current, previousId, snapshot.session))
+        onRekey(snapshot.replacesId, id)
+        ignored.current.add(snapshot.replacesId)
+        delete snapshots.current[snapshot.replacesId]
+      }
       snapshots.current = { ...snapshots.current, [id]: snapshot }
       setNativeById(snapshots.current)
       ingest(snapshot.session, true)
@@ -64,7 +80,7 @@ export function useNativeSessions(
         }
       }
     },
-    [ingest, onInteraction]
+    [ingest, onInteraction, onRekey]
   )
 
   const refreshNative = React.useCallback(
@@ -97,17 +113,33 @@ export function useNativeSessions(
         stop = unsubscribe
         const list = await window.api.terminalSessions.list()
         for (const session of list) {
-          if (active && session.transport === 'sdk' && !isTerminalSessionFinished(session.status)) {
-            await refreshNative(session)
+          if (
+            active &&
+            session.transport !== 'external' &&
+            !isTerminalSessionFinished(session.status)
+          ) {
+            try {
+              await refreshNative(session)
+            } catch (error) {
+              if (active)
+                setNativeErrors((current) => ({
+                  ...current,
+                  [nativeKey(session, 'connection')]: nativeError(error)
+                }))
+            }
           }
         }
+        if (active)
+          setNativeErrors((current) =>
+            current.connection ? { ...current, connection: undefined } : current
+          )
       })
       .catch((error) => {
         console.error('[native sessions] subscription failed:', error)
         if (active)
           setNativeErrors((current) => ({
             ...current,
-            connection: `Native controls could not connect: ${nativeError(error)}. Restart DevTrees to reconnect.`
+            connection: `Native controls could not connect: ${nativeError(error)} Restart DevTrees to reconnect.`
           }))
       })
     return () => {
@@ -125,7 +157,11 @@ export function useNativeSessions(
       try {
         for (const session of Object.values(known.current)) {
           if (!active) break
-          if (!session || session.transport !== 'sdk' || isTerminalSessionFinished(session.status))
+          if (
+            !session ||
+            session.transport === 'external' ||
+            isTerminalSessionFinished(session.status)
+          )
             continue
           try {
             await refreshNative(session)
@@ -155,9 +191,15 @@ export function useNativeSessions(
     }
   }, [refreshNative])
 
-  const setNativeDraft = React.useCallback((key: string, draft: NativeDraft): void => {
-    setNativeDrafts((current) => ({ ...current, [key]: draft }))
-  }, [])
+  const setNativeDraft = React.useCallback(
+    (key: string, draft: NativeDraft | ((previous: NativeDraft) => NativeDraft)): void => {
+      setNativeDrafts((current) => ({
+        ...current,
+        [key]: typeof draft === 'function' ? draft(current[key] ?? {}) : draft
+      }))
+    },
+    []
+  )
 
   const runNative = React.useCallback(
     async (
@@ -167,6 +209,7 @@ export function useNativeSessions(
       clearDraft = false
     ): Promise<boolean> => {
       if (submitting.current.has(key)) return false
+      const submittedDraft = nativeDrafts[key]
       submitting.current.add(key)
       setNativeBusy((current) => ({ ...current, [key]: true }))
       setNativeErrors((current) => ({ ...current, [key]: undefined }))
@@ -174,6 +217,7 @@ export function useNativeSessions(
         await operation()
         if (clearDraft)
           setNativeDrafts((current) => {
+            if (current[key] !== submittedDraft) return current
             const next = { ...current }
             delete next[key]
             return next
@@ -196,7 +240,7 @@ export function useNativeSessions(
         setNativeBusy((current) => ({ ...current, [key]: false }))
       }
     },
-    [refreshNative]
+    [refreshNative, nativeDrafts]
   )
 
   const respondNative = React.useCallback(
@@ -219,16 +263,48 @@ export function useNativeSessions(
   )
 
   const promptNative = React.useCallback(
-    (session: TerminalSession, prompt: string, clearDraft = true): Promise<boolean> =>
-      runNative(
+    (
+      session: TerminalSession,
+      prompt: string,
+      clearDraft = true,
+      attachments: PromptContent[] = [],
+      literal = false
+    ): Promise<boolean> => {
+      const key = nativeKey(session)
+      const content: PromptContent[] = [
+        ...(prompt.trim() ? [{ type: 'text' as const, text: prompt }] : []),
+        ...attachments
+      ]
+      const fingerprint = JSON.stringify([content, literal])
+      let submission = promptSubmissions.current.get(key)
+      if (submission?.fingerprint !== fingerprint) {
+        submission = { fingerprint, id: crypto.randomUUID() }
+        promptSubmissions.current.set(key, submission)
+      }
+      const id = submission.id
+      return runNative(
         session,
-        nativeKey(session),
-        () => window.api.nativeSessions.prompt(target(session), prompt),
+        key,
+        async () => {
+          apply(await window.api.nativeSessions.enqueue(target(session), id, content, literal))
+        },
         clearDraft
-      ),
-    [runNative]
+      ).then((success) => {
+        if (success && promptSubmissions.current.get(key)?.id === id)
+          promptSubmissions.current.delete(key)
+        return success
+      })
+    },
+    [apply, runNative]
   )
 
+  const queueNative = React.useCallback(
+    (session: TerminalSession, action: string, itemId?: string, text?: string): Promise<boolean> =>
+      runNative(session, nativeKey(session, 'queue'), async () => {
+        apply(await window.api.nativeSessions.queue(target(session), action, itemId, text))
+      }),
+    [apply, runNative]
+  )
   const stopNative = React.useCallback(
     (session: TerminalSession): Promise<boolean> =>
       runNative(session, nativeKey(session, 'lifecycle'), () =>
@@ -266,6 +342,7 @@ export function useNativeSessions(
   }, [])
 
   return {
+    queueNative,
     nativeById,
     nativeDrafts,
     nativeErrors,

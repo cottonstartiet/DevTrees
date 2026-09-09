@@ -1,4 +1,5 @@
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done'
+export type TaskQueueStatus = 'queued' | 'running' | 'complete' | 'failed'
 
 export type Task = {
   id: string
@@ -12,6 +13,8 @@ export type Task = {
   worktreeBranch: string | null
   pendingWorktreeName: string | null
   copilotSessionId: string | null
+  queueStatus: TaskQueueStatus
+  queueOrder: number
   sortOrder: number
   createdAt: number
   updatedAt: number
@@ -72,11 +75,17 @@ export type SetTaskCopilotSessionRequest = {
   copilotSessionId: string
 }
 
+export type SetTaskQueueStatusRequest = {
+  id: string
+  queueStatus: TaskQueueStatus
+}
+
 export const TaskIpcChannels = {
   List: 'tasks:list',
   Create: 'tasks:create',
   Update: 'tasks:update',
   Move: 'tasks:move',
   Delete: 'tasks:delete',
-  setCopilotSession: 'tasks:set-copilot-session'
+  setCopilotSession: 'tasks:set-copilot-session',
+  setQueueStatus: 'tasks:set-queue-status'
 } as const

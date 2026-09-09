@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { MarkdownBody } from '@/components/pr-review/markdown-body'
+import { AcpComposer } from '@/components/sessions/acp-controls'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { nativeError } from '@/contexts/use-native-sessions'
 import {
@@ -154,6 +155,15 @@ export function SessionInteraction({
   const busy = nativeBusy[key] === true
   const [validationError, setValidationError] = React.useState<string | null>(null)
   const prefix = React.useId()
+  const destination = React.useMemo(() => {
+    if (interaction.kind !== 'elicitation' || !interaction.url) return null
+    try {
+      const url = new URL(interaction.url)
+      return ['https:', 'http:'].includes(url.protocol) ? url.host : null
+    } catch {
+      return null
+    }
+  }, [interaction])
   const parsed = React.useMemo(() => {
     if (interaction.kind !== 'elicitation' || interaction.url || interaction.unsupported)
       return { fields: [] }
@@ -213,6 +223,42 @@ export function SessionInteraction({
         </Button>
       ) : (
         <fieldset disabled={busy} className="min-w-0 space-y-3">
+          {interaction.kind === 'acpPermission' && (
+            <>
+              <pre className="bg-muted max-h-56 overflow-auto rounded-md p-3 text-xs whitespace-pre-wrap break-words">
+                {interaction.detail}
+              </pre>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => submit({ kind: 'cancel' })}
+                >
+                  Cancel
+                </Button>
+                {[...interaction.options]
+                  .sort(
+                    (a, b) =>
+                      Number(a.kind.startsWith('allow')) - Number(b.kind.startsWith('allow'))
+                  )
+                  .map((option) => (
+                    <Button
+                      key={option.optionId}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => submit({ kind: 'permission', action: option.optionId })}
+                    >
+                      {option.name}
+                    </Button>
+                  ))}
+              </div>
+              <p className="text-muted-foreground text-xs">
+                These permission choices are supplied by Copilot for this request.
+              </p>
+            </>
+          )}
           {interaction.kind === 'permission' && (
             <>
               {interaction.intention && (
@@ -295,6 +341,9 @@ export function SessionInteraction({
                 </p>
               ) : interaction.url ? (
                 <div className="space-y-2">
+                  <p className="break-all text-xs">
+                    Destination: {destination ?? 'Unsupported or invalid URL'}
+                  </p>
                   <p className="break-all font-mono text-xs">{interaction.url}</p>
                   <p className="text-muted-foreground text-xs">
                     Opens your browser. Consent to open is not a confirmation that sign-in has
@@ -593,60 +642,64 @@ export function NativeSessionControls({
           View {pending.length - 1} more requests
         </Button>
       )}
-      {!finished && (!compact || pending.length === 0) && (
-        <form
-          className="space-y-2"
-          onSubmit={(event) => {
-            event.preventDefault()
-            void promptNative(session, String(draft.message ?? ''))
-          }}
-        >
-          <label className="sr-only" htmlFor={`composer-${session.id}`}>
-            Message Copilot
-          </label>
-          <Textarea
-            id={`composer-${session.id}`}
-            rows={compact ? 2 : 3}
-            placeholder={
-              session.status === 'idle'
-                ? 'Message Copilot...'
-                : 'Draft your next instruction while Copilot works...'
-            }
-            value={String(draft.message ?? '')}
-            onChange={(event) => setNativeDraft(key, { message: event.target.value })}
-          />
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-muted-foreground text-xs">
-              {session.status === 'idle'
-                ? 'Your next instruction continues this conversation.'
-                : 'Send when this turn has finished. Your draft is kept here.'}
-            </p>
-            {!compact && (
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                disabled={session.status !== 'idle' || nativeBusy[key]}
-                onClick={() => void promptNative(session, '/plan', false)}
-              >
-                Enter plan mode
-              </Button>
-            )}
-            <Button
-              type="submit"
-              size="sm"
-              disabled={
-                session.status !== 'idle' ||
-                !current ||
-                nativeBusy[key] ||
-                !String(draft.message ?? '').trim()
+      {!finished &&
+        (!compact || pending.length === 0) &&
+        (session.transport === 'acp' ? (
+          <AcpComposer session={session} compact={compact} />
+        ) : (
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void promptNative(session, String(draft.message ?? ''))
+            }}
+          >
+            <label className="sr-only" htmlFor={`composer-${session.id}`}>
+              Message Copilot
+            </label>
+            <Textarea
+              id={`composer-${session.id}`}
+              rows={compact ? 2 : 3}
+              placeholder={
+                session.status === 'idle'
+                  ? 'Message Copilot...'
+                  : 'Draft your next instruction while Copilot works...'
               }
-            >
-              <SendIcon className="size-3.5" /> {nativeBusy[key] ? 'Sending...' : 'Send'}
-            </Button>
-          </div>
-        </form>
-      )}
+              value={String(draft.message ?? '')}
+              onChange={(event) => setNativeDraft(key, { message: event.target.value })}
+            />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-muted-foreground text-xs">
+                {session.status === 'idle'
+                  ? 'Your next instruction continues this conversation.'
+                  : 'Send when this turn has finished. Your draft is kept here.'}
+              </p>
+              {!compact && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={session.status !== 'idle' || nativeBusy[key]}
+                  onClick={() => void promptNative(session, '/plan', false)}
+                >
+                  Enter plan mode
+                </Button>
+              )}
+              <Button
+                type="submit"
+                size="sm"
+                disabled={
+                  session.status !== 'idle' ||
+                  !current ||
+                  nativeBusy[key] ||
+                  !String(draft.message ?? '').trim()
+                }
+              >
+                <SendIcon className="size-3.5" /> {nativeBusy[key] ? 'Sending...' : 'Send'}
+              </Button>
+            </div>
+          </form>
+        ))}
     </div>
   )
 }

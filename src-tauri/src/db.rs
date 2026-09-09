@@ -32,6 +32,9 @@ const SCHEMA: &str = "
         worktree_branch       TEXT,
         pending_worktree_name TEXT,
         copilot_session_id    TEXT,
+        queue_status          TEXT NOT NULL DEFAULT 'queued'
+            CHECK (queue_status IN ('queued', 'running', 'complete', 'failed')),
+        queue_order           INTEGER NOT NULL DEFAULT 0,
         sort_order            INTEGER NOT NULL DEFAULT 0,
         created_at            INTEGER NOT NULL,
         updated_at            INTEGER NOT NULL
@@ -56,7 +59,14 @@ const SCHEMA: &str = "
     );
     CREATE INDEX IF NOT EXISTS idx_terminal_sessions_task ON terminal_sessions(task_id);
 
-    PRAGMA user_version = 1;
+    CREATE TABLE IF NOT EXISTS auto_review_triggers (
+        repository_path TEXT COLLATE NOCASE NOT NULL,
+        provider        TEXT NOT NULL,
+        pull_request_id INTEGER NOT NULL,
+        triggered_at    INTEGER NOT NULL,
+        PRIMARY KEY (repository_path, provider, pull_request_id)
+    );
+
 ";
 
 /// The desktop app shares one SQLite connection across its commands.
@@ -84,17 +94,62 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
         }
     }
     tx.execute("UPDATE terminal_sessions SET transport = 'acp' WHERE managed = 1 AND transport = 'external'", [])?;
+    let task_columns = {
+        let mut statement = tx.prepare("PRAGMA table_info(tasks)")?;
+        let values = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        values
+    };
+    let added_queue_status = !task_columns.iter().any(|column| column == "queue_status");
+    let added_queue_order = !task_columns.iter().any(|column| column == "queue_order");
+    for (name, definition) in [
+        ("queue_status", "TEXT NOT NULL DEFAULT 'queued'"),
+        ("queue_order", "INTEGER NOT NULL DEFAULT 0"),
+    ] {
+        if !task_columns.iter().any(|column| column == name) {
+            tx.execute_batch(&format!(
+                "ALTER TABLE tasks ADD COLUMN {name} {definition};"
+            ))?;
+        }
+    }
+    if added_queue_status {
+        tx.execute(
+            "UPDATE tasks SET queue_status = CASE
+                 WHEN status IN ('todo', 'review') THEN 'queued'
+                 ELSE 'complete'
+             END",
+            [],
+        )?;
+    }
+    if added_queue_order {
+        tx.execute("UPDATE tasks SET queue_order = rowid", [])?;
+    }
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS app_settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
          );
          INSERT OR IGNORE INTO app_settings (key, value)
-             VALUES ('session_launch_mode', 'external');
+             VALUES ('session_launch_mode', 'acp');
+         INSERT OR IGNORE INTO app_settings (key, value)
+             VALUES ('task_queue_mode', 'manual');
+         INSERT OR IGNORE INTO app_settings (key, value)
+             VALUES ('task_queue_concurrency', '2');
+         UPDATE app_settings SET value = 'acp'
+             WHERE key = 'session_launch_mode' AND value = 'sdk';
          UPDATE app_settings SET value = 'external'
              WHERE key = 'session_launch_mode' AND value = 'pty';
+         CREATE TABLE IF NOT EXISTS acp_queue_state (
+             session_id TEXT PRIMARY KEY,
+             payload TEXT NOT NULL
+         );
+         CREATE TABLE IF NOT EXISTS acp_transcripts (
+             session_id TEXT PRIMARY KEY,
+             payload TEXT NOT NULL
+         );
          DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
-         PRAGMA user_version = 3;",
+         PRAGMA user_version = 6;",
     )?;
     tx.commit()?;
     Ok(())
@@ -127,7 +182,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 6);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -139,7 +194,15 @@ mod tests {
             .unwrap();
         assert_eq!(
             tables,
-            ["app_settings", "repositories", "tasks", "terminal_sessions"]
+            [
+                "acp_queue_state",
+                "acp_transcripts",
+                "app_settings",
+                "auto_review_triggers",
+                "repositories",
+                "tasks",
+                "terminal_sessions"
+            ]
         );
         for table in tables {
             let count: i64 = conn
@@ -147,7 +210,7 @@ mod tests {
                     row.get(0)
                 })
                 .unwrap();
-            assert_eq!(count, if table == "app_settings" { 1 } else { 0 });
+            assert_eq!(count, if table == "app_settings" { 3 } else { 0 });
         }
     }
 
@@ -180,14 +243,14 @@ mod tests {
         assert_eq!(count, 0);
         assert_eq!(
             crate::settings::read_launch_mode(&conn).unwrap(),
-            crate::settings::SessionLaunchMode::External
+            crate::settings::SessionLaunchMode::Acp
         );
         conn.execute("UPDATE app_settings SET value='sdk'", [])
             .unwrap();
         initialize_schema(&conn).unwrap();
         assert_eq!(
             crate::settings::read_launch_mode(&conn).unwrap(),
-            crate::settings::SessionLaunchMode::Sdk
+            crate::settings::SessionLaunchMode::Acp
         );
         conn.execute("UPDATE app_settings SET value='pty'", [])
             .unwrap();
@@ -212,7 +275,10 @@ mod tests {
                      'repo', 'planned', 'session', 1, 1);
              INSERT INTO terminal_sessions
                 (id, task_id, folder_path, label, status, cursor, seq, managed, created_at, updated_at)
-             VALUES ('session', 'task', 'repo', 'Session', 'idle', 123, 7, 1, 1, 1);",
+             VALUES ('session', 'task', 'repo', 'Session', 'idle', 123, 7, 1, 1, 1);
+             INSERT INTO auto_review_triggers
+                (repository_path, provider, pull_request_id, triggered_at)
+             VALUES ('repo', 'github', 42, 1);",
         )
         .unwrap();
         conn.execute("UPDATE app_settings SET value='sdk'", [])
@@ -222,7 +288,7 @@ mod tests {
         let conn = init(&data_dir).unwrap();
         assert_eq!(
             crate::settings::read_launch_mode(&conn).unwrap(),
-            crate::settings::SessionLaunchMode::Sdk
+            crate::settings::SessionLaunchMode::Acp
         );
         let repository: (String, i64) = conn
             .query_row("SELECT name, sort_order FROM repositories", [], |row| {
@@ -231,14 +297,33 @@ mod tests {
             .unwrap();
         assert_eq!(repository, ("Repo".into(), 0));
 
-        let task: (String, String, String, i64) = conn
+        let task: (String, String, String, i64, String) = conn
             .query_row(
-                "SELECT copilot_session_id, pending_worktree_name, description, sort_order FROM tasks",
+                "SELECT copilot_session_id, pending_worktree_name, description, sort_order,
+                        queue_status
+                 FROM tasks",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
             )
             .unwrap();
-        assert_eq!(task, ("session".into(), "planned".into(), "".into(), 0));
+        assert_eq!(
+            task,
+            (
+                "session".into(),
+                "planned".into(),
+                "".into(),
+                0,
+                "queued".into()
+            )
+        );
 
         let session: (String, i64, i64, i64) = conn
             .query_row(
@@ -248,6 +333,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(session, ("task".into(), 1, 123, 7));
+        let review_trigger: (String, String, i64) = conn
+            .query_row(
+                "SELECT repository_path, provider, pull_request_id FROM auto_review_triggers",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(review_trigger, ("repo".into(), "github".into(), 42));
         conn.close().unwrap();
         fs::remove_file(data_dir.join(DB_FILE)).unwrap();
         fs::remove_dir(data_dir).unwrap();

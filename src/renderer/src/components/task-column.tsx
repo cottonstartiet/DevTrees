@@ -13,6 +13,7 @@ export function TaskColumn({
   onOpenTask,
   onStartTask,
   onReviewTask,
+  onDoneTask,
   canReviewTask
 }: {
   status: TaskStatus
@@ -21,6 +22,7 @@ export function TaskColumn({
   onOpenTask: (task: Task) => void
   onStartTask: (task: Task) => void
   onReviewTask: (task: Task) => void
+  onDoneTask: (task: Task) => void
   canReviewTask: (task: Task) => boolean
 }): React.JSX.Element {
   const { setNodeRef, isOver } = useDroppable({ id: status })
@@ -46,6 +48,7 @@ export function TaskColumn({
               onOpen={onOpenTask}
               onStart={onStartTask}
               onReview={onReviewTask}
+              onDone={onDoneTask}
               canReview={canReviewTask(task)}
             />
           ))}

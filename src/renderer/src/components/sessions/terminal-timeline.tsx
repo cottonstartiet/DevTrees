@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 
 import { MarkdownBody } from '@/components/pr-review/markdown-body'
+import { AcpEntry } from '@/components/sessions/acp-content'
 import { cn } from '@/lib/utils'
 import type { TerminalTimelineEntry } from '@shared/terminal-session'
 
@@ -65,6 +66,16 @@ function Body({ children }: { children: React.ReactNode }): React.JSX.Element {
 
 function Entry({ entry }: { entry: TerminalTimelineEntry }): React.JSX.Element | null {
   switch (entry.kind) {
+    case 'acp':
+      return (
+        <Row
+          icon={<TerminalIcon className="size-3.5" />}
+          title={entry.category === 'tool' ? 'Tool activity' : 'Copilot'}
+          timestamp={entry.timestamp}
+        >
+          <AcpEntry category={entry.category} data={entry.data} />
+        </Row>
+      )
     case 'userMessage':
       return (
         <Row icon={<UserIcon className="size-3.5" />} title="You" timestamp={entry.timestamp}>

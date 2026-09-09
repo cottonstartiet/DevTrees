@@ -1,4 +1,66 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use rusqlite::{params, Connection};
 use serde::Serialize;
+use tauri::State;
+
+use crate::db::DbState;
+use crate::error::{AppError, AppResult};
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoReviewClaimResult {
+    pub claimed: bool,
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+fn claim_auto_review(
+    conn: &Connection,
+    repository_path: &str,
+    provider: &str,
+    pull_request_id: i64,
+) -> rusqlite::Result<bool> {
+    let changed = conn.execute(
+        "INSERT OR IGNORE INTO auto_review_triggers
+            (repository_path, provider, pull_request_id, triggered_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![repository_path, provider, pull_request_id, now_ms()],
+    )?;
+    Ok(changed == 1)
+}
+
+#[tauri::command]
+pub async fn reviews_claim_auto_trigger(
+    state: State<'_, DbState>,
+    repository_path: String,
+    provider: String,
+    pull_request_id: i64,
+) -> AppResult<AutoReviewClaimResult> {
+    let repository_path = repository_path.trim();
+    if repository_path.is_empty() {
+        return Err(AppError::msg("repositoryPath is required"));
+    }
+    if !matches!(provider.as_str(), "github" | "ado") {
+        return Err(AppError::msg("provider must be github or ado"));
+    }
+    if pull_request_id <= 0 {
+        return Err(AppError::msg("pullRequestId must be positive"));
+    }
+
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("db mutex poisoned"))?;
+    Ok(AutoReviewClaimResult {
+        claimed: claim_auto_review(&conn, repository_path, &provider, pull_request_id)?,
+    })
+}
 
 /// Provider-agnostic pull request shape shared by the ADO and GitHub Reviews backends.
 ///
@@ -143,6 +205,36 @@ pub struct RepoPrThreadsResult {
     pub code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn connection() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE auto_review_triggers (
+                repository_path TEXT COLLATE NOCASE NOT NULL,
+                provider TEXT NOT NULL,
+                pull_request_id INTEGER NOT NULL,
+                triggered_at INTEGER NOT NULL,
+                PRIMARY KEY (repository_path, provider, pull_request_id)
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn auto_review_claim_is_persistent_and_case_insensitive_for_paths() {
+        let conn = connection();
+
+        assert!(claim_auto_review(&conn, r"C:\Code\Repo", "github", 42).unwrap());
+        assert!(!claim_auto_review(&conn, r"c:\code\repo", "github", 42).unwrap());
+        assert!(claim_auto_review(&conn, r"C:\Code\Repo", "ado", 42).unwrap());
+        assert!(claim_auto_review(&conn, r"C:\Code\Repo", "github", 43).unwrap());
+    }
 }
 
 impl RepoPrThreadsResult {

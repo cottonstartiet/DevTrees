@@ -203,10 +203,10 @@ function TaskDetailForm({
   const statusLabel: string | null = task ? TASK_STATUS_LABELS[task.status as TaskStatus] : null
 
   return (
-    <DialogContent className="sm:max-w-md">
-      <DialogHeader>
+    <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] min-w-0 overflow-y-auto sm:max-w-2xl">
+      <DialogHeader className="min-w-0">
         <DialogTitle>{isEdit ? 'Task details' : 'Add task'}</DialogTitle>
-        <DialogDescription>
+        <DialogDescription className="break-words">
           {isEdit
             ? readOnly
               ? `Status: ${statusLabel} · read-only. Move the task back to To Do to edit it.`
@@ -215,8 +215,8 @@ function TaskDetailForm({
         </DialogDescription>
       </DialogHeader>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div className="flex flex-col gap-1.5">
+      <form onSubmit={handleSubmit} className="flex min-w-0 flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-1.5">
           <label htmlFor="task-title" className="text-sm font-medium">
             Title
           </label>
@@ -233,7 +233,7 @@ function TaskDetailForm({
           {titleError ? <p className="text-destructive text-xs">{titleError}</p> : null}
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-1.5">
           <label htmlFor="task-description" className="text-sm font-medium">
             Description
           </label>
@@ -244,13 +244,14 @@ function TaskDetailForm({
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Add more context for this task…"
             rows={4}
+            className="max-w-full min-w-0 field-sizing-fixed resize-y [overflow-wrap:anywhere]"
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-1.5">
           <span className="text-sm font-medium">Repository</span>
           <Select value={repositoryId} onValueChange={handleRepositoryChange} disabled={readOnly}>
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full min-w-0">
               <SelectValue placeholder="Select a repository" />
             </SelectTrigger>
             <SelectContent>
@@ -263,14 +264,14 @@ function TaskDetailForm({
           </Select>
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex min-w-0 flex-col gap-1.5">
           <span className="text-sm font-medium">Run in</span>
           <Select
             value={worktreeSelection}
             onValueChange={setWorktreeSelection}
             disabled={readOnly || !repository}
           >
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full min-w-0">
               <SelectValue placeholder="Select a worktree" />
             </SelectTrigger>
             <SelectContent>

@@ -191,22 +191,33 @@ A slim bottom bar surfacing repo/branch/PR state and background task progress â€
 
 ### Copilot Session Modes
 Settings is the only launch-mode control: In-app chat or External Copilot terminal.
-The SQLite-backed preference defaults to external and applies to new and resumed
-sessions without moving active runtimes. External sessions use compact status and
+The SQLite-backed preference defaults to ACP for new installations, migrates SDK
+preferences to ACP, and preserves an explicit external choice. It applies to new
+and resumed sessions without moving active runtimes. External sessions use compact status and
 metadata only, without an in-app terminal or transcript. Their rows disappear on
 exit and are not restored after an app restart.
 
 ### Native Copilot Sessions
 Native sessions use the same compact transcript rows, followed by an inline
-request region and idle-only composer. The mode is explicit in the session
+request region and Send/Queue composer. The ACP mode is explicit in the session
 header; Stop turn, End session, and Resume are distinct.
 Do not style this surface as a consumer chat app or introduce approval modals.
 
-Permission details precede Deny and Allow once. Approval must never be the
+Permission details precede the agent's exact offered decisions, with rejection
+options before approval options. Approval must never be the
 default action of a form or receive automatic focus. Structured fields have
 labels, explicit choices, typed values and visible errors; do not silently pick
 the first option. Pending request and composer drafts are shared across Session
 and Dashboard. Only explicit navigation to a request moves focus.
+
+Commands use a compact portal popover populated by the connected agent, not a
+static terminal-command list. Agent configuration remains owned by Copilot CLI.
+Unsupported actions and content fail visibly. Attachments appear as removable
+context rows. Queue state is independent
+of turn state: show pause/resume, unsent edit/reorder/remove, and delivery-unknown
+warnings without presenting ambiguous delivery as a success. Stop pauses queued
+work; reopening requires explicit conversation and queue resume. Starting,
+loading, stopping and ending states must not masquerade as idle.
 
 Dashboard offers compact responses without nested cards; complex forms link to
 the exact request. To change a conversation's launch mode, end the runtime, change

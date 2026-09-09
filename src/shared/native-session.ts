@@ -4,6 +4,12 @@ export type PermissionScope = { action: string; label: string; description: stri
 
 export type NativeInteraction = { id: string; createdAt: number } & (
   | {
+      kind: 'acpPermission'
+      message: string
+      options: { optionId: string; name: string; kind: string }[]
+      detail: string
+    }
+  | {
       kind: 'permission'
       message: string
       permissionKind: string
@@ -44,12 +50,90 @@ export type NativeSnapshot = {
   entries: TerminalTimelineEntry[]
   historyTruncated: boolean
   error: string | null
+  commands?: AcpCommand[]
+  commandsReady?: boolean
+  capabilities?: {
+    promptCapabilities?: { image?: boolean; embeddedContext?: boolean }
+    sessionCapabilities?: { list?: Record<string, unknown>; close?: Record<string, unknown> }
+    loadSession?: boolean
+  }
+  queue?: QueuedPrompt[]
+  queuePaused?: boolean
+  phase?: string
+  replacesId?: string | null
+  usage?: { used: number; size: number; cost?: { amount: number; currency: string } } | null
+}
+
+export type AcpCommand = { name: string; description: string; input?: { hint: string } }
+export type PromptContent =
+  | { type: 'text'; text: string }
+  | { type: 'image'; data: string; mimeType: string }
+  | { type: 'resource'; resource: { uri: string; text: string; mimeType?: string } }
+  | { type: 'resource_link'; uri: string; name: string }
+export type QueuedPrompt = {
+  id: string
+  text: string
+  attachmentCount: number
+  status:
+    | 'queued'
+    | 'dispatching'
+    | 'active'
+    | 'completed'
+    | 'cancelled'
+    | 'failed'
+    | 'delivery-unknown'
+  error: string | null
 }
 
 export type NativeDraft = Record<string, string | boolean | string[]>
 
+function isPromptContent(value: unknown): value is PromptContent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const block = value as Record<string, unknown>
+  if (block.type === 'text') return typeof block.text === 'string'
+  if (block.type === 'image')
+    return typeof block.data === 'string' && typeof block.mimeType === 'string'
+  if (block.type === 'resource_link')
+    return typeof block.uri === 'string' && typeof block.name === 'string'
+  if (block.type !== 'resource' || !block.resource || typeof block.resource !== 'object')
+    return false
+  const resource = block.resource as Record<string, unknown>
+  return (
+    typeof resource.uri === 'string' &&
+    typeof resource.text === 'string' &&
+    (resource.mimeType === undefined || typeof resource.mimeType === 'string')
+  )
+}
+
+export function parsePromptAttachments(value: string): {
+  content: PromptContent[]
+  error?: string
+} {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    return { content: [], error: 'The attachment draft is not valid JSON.' }
+  }
+  if (!Array.isArray(parsed) || !parsed.every(isPromptContent)) {
+    return { content: [], error: 'The attachment draft contains unsupported content.' }
+  }
+  return { content: parsed }
+}
+
 export function endedNativeHistory(entries: TerminalTimelineEntry[]): TerminalTimelineEntry[] {
   return entries.map((entry) => {
+    if (
+      entry.kind === 'acp' &&
+      entry.category === 'tool' &&
+      entry.data &&
+      typeof entry.data === 'object'
+    ) {
+      const data = entry.data as Record<string, unknown>
+      if (!data.status || data.status === 'pending' || data.status === 'in_progress') {
+        return { ...entry, data: { ...data, status: 'incomplete' } }
+      }
+    }
     if (entry.kind === 'toolCall' && entry.success == null) {
       return {
         ...entry,
@@ -71,12 +155,31 @@ export function nativeKey(
   return JSON.stringify([session.id, session.generation, request])
 }
 
+export function rekeyNativeState<T>(
+  values: Record<string, T>,
+  previous: string,
+  session: Pick<TerminalSession, 'id' | 'generation'>
+): Record<string, T> {
+  let next = values
+  for (const [key, value] of Object.entries(values)) {
+    if (!key.startsWith('[')) continue
+    const identity: unknown = JSON.parse(key)
+    if (!Array.isArray(identity) || identity[0] !== previous || identity[1] !== session.generation)
+      continue
+    if (next === values) next = { ...values }
+    const target = nativeKey(session, String(identity[2]))
+    if (!(target in next)) next[target] = value
+    delete next[key]
+  }
+  return next
+}
+
 export function acceptNativeSnapshot(
   incoming: NativeSnapshot,
   previous?: NativeSnapshot,
   known?: TerminalSession
 ): boolean {
-  if (incoming.session.transport !== 'sdk' || !incoming.session.generation) return false
+  if (incoming.session.transport === 'external' || !incoming.session.generation) return false
   if (known && incoming.session.revision < known.revision) return false
   if (
     known &&

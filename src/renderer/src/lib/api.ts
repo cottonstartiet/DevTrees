@@ -13,8 +13,8 @@
  */
 import { invoke } from '@tauri-apps/api/core'
 import type { TerminalTarget } from '@shared/terminal-session'
-import type { SessionLaunchMode } from '@shared/settings'
-import type { NativeAnswer, NativeSnapshot } from '@shared/native-session'
+import type { SessionLaunchMode, TaskQueueSettings } from '@shared/settings'
+import type { NativeAnswer, NativeSnapshot, PromptContent } from '@shared/native-session'
 import { listen } from '@tauri-apps/api/event'
 
 import type { AddRepositoryResult, Repository } from '@shared/repository'
@@ -82,6 +82,8 @@ import type {
   PrSetVoteRequest
 } from '@shared/pr-review'
 import type {
+  AutoReviewClaimRequest,
+  AutoReviewClaimResult,
   RepoOpenPrsRequest,
   RepoOpenPrsResult,
   RepoPrThreadsRequest,
@@ -98,18 +100,15 @@ import type {
   MoveTaskRequest,
   MoveTaskResult,
   SetTaskCopilotSessionRequest,
+  SetTaskQueueStatusRequest,
   Task,
   UpdateTaskRequest,
   UpdateTaskResult
 } from '@shared/task'
 import {
-  TERMINAL_SESSIONS_INTERACTION_EVENT,
   TERMINAL_SESSIONS_UPDATE_EVENT,
-  type RespondTerminalSessionRequest,
   type StartTerminalSessionRequest,
   type TerminalSession,
-  type TerminalSessionInteraction,
-  type TerminalSessionInteractionUpdate,
   type TerminalSessionResult,
   type TerminalSessionUpdate,
   type TerminalTimelineEntry
@@ -262,6 +261,8 @@ const api = {
       result('repo_detect_merge_state', { ...req }, (error) => ({ ok: false, error }))
   },
   reviews: {
+    claimAutoReview: (req: AutoReviewClaimRequest): Promise<AutoReviewClaimResult> =>
+      invoke('reviews_claim_auto_trigger', { ...req }),
     openPrs: {
       ado: (req: RepoOpenPrsRequest): Promise<RepoOpenPrsResult> =>
         result('ado_repo_open_prs', { ...req }, (message) => ({
@@ -361,7 +362,10 @@ const api = {
   settings: {
     sessionLaunchMode: (): Promise<SessionLaunchMode> => invoke('settings_session_launch_mode'),
     setSessionLaunchMode: (mode: SessionLaunchMode): Promise<void> =>
-      invoke('settings_set_session_launch_mode', { mode })
+      invoke('settings_set_session_launch_mode', { mode }),
+    taskQueue: (): Promise<TaskQueueSettings> => invoke('settings_task_queue'),
+    setTaskQueue: (settings: TaskQueueSettings): Promise<void> =>
+      invoke('settings_set_task_queue', { settings })
   },
   copilotHistory: {
     list: (): Promise<CopilotHistoryListResult> =>
@@ -380,6 +384,25 @@ const api = {
       }))
   },
   nativeSessions: {
+    listSaved: (
+      target: TerminalTarget,
+      cursor?: string
+    ): Promise<{
+      sessions: { sessionId: string; cwd: string; title?: string; updatedAt?: string }[]
+      nextCursor?: string
+    }> => invoke('acp_session_list', { target, cursor }),
+    enqueue: (
+      target: TerminalTarget,
+      id: string,
+      prompt: PromptContent[],
+      literal = false
+    ): Promise<NativeSnapshot> => invoke('acp_session_enqueue', { target, id, prompt, literal }),
+    queue: (
+      target: TerminalTarget,
+      action: string,
+      itemId?: string,
+      text?: string
+    ): Promise<NativeSnapshot> => invoke('acp_session_queue', { target, action, itemId, text }),
     snapshot: (target: TerminalTarget): Promise<NativeSnapshot> =>
       invoke('native_session_snapshot', { target }),
     respond: (
@@ -388,8 +411,6 @@ const api = {
       answer: NativeAnswer
     ): Promise<NativeSnapshot> =>
       invoke('native_session_respond', { target, interactionId, answer }),
-    prompt: (target: TerminalTarget, prompt: string): Promise<void> =>
-      invoke('native_session_prompt', { target, prompt }),
     cancel: (target: TerminalTarget): Promise<void> => invoke('native_session_cancel', { target }),
     end: (target: TerminalTarget): Promise<void> => invoke('native_session_end', { target }),
     onUpdate: (cb: (snapshot: NativeSnapshot) => void): Promise<() => void> =>
@@ -400,22 +421,11 @@ const api = {
     start: (req: StartTerminalSessionRequest): Promise<TerminalSessionResult> =>
       result('terminal_sessions_start', { req }, (error) => ({ ok: false, error })),
     isRunning: (id: string): Promise<boolean> => invoke('terminal_sessions_is_running', { id }),
-    prompt: (id: string, prompt: string): Promise<void> =>
-      invoke('terminal_sessions_prompt', { id, prompt }),
-    interaction: (id: string): Promise<TerminalSessionInteraction | null> =>
-      invoke('terminal_sessions_interaction', { id }),
-    respond: (req: RespondTerminalSessionRequest): Promise<void> =>
-      invoke('terminal_sessions_respond', { req }),
-    cancel: (id: string): Promise<void> => invoke('terminal_sessions_cancel', { id }),
     forget: (id: string): Promise<void> => invoke('terminal_sessions_forget', { id }),
     history: (id: string): Promise<TerminalTimelineEntry[]> =>
       invoke('terminal_sessions_history', { id }),
     onUpdate: (cb: (update: TerminalSessionUpdate) => void): Promise<() => void> =>
-      listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) => cb(event.payload)),
-    onInteraction: (cb: (update: TerminalSessionInteractionUpdate) => void): Promise<() => void> =>
-      listen<TerminalSessionInteractionUpdate>(TERMINAL_SESSIONS_INTERACTION_EVENT, (event) =>
-        cb(event.payload)
-      )
+      listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) => cb(event.payload))
   },
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),
@@ -445,6 +455,12 @@ const api = {
       })),
     setCopilotSession: (req: SetTaskCopilotSessionRequest): Promise<UpdateTaskResult> =>
       result('tasks_set_copilot_session', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      })),
+    setQueueStatus: (req: SetTaskQueueStatusRequest): Promise<UpdateTaskResult> =>
+      result('tasks_set_queue_status', { ...req }, (message) => ({
         ok: false,
         error: 'unknown',
         message

@@ -69,10 +69,16 @@ pub(crate) fn store_path() -> Option<std::path::PathBuf> {
 /// `copilot_analytics` since both only ever read from this file.
 pub(crate) fn open_store_readonly() -> Result<Connection, (&'static str, String)> {
     let Some(path) = store_path() else {
-        return Err(("missing", "No Copilot sessions have been recorded yet.".to_string()));
+        return Err((
+            "missing",
+            "No Copilot sessions have been recorded yet.".to_string(),
+        ));
     };
     if !path.exists() {
-        return Err(("missing", "No Copilot sessions have been recorded yet.".to_string()));
+        return Err((
+            "missing",
+            "No Copilot sessions have been recorded yet.".to_string(),
+        ));
     }
     match Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
         Ok(conn) => {
@@ -81,7 +87,10 @@ pub(crate) fn open_store_readonly() -> Result<Connection, (&'static str, String)
         }
         Err(err) => {
             eprintln!("[copilot-store] failed to open session store: {err}");
-            Err(("unreadable", "Could not read the Copilot session store.".to_string()))
+            Err((
+                "unreadable",
+                "Could not read the Copilot session store.".to_string(),
+            ))
         }
     }
 }

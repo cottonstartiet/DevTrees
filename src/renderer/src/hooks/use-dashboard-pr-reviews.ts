@@ -1,15 +1,22 @@
 import * as React from 'react'
 
+import {
+  AUTO_REVIEW_REFRESH_INTERVAL_MS,
+  autoReviewKey,
+  processAutoReviews,
+  type AutoReviewStatus
+} from '@/lib/auto-reviews'
+import { useCopilotLauncher } from '@/lib/copilot-launch'
+import { buildPrCodeReviewPrompt } from '@/lib/copilot-pr-review-prompt'
 import { getRepoOpenPrs } from '@/lib/reviews'
 import type { RepoPr } from '@shared/reviews'
 import type { Repository } from '@shared/repository'
-
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 export type DashboardAssignedPr = {
   key: string
   repository: Repository
   pr: RepoPr
+  autoReviewStatus: AutoReviewStatus
 }
 
 export type DashboardPrReviews = {
@@ -19,13 +26,14 @@ export type DashboardPrReviews = {
   refresh: () => Promise<void>
 }
 
-function reviewKey(repository: Repository, pr: RepoPr): string {
-  return `${repository.path.toLowerCase()}::${pr.provider}::${pr.id}`
-}
-
 export function useDashboardPrReviews(repositories: Repository[]): DashboardPrReviews {
-  const [items, setItems] = React.useState<DashboardAssignedPr[]>([])
-  const [errors, setErrors] = React.useState<string[]>([])
+  const launchCopilot = useCopilotLauncher()
+  const [assignedItems, setAssignedItems] = React.useState<
+    Omit<DashboardAssignedPr, 'autoReviewStatus'>[]
+  >([])
+  const [loadErrors, setLoadErrors] = React.useState<string[]>([])
+  const [automationErrors, setAutomationErrors] = React.useState<Record<string, string>>({})
+  const [automationByKey, setAutomationByKey] = React.useState<Record<string, AutoReviewStatus>>({})
   const [isLoading, setIsLoading] = React.useState(false)
   const refreshSequenceRef = React.useRef(0)
 
@@ -71,32 +79,96 @@ export function useDashboardPrReviews(repositories: Repository[]): DashboardPrRe
     )
     if (sequence !== refreshSequenceRef.current) return
 
-    setItems(
-      results
-        .flatMap(({ repository, prs }) =>
-          prs
-            .filter((pr) => pr.category === 'assigned')
-            .map((pr) => ({ key: reviewKey(repository, pr), repository, pr }))
-        )
-        .sort((left, right) => (right.pr.createdAt ?? '').localeCompare(left.pr.createdAt ?? ''))
-    )
-    setErrors(
+    const nextItems = results
+      .flatMap(({ repository, prs }) =>
+        prs
+          .filter((pr) => pr.category === 'assigned')
+          .map((pr) => ({
+            key: autoReviewKey(repository.path, pr.provider, pr.id),
+            repository,
+            pr
+          }))
+      )
+      .sort((left, right) => (right.pr.createdAt ?? '').localeCompare(left.pr.createdAt ?? ''))
+
+    setAssignedItems(nextItems)
+    setLoadErrors(
       results.flatMap(({ repository, error }) => (error ? [`${repository.name}: ${error}`] : []))
     )
     setIsLoading(false)
-  }, [supportedRepositories])
+
+    const activeKeys = new Set(nextItems.map((item) => item.key))
+    setAutomationErrors((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => activeKeys.has(key)))
+    )
+    setAutomationByKey((current) =>
+      Object.fromEntries(Object.entries(current).filter(([key]) => activeKeys.has(key)))
+    )
+
+    const automationFailures = await processAutoReviews(
+      nextItems,
+      async (item) =>
+        (
+          await window.api.reviews.claimAutoReview({
+            repositoryPath: item.repository.path,
+            provider: item.pr.provider,
+            pullRequestId: item.pr.id
+          })
+        ).claimed,
+      async (item) =>
+        launchCopilot({
+          folderPath: item.repository.path,
+          prompt: buildPrCodeReviewPrompt({
+            folderPath: item.repository.path,
+            provider: item.pr.provider,
+            prNumber: item.pr.id,
+            prTitle: item.pr.title,
+            prWebUrl: item.pr.webUrl,
+            sourceRef: item.pr.sourceRef,
+            targetRef: item.pr.targetRef
+          }),
+          label: `Review PR #${item.pr.id}`,
+          repository: item.repository.name,
+          background: true
+        }),
+      (item, status) => {
+        setAutomationByKey((current) => ({ ...current, [item.key]: status }))
+      }
+    )
+    setAutomationErrors(
+      Object.fromEntries(
+        nextItems.flatMap((item) => {
+          const error = automationFailures[item.key]
+          return error ? [[item.key, `${item.repository.name} #${item.pr.id}: ${error}`]] : []
+        })
+      )
+    )
+  }, [launchCopilot, supportedRepositories])
 
   React.useEffect(() => {
     let cancelled = false
     queueMicrotask(() => {
       if (!cancelled) void refresh()
     })
-    const interval = window.setInterval(() => void refresh(), REFRESH_INTERVAL_MS)
+    const interval = window.setInterval(() => void refresh(), AUTO_REVIEW_REFRESH_INTERVAL_MS)
     return () => {
       cancelled = true
       window.clearInterval(interval)
     }
   }, [repositoryKey, refresh])
+
+  const items = React.useMemo(
+    () =>
+      assignedItems.map((item) => ({
+        ...item,
+        autoReviewStatus: automationByKey[item.key] ?? 'checking'
+      })),
+    [assignedItems, automationByKey]
+  )
+  const errors = React.useMemo(
+    () => [...loadErrors, ...Object.values(automationErrors)],
+    [automationErrors, loadErrors]
+  )
 
   return { items, errors, isLoading, refresh }
 }

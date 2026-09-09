@@ -28,6 +28,13 @@ pub struct PermissionScope {
     rename_all_fields = "camelCase"
 )]
 pub enum InteractionRequest {
+    AcpPermission {
+        message: String,
+        options: Vec<crate::terminal_sessions::TerminalSessionPermissionOption>,
+        detail: String,
+    },
+    // Retained for compatibility with legacy native session requests.
+    #[allow(dead_code)]
     Permission {
         message: String,
         /// Wire `kind` of the prompt: `read`, `write`, `commands`, `url`, ...
@@ -51,25 +58,30 @@ pub enum InteractionRequest {
         url: Option<String>,
         unsupported: Option<String>,
     },
+    // Retained for compatibility with legacy native session requests.
+    #[allow(dead_code)]
     Question {
         message: String,
         choices: Vec<String>,
         allow_freeform: bool,
     },
+    // Retained for compatibility with legacy native session requests.
+    #[allow(dead_code)]
     Plan {
         message: String,
         plan: Option<String>,
         actions: Vec<String>,
     },
-    AutoMode {
-        message: String,
-    },
+    // Retained for compatibility with legacy native session requests.
+    #[allow(dead_code)]
+    AutoMode { message: String },
 }
 
 impl InteractionRequest {
     pub fn message(&self) -> &str {
         match self {
-            Self::Permission { message, .. }
+            Self::AcpPermission { message, .. }
+            | Self::Permission { message, .. }
             | Self::Elicitation { message, .. }
             | Self::Question { message, .. }
             | Self::Plan { message, .. }
@@ -79,6 +91,9 @@ impl InteractionRequest {
 
     pub fn validate(&self, answer: &InteractionAnswer) -> AppResult<()> {
         let valid = match (self, answer) {
+            (Self::AcpPermission { options, .. }, InteractionAnswer::Permission { action }) => {
+                options.iter().any(|option| option.option_id == *action)
+            }
             (Self::Permission { scopes, .. }, InteractionAnswer::Permission { action }) => {
                 matches!(action.as_str(), "allow-once" | "deny")
                     || scopes.iter().any(|scope| scope.action == *action)
@@ -183,6 +198,8 @@ pub enum InteractionAnswer {
         feedback: Option<String>,
     },
     AutoMode {
+        // Both boolean responses are valid; the legacy responder consumes the value.
+        #[allow(dead_code)]
         approved: bool,
     },
     Cancel,

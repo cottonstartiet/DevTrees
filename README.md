@@ -34,7 +34,7 @@ yarn build        # tauri build (signed NSIS installer + updater artifacts)
 
 Validate the Rust backend with `cargo build` / `cargo clippy` from `src-tauri/`.
 Session regression checks use `cargo test --manifest-path src-tauri/Cargo.toml --lib`
-and `node --test scripts/session-launch.test.mjs scripts/session-interactions.test.mjs`
+and `node --test scripts/auto-reviews.test.mjs scripts/session-launch.test.mjs scripts/session-interactions.test.mjs`
 (session routing/status contracts and native interaction state; no browser server).
 
 The `*:web` scripts and `dist-web` directory build the embedded desktop renderer,
@@ -43,20 +43,31 @@ not a standalone web application. Use `yarn dev` to run the complete app.
 ## Tasks and Copilot sessions
 
 Tasks can target the main working copy, an existing worktree, or a planned worktree
-created when work starts. **In-app chat** uses the official Rust Copilot SDK to
-connect the installed CLI to the app's transcript, permission controls, questions,
-and forms. Choose it or **External Copilot terminal** under **Settings > Copilot
-sessions**. The setting is saved in SQLite and applies to every new and resumed
-session; external is the default. Changing it never moves a running session.
+created when work starts. **In-app chat** runs the installed Copilot CLI through
+ACP v1 over stdio, with one owned process per conversation. React communicates
+only through Tauri commands/events; there is no local agent HTTP server.
+Choose it or **External Copilot terminal** under **Settings > Copilot sessions**.
+New installations default to ACP. An existing SDK preference migrates to ACP;
+an explicit external preference is preserved. Changing this setting never moves
+a running conversation.
 
-Native requests are answered in the originating operation, not converted to a
-follow-up message. **Deny** and **Allow once** are explicit; no permanent grants
-or automatic approvals are added. Session-wide approval is intentionally hidden
-until its live scope is verified. Forms preserve text, numbers, booleans and
-single/multiple choices. Unsupported schemas and sensitive credential fields
-show an explanation rather than a misleading empty form. URL authorization uses
-an external Copilot terminal until its completion tracking is supported; native forms never
-collect credentials.
+**/ Commands** lists the commands and skills advertised by the connected agent,
+including their argument hints. The list is replaced when Copilot updates it.
+Commands are sent as one text block without attachments. Unadvertised commands
+are blocked rather than accidentally sent to the model. The deliberate literal
+message option adds an explanatory text prefix so it cannot execute as a slash
+command. Settings provides an explicit external **Sign in** action. In-app
+sessions use the defaults already configured in Copilot CLI; DevTrees does not
+override reasoning, tools, modes or MCP servers.
+
+Permissions use the exact option IDs, labels and scopes provided by Copilot.
+No approval is preselected or invented. Native requests are answered in the
+originating operation, never converted into follow-up messages. Forms preserve
+text, numbers, booleans and single/multiple choices. Unsupported schemas (including
+unsupported format constraints), nested fields and sensitive credential fields
+show an explanation instead of an empty or misleading form. URL elicitation
+requires explicit consent to open the browser; opening it and receiving an
+external completion notification are distinct states.
 
 The **Dashboard** shares pending requests, submissions and drafts with the Session
 view. Simple requests can be answered there; larger forms open the exact Session
@@ -64,11 +75,34 @@ request. All pending requests remain visible, and competing responses are accept
 only once. Drafts survive page navigation and recoverable errors within the app;
 they are not saved to disk.
 
-Send follow-up instructions when Copilot is idle. **Stop turn** cancels current
-work and pending requests; **End session** releases the runtime. **Resume** starts
-a new runtime with the same saved conversation. **Enter plan mode** (or `/plan`)
-enables supported plan decisions; `/interactive` returns to interactive mode.
-Other slash commands and terminal-only setup flows require an external Copilot terminal.
+Send instructions immediately when idle, or queue follow-ups during a turn.
+Text files and supported images are stored with queued messages, not reread from
+their original paths. The queue supports editing unsent text, reordering, removal,
+pause/resume and clearing non-running items. Attachment bytes stay in the backend;
+streaming snapshots carry queue summaries rather than repeatedly transferring files.
+
+**Stop turn** cancels current work and pending requests and pauses the queue.
+Cancellation is not considered complete just because a notification was sent.
+**End session** closes the managed runtime; **Resume** loads the same saved
+conversation. Only a normal completed turn automatically drains queued work.
+Errors, cancellation, refusal and limit stops pause it.
+
+Queued items survive app restarts, always paused. Resuming a conversation does
+not resume its queue. A prompt interrupted after dispatch is marked
+**delivery-unknown**: review history and remove it explicitly before resuming.
+DevTrees does not automatically retry potentially delivered prompts or approvals.
+Removing a session row preserves its queue and Copilot's saved conversation.
+Use the queue's explicit clear/remove controls to discard retained content.
+
+Limits are 100 retained queue items, 64 KiB of message text, 8 MiB per selected
+attachment, 32 files/16 MiB per selection batch, 16 MiB per encoded prompt and
+32 MiB per queue. Text-file context must be valid UTF-8. Completed items count
+until removed. Live transcripts retain at most 500 entries and approximately
+8 MiB, with a 1 MiB streaming-text limit; omissions are indicated. The bounded
+transcript is checkpointed after turns and on shutdown. Copilot's own saved
+history/replay remains the continuation source and contains older agent output.
+Rich tool updates, diffs, resources, images, plans, agent-provided reasoning and
+usage are rendered when emitted; DevTrees does not fabricate absent metrics.
 
 To change a conversation's mode, **End session** in native chat (or end Copilot in
 its external terminal), change Settings, and resume the conversation. Pending
@@ -84,7 +118,7 @@ watches are not persisted or restored after an app restart. A renderer reconnect
 within the same app run restores current live status.
 
 Switching pages keeps native and external sessions running. Closing DevTrees ends
-its native SDK runtimes but leaves external terminals running. Native conversations
+its managed ACP runtimes but leaves external terminals running. Native conversations
 can be resumed after reopening. Global **History** and **Analytics** continue to
 read CLI history independently, including external sessions; removing a live status
 row never deletes a conversation or its task link.
@@ -95,17 +129,27 @@ produce an error rather than silently changing the selected mode.
 
 Install and authenticate the Copilot CLI before starting a session. GitHub
 operations use `gh`; Azure DevOps operations use Azure CLI with its DevOps extension.
-The evaluated native baseline is Rust SDK **1.0.13** with installed CLI
-**1.0.84-1** (SDK protocol 3). The SDK negotiates compatibility at startup; a
+The evaluated native baseline is installed CLI **1.0.84-1** and ACP **v1**, using
+the pinned Rust `agent-client-protocol` **2.1.0** library (the crate version does
+not mean ACP wire v2). ACP is a public preview. Initialization negotiates compatibility; a
 missing or incompatible runtime produces an error, not an automatic upgrade.
 Native mode resolves `copilot.exe` (`copilot` elsewhere) from PATH, or an explicit
-`COPILOT_CLI_PATH`. End users do not install Rust or the SDK: its code is compiled
+`COPILOT_CLI_PATH`. End users do not install Rust: the client is compiled
 into DevTrees. No Copilot executable is bundled or automatically downloaded.
 
-Developer and CI Cargo builds use `.cargo/config.toml` to force
-`COPILOT_SKIP_CLI_DOWNLOAD=1`, alongside the SDK's disabled default features.
-Keep both settings: disabling bundling alone does not disable the SDK build-time
-runtime download. Normal Cargo crate dependencies are still restored when needed.
+Coverage follows the installed server's advertised commands and capabilities,
+not every interactive-terminal feature. The supported baseline exposes new/load,
+paginated list, close, prompts/cancel, permissions and elicitation.
+Unadvertised fork, delete, logout and additional-root operations are not exposed.
+Terminal-only `/undo`, `/tasks`, `/settings` and similar commands are not invented
+as ACP operations. App History, diffs and Settings remain independent UI actions.
+DevTrees does not advertise client filesystem or terminal execution callbacks:
+the local agent owns its tools. External terminals are status-only, not remotely
+controllable through the ACP client.
+
+Developer checks use the existing Node session tests, Rust tests and renderer
+typecheck. The opt-in `acp_live_round_trip` Rust test requires an authenticated
+installed CLI and exercises informational `/usage` without a model prompt.
 
 ## Local Copilot analytics
 
@@ -140,9 +184,12 @@ may use AI credits; its repository target does not change the report filter.
 
 ## App data
 
-The desktop app uses a version-2 SQLite schema: repositories, tasks, and terminal
-sessions. Version-1 records are migrated in place to record session transport and
-process generation without losing history or task associations. There are no
+The desktop app uses a version-4 SQLite schema: repositories, tasks, terminal
+sessions, durable ACP queues and bounded ACP transcripts. Earlier records are
+migrated in place without losing history or task associations. Queue payloads
+can contain submitted file contents; they stay in the app data directory, not
+the repository, and are not encrypted by DevTrees. Permission/form answers are
+not persisted in the queue. There are no
 legacy JSON imports.
 On Windows, its database is `%APPDATA%\com.ritekode.devtrees\devtrees.db`.
 The previous prototype's `%APPDATA%\devtrees` data is left untouched and is not loaded,

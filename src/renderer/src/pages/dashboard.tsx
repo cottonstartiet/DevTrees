@@ -4,7 +4,9 @@ import {
   ArrowUpRightIcon,
   ChevronRightIcon,
   Clock3Icon,
+  CircleCheckIcon,
   GitPullRequestIcon,
+  Loader2Icon,
   RefreshCwIcon
 } from 'lucide-react'
 
@@ -18,51 +20,50 @@ import {
 import { Button } from '@/components/ui/button'
 import { useDashboard } from '@/contexts/dashboard-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
+import type { AutoReviewStatus } from '@/lib/auto-reviews'
 import { cn } from '@/lib/utils'
 import {
   isTerminalSessionFinished,
   terminalObservationIssue,
-  type TerminalSession,
-  type TerminalSessionInteraction
+  type TerminalSession
 } from '@shared/terminal-session'
+import type { NativeInteraction } from '@shared/native-session'
 import type { Repository } from '@shared/repository'
 
-function needsUserAction(
-  session: TerminalSession,
-  interaction?: TerminalSessionInteraction
-): boolean {
+function needsUserAction(session: TerminalSession, interaction?: NativeInteraction): boolean {
   return session.status === 'waiting-input' || Boolean(interaction)
 }
 
-function compareActiveSessions(
-  interactionById: Record<string, TerminalSessionInteraction | undefined>,
-  interactionRequestedAtById: Record<string, number | undefined>
-): (a: TerminalSession, b: TerminalSession) => number {
-  return (a, b) => {
-    const aNeedsAction = needsUserAction(a, interactionById[a.id])
-    const bNeedsAction = needsUserAction(b, interactionById[b.id])
-
-    if (aNeedsAction !== bNeedsAction) return aNeedsAction ? -1 : 1
-    if (aNeedsAction) {
-      const aRequestedAt = interactionRequestedAtById[a.id] ?? a.updatedAt
-      const bRequestedAt = interactionRequestedAtById[b.id] ?? b.updatedAt
-      return aRequestedAt - bRequestedAt
-    }
-    // Keep a stable order (session start order) so cards don't reshuffle on
-    // every status/activity update — only the needs-action grouping above
-    // should ever move a card.
-    return a.createdAt - b.createdAt
-  }
+function compareActiveSessions(a: TerminalSession, b: TerminalSession): number {
+  return b.createdAt - a.createdAt
 }
 
-function interactionLabel(interaction?: TerminalSessionInteraction): string {
+function interactionLabel(interaction?: NativeInteraction): string {
   if (!interaction) return 'Response requested'
-  if (interaction.kind === 'permission') return 'Permission requested'
-  return interaction.mode === 'url' ? 'Link confirmation requested' : 'Input requested'
+  if (interaction.kind === 'permission' || interaction.kind === 'acpPermission')
+    return 'Permission requested'
+  return interaction.kind === 'elicitation' && interaction.url
+    ? 'Link confirmation requested'
+    : 'Input requested'
 }
 
 function sessionTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+function autoReviewLabel(status: AutoReviewStatus): string {
+  switch (status) {
+    case 'checking':
+      return 'Checking automation'
+    case 'launching':
+      return 'Starting review'
+    case 'started':
+      return 'Review started'
+    case 'already-triggered':
+      return 'Previously triggered'
+    case 'failed':
+      return 'Start failed'
+  }
 }
 
 export function DashboardPage({
@@ -72,17 +73,30 @@ export function DashboardPage({
 }: {
   repositories: Repository[]
   onNavigateToSessions: () => void
-  onNavigateToReviews: () => void
+  onNavigateToReviews: (repositoryId?: string) => void
 }): React.JSX.Element {
-  const { sessions, interactionById, interactionRequestedAtById, select, observationNow } =
-    useTerminalSessions()
+  const { sessions, nativeById, select, observationNow } = useTerminalSessions()
+  const interactionById = React.useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(nativeById).map(([id, snapshot]) => [id, snapshot?.interactions[0]])
+      ),
+    [nativeById]
+  )
+  const interactionRequestedAtById = React.useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(interactionById).map(([id, request]) => [id, request?.createdAt])
+      ),
+    [interactionById]
+  )
   const { items, errors, isLoading, refresh } = useDashboard()
   const liveSessions = React.useMemo(
     () =>
       sessions
         .filter((session) => !isTerminalSessionFinished(session.status))
-        .sort(compareActiveSessions(interactionById, interactionRequestedAtById)),
-    [interactionById, interactionRequestedAtById, sessions]
+        .sort(compareActiveSessions),
+    [sessions]
   )
   const sessionsNeedingAction = liveSessions.filter((session) =>
     needsUserAction(session, interactionById[session.id])
@@ -206,7 +220,7 @@ export function DashboardPage({
                         <ArrowUpRightIcon className="size-3" />
                       </span>
                     </button>
-                    {session.transport === 'sdk' && (
+                    {session.transport !== 'external' && (
                       <NativeSessionControls
                         session={session}
                         compact
@@ -250,25 +264,79 @@ export function DashboardPage({
               <p className="text-destructive line-clamp-2 text-xs">{errors.join(' · ')}</p>
             </div>
           ) : null}
-          <button
-            type="button"
-            onClick={onNavigateToReviews}
-            className={cn(
-              'bg-background/60 hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left transition-colors',
-              'focus-visible:outline-none focus-visible:ring-3'
-            )}
-          >
-            <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
-              <GitPullRequestIcon className="size-4" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-xs font-medium">Open Reviews</span>
-              <span className="text-muted-foreground block truncate text-[10px]">
-                Choose a repository to inspect assigned and recent pull requests.
+          {items.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => onNavigateToReviews()}
+              className={cn(
+                'bg-background/60 hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-center gap-3 rounded-md border px-3 py-3 text-left transition-colors',
+                'focus-visible:outline-none focus-visible:ring-3'
+              )}
+            >
+              <span className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
+                <GitPullRequestIcon className="size-4" />
               </span>
-            </span>
-            <ChevronRightIcon className="text-muted-foreground size-4 shrink-0" />
-          </button>
+              <span className="min-w-0 flex-1">
+                <span className="block text-xs font-medium">No assigned reviews</span>
+                <span className="text-muted-foreground block truncate text-[10px]">
+                  Open Reviews to inspect recent pull requests.
+                </span>
+              </span>
+              <ChevronRightIcon className="text-muted-foreground size-4 shrink-0" />
+            </button>
+          ) : (
+            <div className="bg-background/60 overflow-hidden rounded-md border">
+              <ul className="divide-y">
+                {items.map((item) => {
+                  const isPending =
+                    item.autoReviewStatus === 'checking' || item.autoReviewStatus === 'launching'
+                  return (
+                    <li key={item.key}>
+                      <button
+                        type="button"
+                        onClick={() => onNavigateToReviews(item.repository.id)}
+                        className="hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-center gap-3 px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-3"
+                      >
+                        <span className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]">
+                          #{item.pr.id}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs font-medium">
+                            {item.pr.title}
+                          </span>
+                          <span className="text-muted-foreground block truncate text-[10px]">
+                            {item.repository.name} · {item.pr.sourceRef} → {item.pr.targetRef}
+                          </span>
+                        </span>
+                        <span
+                          className={cn(
+                            'text-muted-foreground flex shrink-0 items-center gap-1 text-[10px]',
+                            item.autoReviewStatus === 'failed' && 'text-destructive'
+                          )}
+                        >
+                          {isPending ? (
+                            <Loader2Icon className="size-3 animate-spin" />
+                          ) : item.autoReviewStatus === 'started' ? (
+                            <CircleCheckIcon className="size-3" />
+                          ) : null}
+                          {autoReviewLabel(item.autoReviewStatus)}
+                        </span>
+                        <ChevronRightIcon className="text-muted-foreground size-3.5 shrink-0" />
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+              <button
+                type="button"
+                onClick={() => onNavigateToReviews()}
+                className="text-muted-foreground hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-center justify-center gap-1 border-t px-3 py-2 text-[10px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-3"
+              >
+                Open all reviews
+                <ChevronRightIcon className="size-3" />
+              </button>
+            </div>
+          )}
         </DashboardCard>
       </div>
     </div>

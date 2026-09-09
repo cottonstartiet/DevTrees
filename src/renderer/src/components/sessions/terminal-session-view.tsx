@@ -60,7 +60,7 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
   } = useTerminalSessions()
   const launch = useCopilotLauncher()
   const [resuming, setResuming] = React.useState(false)
-  const native = session.transport === 'sdk'
+  const native = session.transport !== 'external'
   const snapshot = nativeById[session.id]
   const currentSnapshot = snapshot?.session.generation === session.generation ? snapshot : undefined
   const focusedRequest = React.useRef<string | null>(null)
@@ -120,11 +120,21 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
             <TerminalSessionStatusBadge status={session.status} />
             <span className="text-muted-foreground text-xs">
               {native
-                ? 'In-app chat'
+                ? 'In-app chat (ACP)'
                 : session.transport === 'external'
                   ? 'External Copilot terminal'
                   : 'Previous session'}
             </span>
+            {currentSnapshot?.phase &&
+              ['starting', 'loading', 'cancelling', 'ending'].includes(currentSnapshot.phase) && (
+                <span className="text-muted-foreground text-xs" role="status">
+                  {currentSnapshot.phase === 'cancelling'
+                    ? 'Stopping turn...'
+                    : currentSnapshot.phase === 'ending'
+                      ? 'Ending session...'
+                      : 'Preparing Copilot...'}
+                </span>
+              )}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
             {session.repository && (
@@ -158,7 +168,10 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
               size="sm"
               variant="outline"
               disabled={
-                finished || session.status === 'idle' || nativeBusy[nativeKey(session, 'lifecycle')]
+                finished ||
+                session.status === 'idle' ||
+                session.status === 'starting' ||
+                nativeBusy[nativeKey(session, 'lifecycle')]
               }
               onClick={() => void stopNative(session)}
             >
@@ -185,7 +198,8 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
         <>
           {currentSnapshot?.historyTruncated && (
             <p className="text-muted-foreground border-b px-4 py-2 text-xs">
-              Showing the most recent 500 entries. Earlier entries remain in saved Copilot history.
+              Showing bounded recent history (up to 500 entries). Older or oversized output remains
+              in Copilot&apos;s saved history.
             </p>
           )}
           <TerminalTimeline entries={entries} />

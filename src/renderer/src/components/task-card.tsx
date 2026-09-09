@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { FolderGit2Icon, GitBranchIcon } from 'lucide-react'
+import { FolderGit2Icon, GitBranchIcon, LoaderCircleIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -17,12 +17,14 @@ export function TaskCard({
   onOpen,
   onStart,
   onReview,
+  onDone,
   canReview
 }: {
   task: Task
   onOpen: (task: Task) => void
   onStart: (task: Task) => void
   onReview: (task: Task) => void
+  onDone: (task: Task) => void
   canReview: boolean
 }): React.JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -33,6 +35,15 @@ export function TaskCard({
     transform: CSS.Transform.toString(transform),
     transition
   }
+  const isQueuedStage = task.status === 'todo' || task.status === 'review'
+  const queueLabel =
+    task.queueStatus === 'running'
+      ? 'Running'
+      : task.queueStatus === 'failed'
+        ? 'Failed'
+        : task.queueStatus === 'queued'
+          ? 'Queued'
+          : null
 
   return (
     <div
@@ -47,7 +58,22 @@ export function TaskCard({
         isDragging && 'opacity-50'
       )}
     >
-      <p className="text-sm font-medium break-words">{task.title}</p>
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-sm font-medium break-words">{task.title}</p>
+        {isQueuedStage && queueLabel ? (
+          <span
+            className={cn(
+              'bg-secondary text-secondary-foreground inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] font-medium',
+              task.queueStatus === 'failed' && 'bg-destructive/10 text-destructive'
+            )}
+          >
+            {task.queueStatus === 'running' ? (
+              <LoaderCircleIcon className="motion-reduce:animate-none size-3 animate-spin" />
+            ) : null}
+            {queueLabel}
+          </span>
+        ) : null}
+      </div>
       {task.description ? (
         <p className="text-muted-foreground line-clamp-2 text-xs break-words">{task.description}</p>
       ) : null}
@@ -65,7 +91,7 @@ export function TaskCard({
               : (task.worktreeBranch ?? worktreeLabel(task.worktreePath))}
         </span>
       </div>
-      {task.status === 'todo' ? (
+      {task.status === 'todo' && task.queueStatus !== 'running' ? (
         <Button
           type="button"
           size="sm"
@@ -76,10 +102,11 @@ export function TaskCard({
             onStart(task)
           }}
         >
-          Start
+          {task.queueStatus === 'failed' ? 'Retry' : 'Start now'}
         </Button>
       ) : null}
-      {task.status === 'in_progress' && canReview ? (
+      {task.status === 'review' &&
+      (task.queueStatus === 'queued' || task.queueStatus === 'failed') ? (
         <Button
           type="button"
           size="sm"
@@ -87,11 +114,39 @@ export function TaskCard({
           className="mt-1 self-start"
           onClick={(e) => {
             e.stopPropagation()
-            onReview(task)
+            onStart(task)
           }}
         >
-          Move to review
+          {task.queueStatus === 'failed' ? 'Retry review' : 'Run review now'}
         </Button>
+      ) : null}
+      {task.status === 'in_progress' ? (
+        <div className="mt-1 flex flex-wrap gap-2">
+          {canReview ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={(e) => {
+                e.stopPropagation()
+                onReview(task)
+              }}
+            >
+              Move to review
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDone(task)
+            }}
+          >
+            Mark done
+          </Button>
+        </div>
       ) : null}
     </div>
   )

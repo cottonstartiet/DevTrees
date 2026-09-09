@@ -161,6 +161,7 @@ pub(crate) fn launch_copilot_cli(
     folder_path: &str,
     prompt: &str,
     session_id: Option<&str>,
+    initial_mode: Option<&str>,
 ) -> LaunchResult {
     if !cfg!(windows) {
         return LaunchResult::err("Copilot CLI launch is currently Windows-only.");
@@ -171,11 +172,11 @@ pub(crate) fn launch_copilot_cli(
     if !Path::new(folder_path).is_dir() {
         return LaunchResult::err("The session's working directory does not exist.");
     }
-    let cli = match crate::copilot_sdk_sessions::installed_cli() {
+    let cli = match crate::copilot_acp_sessions::installed_cli() {
         Ok(path) => path,
         Err(error) => return LaunchResult::err(error.to_string()),
     };
-    let ps_command = match copilot_command(&cli, prompt, session_id) {
+    let ps_command = match copilot_command(&cli, prompt, session_id, initial_mode) {
         Ok(command) => command,
         Err(error) => return LaunchResult::err(error),
     };
@@ -197,6 +198,7 @@ fn copilot_command(
     cli: &Path,
     prompt: &str,
     session_id: Option<&str>,
+    initial_mode: Option<&str>,
 ) -> Result<String, &'static str> {
     // Pinning the session id up front (`--session-id` also *sets* the UUID for a new
     // session) is what lets the app find and tail this session's event log afterwards.
@@ -210,9 +212,14 @@ fn copilot_command(
         _ => String::new(),
     };
     let executable = cli.to_string_lossy().replace('\'', "''");
+    let mode_arg = match initial_mode {
+        Some(mode @ ("interactive" | "plan" | "autopilot")) => format!(" --mode={mode}"),
+        Some(_) => return Err("Invalid Copilot session mode."),
+        None => String::new(),
+    };
     // Do not add automatic approval flags; the CLI retains the user's permission settings.
     let ps_command = if prompt.trim().is_empty() {
-        format!("& '{executable}'{id_arg}")
+        format!("& '{executable}'{id_arg}{mode_arg}")
     } else {
         // PowerShell 5.1 does not escape embedded double quotes when serializing an argument
         // to a native exe; pre-escape for the Windows CRT argv (double the backslash run
@@ -224,7 +231,7 @@ fn copilot_command(
             format!("{slashes}{slashes}\\\"")
         });
         let ps_escaped = native_escaped.replace('\'', "''");
-        format!("& '{executable}'{id_arg} -i '{ps_escaped}'")
+        format!("& '{executable}'{id_arg}{mode_arg} -i '{ps_escaped}'")
     };
     Ok(ps_command)
 }
@@ -280,18 +287,19 @@ mod tests {
     fn external_commands_preserve_session_ids_without_granting_permissions() {
         let cli = Path::new(r"C:\Copilot tools\copilot.exe");
         let id = "00112233-4455-6677-8899-aabbccddeeff";
-        let resumed = copilot_command(cli, "", Some(id)).unwrap();
+        let resumed = copilot_command(cli, "", Some(id), None).unwrap();
         assert_eq!(
             resumed,
             format!("& 'C:\\Copilot tools\\copilot.exe' --session-id={id}")
         );
         assert!(!resumed.contains(" -i "));
-        let fresh = copilot_command(cli, "Review this worktree", Some(id)).unwrap();
-        assert!(fresh.ends_with(" -i 'Review this worktree'"));
+        let fresh = copilot_command(cli, "Review this worktree", Some(id), Some("plan")).unwrap();
+        assert!(fresh.ends_with(" --mode=plan -i 'Review this worktree'"));
         for command in [resumed, fresh] {
             assert!(!command.contains("--allow"));
         }
-        assert!(copilot_command(cli, "", Some("bad;command")).is_err());
+        assert!(copilot_command(cli, "", Some("bad;command"), None).is_err());
+        assert!(copilot_command(cli, "", None, Some("invalid")).is_err());
     }
 
     #[test]
@@ -299,6 +307,7 @@ mod tests {
         let command = copilot_command(
             Path::new(r"C:\User's tools\copilot.exe"),
             "Don't run \"$env:INJECT\";\nReview \u{03bb}",
+            None,
             None,
         )
         .unwrap();

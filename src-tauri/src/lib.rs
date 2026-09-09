@@ -1,8 +1,8 @@
 mod ado;
 mod az;
+mod copilot_acp_sessions;
 mod copilot_analytics;
 mod copilot_history;
-mod copilot_sdk_sessions;
 mod db;
 mod error;
 mod gh;
@@ -14,7 +14,6 @@ mod repositories;
 mod reviews;
 mod session_attention;
 mod session_interactions;
-mod session_permissions;
 mod settings;
 mod system;
 mod tasks;
@@ -55,13 +54,14 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let conn = db::init(&app.path().app_data_dir()?)?;
             app.manage(DbState(Mutex::new(conn)));
             app.manage(TerminalSessionMonitor::default());
             app.manage(terminal_sessions::AcpSessionManager::default());
-            app.manage(copilot_sdk_sessions::NativeSessionManager::default());
+            app.manage(copilot_acp_sessions::SessionManager::default());
             // Restore native history; external status watches belong to this app run only.
             if let Err(e) = terminal_sessions::init(app.handle()) {
                 eprintln!("failed to restore terminal session watches: {e}");
@@ -87,6 +87,8 @@ pub fn run() {
             system::system_get_app_info,
             settings::settings_session_launch_mode,
             settings::settings_set_session_launch_mode,
+            settings::settings_task_queue,
+            settings::settings_set_task_queue,
             ado::ado_pr_threads,
             ado::ado_repo_open_prs,
             ado::ado_pr_detail,
@@ -107,6 +109,7 @@ pub fn run() {
             github::github_pr_reply,
             github::github_pr_set_thread_status,
             github::github_pr_set_vote,
+            reviews::reviews_claim_auto_trigger,
             repo::repo_default_branch,
             repo::repo_current_branch,
             repo::repo_status,
@@ -137,26 +140,47 @@ pub fn run() {
             tasks::tasks_move,
             tasks::tasks_delete,
             tasks::tasks_set_copilot_session,
+            tasks::tasks_set_queue_status,
             terminal_sessions::terminal_sessions_list,
             terminal_sessions::terminal_sessions_start,
-            terminal_sessions::terminal_sessions_prompt,
-            terminal_sessions::terminal_sessions_interaction,
-            terminal_sessions::terminal_sessions_respond,
-            terminal_sessions::terminal_sessions_cancel,
             terminal_sessions::terminal_sessions_history,
             terminal_sessions::terminal_sessions_is_running,
             terminal_sessions::terminal_sessions_forget,
-            copilot_sdk_sessions::native_session_snapshot,
-            copilot_sdk_sessions::native_session_respond,
-            copilot_sdk_sessions::native_session_prompt,
-            copilot_sdk_sessions::native_session_cancel,
-            copilot_sdk_sessions::native_session_end,
+            copilot_acp_sessions::native_session_snapshot,
+            copilot_acp_sessions::native_session_respond,
+            copilot_acp_sessions::native_session_cancel,
+            copilot_acp_sessions::native_session_end,
+            copilot_acp_sessions::acp_session_enqueue,
+            copilot_acp_sessions::acp_session_queue,
+            copilot_acp_sessions::acp_session_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building DevTrees")
         .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                let manager = app.state::<copilot_acp_sessions::SessionManager>();
+                if !manager
+                    .shutdown_complete
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    api.prevent_exit();
+                    if !manager
+                        .exiting
+                        .swap(true, std::sync::atomic::Ordering::SeqCst)
+                    {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            copilot_acp_sessions::shutdown(&app).await;
+                            app.state::<copilot_acp_sessions::SessionManager>()
+                                .shutdown_complete
+                                .store(true, std::sync::atomic::Ordering::SeqCst);
+                            app.exit(0);
+                        });
+                    }
+                }
+            }
             if matches!(event, tauri::RunEvent::Exit) {
-                tauri::async_runtime::block_on(copilot_sdk_sessions::shutdown(app));
+                tauri::async_runtime::block_on(copilot_acp_sessions::shutdown(app));
             }
         });
 }

@@ -22,6 +22,8 @@ pub struct Task {
     pub worktree_branch: Option<String>,
     pub pending_worktree_name: Option<String>,
     pub copilot_session_id: Option<String>,
+    pub queue_status: String,
+    pub queue_order: i64,
     pub sort_order: i64,
     pub created_at: i64,
     pub updated_at: i64,
@@ -140,15 +142,17 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         worktree_branch: row.get(8)?,
         pending_worktree_name: row.get(9)?,
         copilot_session_id: row.get(10)?,
-        sort_order: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
+        queue_status: row.get(11)?,
+        queue_order: row.get(12)?,
+        sort_order: row.get(13)?,
+        created_at: row.get(14)?,
+        updated_at: row.get(15)?,
     })
 }
 
 const SELECT_COLUMNS: &str = "id, title, description, status, repository_id, repository_name,
      repository_path, worktree_path, worktree_branch, pending_worktree_name,
-     copilot_session_id, sort_order,
+     copilot_session_id, queue_status, queue_order, sort_order,
      created_at, updated_at";
 
 fn load_tasks(conn: &Connection) -> rusqlite::Result<Vec<Task>> {
@@ -170,6 +174,19 @@ fn next_sort_order(conn: &Connection, status: &str) -> i64 {
         |r| r.get(0),
     )
     .unwrap_or(0)
+}
+
+fn next_queue_order(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COALESCE(MAX(queue_order), -1) + 1 FROM tasks",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
+}
+
+fn is_valid_queue_status(status: &str) -> bool {
+    matches!(status, "queued" | "running" | "complete" | "failed")
 }
 
 // ----- Tauri commands -----
@@ -211,12 +228,14 @@ pub async fn tasks_create(
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
     let sort_order = next_sort_order(&conn, "todo");
+    let queue_order = next_queue_order(&conn);
     conn.execute(
         "INSERT INTO tasks (
             id, title, description, status, repository_id, repository_name, repository_path,
-            worktree_path, worktree_branch, pending_worktree_name, copilot_session_id, sort_order,
-            created_at, updated_at
-         ) VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?11)",
+            worktree_path, worktree_branch, pending_worktree_name, copilot_session_id,
+            queue_status, queue_order, sort_order, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?6, ?7, ?8, ?9, NULL,
+                   'queued', ?10, ?11, ?12, ?12)",
         rusqlite::params![
             id,
             trimmed_title,
@@ -227,6 +246,7 @@ pub async fn tasks_create(
             worktree_path,
             worktree_branch,
             pending_worktree_name,
+            queue_order,
             sort_order,
             now
         ],
@@ -315,9 +335,9 @@ pub async fn tasks_move(
         .0
         .lock()
         .map_err(|_| AppError::msg("db mutex poisoned"))?;
-    if load_task(&conn, &id)?.is_none() {
+    let Some(existing) = load_task(&conn, &id)? else {
         return Ok(MoveTaskResult::err("not-found", None));
-    }
+    };
 
     let tx = conn.transaction()?;
     {
@@ -338,12 +358,42 @@ pub async fn tasks_move(
         ids.insert(insert_at, id.clone());
 
         let now = now_ms();
+        let entering_queue =
+            matches!(status.as_str(), "todo" | "review") && existing.status != status;
+        let queue_order = if entering_queue {
+            Some(next_queue_order(&tx))
+        } else {
+            None
+        };
+        let queue_status = if entering_queue {
+            Some("queued")
+        } else if existing.queue_status == "running"
+            && existing.status == "todo"
+            && status == "in_progress"
+        {
+            None
+        } else if !matches!(status.as_str(), "todo" | "review") {
+            Some("complete")
+        } else {
+            None
+        };
         let mut update_status = tx.prepare(
-            "UPDATE tasks SET status = ?1, sort_order = ?2, updated_at = ?3 WHERE id = ?4",
+            "UPDATE tasks SET status = ?1, sort_order = ?2,
+                queue_status = COALESCE(?3, queue_status),
+                queue_order = COALESCE(?4, queue_order),
+                updated_at = ?5
+             WHERE id = ?6",
         )?;
         for (index, task_id) in ids.iter().enumerate() {
             if task_id == &id {
-                update_status.execute(rusqlite::params![status, index as i64, now, task_id])?;
+                update_status.execute(rusqlite::params![
+                    status,
+                    index as i64,
+                    queue_status,
+                    queue_order,
+                    now,
+                    task_id
+                ])?;
             } else {
                 tx.execute(
                     "UPDATE tasks SET sort_order = ?1 WHERE id = ?2",
@@ -387,6 +437,35 @@ pub async fn tasks_set_copilot_session(
     conn.execute(
         "UPDATE tasks SET copilot_session_id = ?2, updated_at = ?3 WHERE id = ?1",
         rusqlite::params![id, copilot_session_id, now],
+    )?;
+    match load_task(&conn, &id)? {
+        Some(task) => Ok(TaskResult::ok(task)),
+        None => Ok(TaskResult::err("not-found", None)),
+    }
+}
+
+#[tauri::command]
+pub async fn tasks_set_queue_status(
+    state: State<'_, DbState>,
+    id: String,
+    queue_status: String,
+) -> AppResult<TaskResult> {
+    if !is_valid_queue_status(&queue_status) {
+        return Ok(TaskResult::err(
+            "unknown",
+            Some("Invalid task queue status.".into()),
+        ));
+    }
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("db mutex poisoned"))?;
+    if load_task(&conn, &id)?.is_none() {
+        return Ok(TaskResult::err("not-found", None));
+    }
+    conn.execute(
+        "UPDATE tasks SET queue_status = ?2, updated_at = ?3 WHERE id = ?1",
+        rusqlite::params![id, queue_status, now_ms()],
     )?;
     match load_task(&conn, &id)? {
         Some(task) => Ok(TaskResult::ok(task)),

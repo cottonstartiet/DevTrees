@@ -97,6 +97,16 @@ jobs:
           COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
         run: yarn install --frozen-lockfile
 
+      - name: Check session contracts
+        shell: pwsh
+        run: |
+          yarn typecheck:web
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test scripts\auto-reviews.test.mjs scripts\session-interactions.test.mjs scripts\session-launch.test.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --manifest-path src-tauri\Cargo.toml --lib --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify version consistency
         shell: bash
         # The updater manifest version comes from package.json, but the installed

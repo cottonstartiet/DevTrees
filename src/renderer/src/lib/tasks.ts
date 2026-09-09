@@ -6,6 +6,7 @@ import type {
   MoveTaskRequest,
   MoveTaskResult,
   SetTaskCopilotSessionRequest,
+  SetTaskQueueStatusRequest,
   Task,
   UpdateTaskRequest,
   UpdateTaskResult
@@ -35,4 +36,8 @@ export function setTaskCopilotSession(
   req: SetTaskCopilotSessionRequest
 ): Promise<UpdateTaskResult> {
   return window.api.tasks.setCopilotSession(req)
+}
+
+export function setTaskQueueStatus(req: SetTaskQueueStatusRequest): Promise<UpdateTaskResult> {
+  return window.api.tasks.setQueueStatus(req)
 }

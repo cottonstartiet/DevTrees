@@ -7,7 +7,7 @@ import {
   useSensors,
   type DragEndEvent
 } from '@dnd-kit/core'
-import { PlusIcon } from 'lucide-react'
+import { LoaderCircleIcon, PlayIcon, PlusIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { TaskColumn } from '@/components/task-column'
@@ -15,6 +15,7 @@ import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
 import type { Repository } from '@shared/repository'
 import type { Task, TaskStatus } from '@shared/task'
+import type { TaskQueueMode } from '@shared/settings'
 import type { Worktree } from '@shared/worktree'
 
 interface TasksPageProps {
@@ -32,18 +33,58 @@ interface TasksPageProps {
 
 interface TasksHeaderControlsProps {
   taskCount: number
+  queuedCount: number
+  runningCount: number
+  failedCount: number
+  queueMode: TaskQueueMode
+  queueRunning: boolean
+  onRunQueue: () => void
   onAddTask: () => void
 }
 
 export function TasksHeaderControls({
   taskCount,
+  queuedCount,
+  runningCount,
+  failedCount,
+  queueMode,
+  queueRunning,
+  onRunQueue,
   onAddTask
 }: TasksHeaderControlsProps): React.JSX.Element {
+  const readyCount = queuedCount + failedCount
   return (
     <div className="ml-auto flex items-center gap-3">
-      <span className="text-muted-foreground text-xs">
-        {taskCount} task{taskCount === 1 ? '' : 's'}
-      </span>
+      <div className="text-muted-foreground flex items-center gap-2 text-xs">
+        <span>
+          {taskCount} task{taskCount === 1 ? '' : 's'}
+        </span>
+        <span aria-hidden="true">·</span>
+        <span>{runningCount} running</span>
+        <span aria-hidden="true">·</span>
+        <span>{readyCount} queued</span>
+        {failedCount > 0 ? <span className="text-destructive">{failedCount} failed</span> : null}
+      </div>
+      {queueMode === 'manual' ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={queueRunning || readyCount === 0}
+          onClick={onRunQueue}
+        >
+          {queueRunning ? (
+            <LoaderCircleIcon className="motion-reduce:animate-none animate-spin" />
+          ) : (
+            <PlayIcon />
+          )}
+          {queueRunning ? 'Queue running' : 'Run queue'}
+        </Button>
+      ) : (
+        <span className="bg-secondary text-secondary-foreground rounded-md px-2 py-1 text-xs font-medium">
+          Auto
+        </span>
+      )}
       <Button type="button" size="sm" onClick={onAddTask}>
         <PlusIcon />
         Add task
@@ -109,6 +150,7 @@ export function TasksPage({
                 onOpenTask={onOpenTask}
                 onStartTask={(task) => void onStartTask(task)}
                 onReviewTask={(task) => void onReviewTask(task)}
+                onDoneTask={(task) => void onMoveTask(task, 'done')}
                 canReviewTask={canReviewTask}
               />
             ))}

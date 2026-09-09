@@ -40,6 +40,16 @@ export type RepoOpenPrsResult =
   | { ok: true; prs: RepoPr[] }
   | { ok: false; code: ReviewsErrorCode; message?: string }
 
+export type AutoReviewClaimRequest = {
+  repositoryPath: string
+  provider: PrProvider
+  pullRequestId: number
+}
+
+export type AutoReviewClaimResult = {
+  claimed: boolean
+}
+
 export type RepoPrThreadStatus =
   | 'unknown'
   | 'active'

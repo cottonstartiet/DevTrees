@@ -14,16 +14,50 @@ const {
   acceptNativeSnapshot,
   endedNativeHistory,
   nativeKey,
+  parsePromptAttachments,
+  rekeyNativeState,
   nativeFields,
   initialNativeDraft,
   nativeFormContent
 } = compiled.exports
 const snapshot = (generation, revision, interactions = []) => ({
-  session: { id: 'same-session', generation, revision, transport: 'sdk' },
+  session: { id: 'same-session', generation, revision, transport: 'acp' },
   interactions,
   entries: []
 })
 
+test('attachment drafts validate content without throwing from a React updater', () => {
+  assert.ok(parsePromptAttachments('{').error)
+  assert.ok(parsePromptAttachments('[{"type":"resource","resource":null}]').error)
+  assert.ok(parsePromptAttachments('[{"type":"image","data":12}]').error)
+  const blocks = [{ type: 'image', mimeType: 'image/png', data: 'cG5n' }]
+  assert.deepEqual(parsePromptAttachments(JSON.stringify(blocks)).content, blocks)
+})
+
+test('provisional rekey preserves drafts without overwriting a newer real-session draft', () => {
+  const previous = { id: 'launch', generation: 'runtime' }
+  const actual = { id: 'opaque-agent-id', generation: 'runtime' }
+  const draft = { message: 'retained', literal: true }
+  const original = { [nativeKey(previous)]: draft }
+  const rekeyed = rekeyNativeState(original, previous.id, actual)
+  assert.equal(rekeyed[nativeKey(actual)], draft)
+  assert.equal(rekeyed[nativeKey(previous)], undefined)
+  assert.equal(original[nativeKey(previous)], draft)
+  const newer = { message: 'newer' }
+  assert.equal(
+    rekeyNativeState({ ...original, [nativeKey(actual)]: newer }, previous.id, actual)[
+      nativeKey(actual)
+    ],
+    newer
+  )
+})
+
+test('ended ACP tool progress is explicitly incomplete', () => {
+  const result = endedNativeHistory([
+    { kind: 'acp', category: 'tool', data: { status: 'in_progress' } }
+  ])
+  assert.equal(result[0].data.status, 'incomplete')
+})
 test('a late snapshot cannot resurrect an answered request or older owner', () => {
   const pending = snapshot('first', 2, [{ id: 'request' }])
   const answered = snapshot('first', 3)

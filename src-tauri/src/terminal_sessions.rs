@@ -1,8 +1,8 @@
 //! Native Copilot sessions and app-lifetime-only external CLI status.
 //!
 //! External sessions are observed for attention without streaming transcripts or
-//! persisting watches. Native sessions retain their SDK runtime and saved history.
-//! Legacy ACP helpers remain for existing command compatibility.
+//! persisting watches. Native sessions retain their ACP runtime and saved history.
+//! Historical projection helpers are retained; live ACP commands use the managed adapter.
 //!
 //! The compatibility tail is driven by a single polling task. Each
 //! poll reads only the bytes appended since the last cursor, so watching a long-running
@@ -106,7 +106,7 @@ impl TerminalSessionStatus {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSession {
-    /// The Copilot CLI session id (also the `session-state` folder name).
+    /// Opaque agent session ID; only UUID IDs can map to Copilot filesystem history.
     pub id: String,
     /// Kanban task this session was started for, when it came from the Tasks board.
     pub task_id: Option<String>,
@@ -143,6 +143,24 @@ pub struct WatchTerminalSessionRequest {
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CopilotSessionMode {
+    Interactive,
+    Plan,
+    Autopilot,
+}
+
+impl CopilotSessionMode {
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Plan => "plan",
+            Self::Autopilot => "autopilot",
+        }
+    }
+}
+
+#[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StartTerminalSessionRequest {
     pub folder_path: String,
@@ -151,6 +169,8 @@ pub struct StartTerminalSessionRequest {
     pub prompt: Option<String>,
     #[serde(default)]
     pub resume_session_id: Option<String>,
+    #[serde(default)]
+    pub initial_mode: Option<CopilotSessionMode>,
     #[serde(default)]
     pub task_id: Option<String>,
     #[serde(default)]
@@ -169,12 +189,12 @@ pub struct TerminalSessionResult {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSessionPermissionOption {
-    option_id: String,
-    name: String,
-    kind: String,
+    pub option_id: String,
+    pub name: String,
+    pub kind: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -205,33 +225,6 @@ struct TerminalSessionInteractionUpdate {
     interaction: Option<TerminalSessionInteraction>,
 }
 
-#[derive(Deserialize)]
-#[serde(
-    tag = "kind",
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase"
-)]
-pub enum RespondTerminalSessionRequest {
-    Permission {
-        id: String,
-        request_id: u64,
-        option_id: String,
-    },
-    Elicitation {
-        id: String,
-        request_id: u64,
-        action: String,
-        #[serde(default)]
-        content: Option<serde_json::Value>,
-    },
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PendingAcpRequest {
-    Permission,
-    Elicitation,
-}
-
 struct AcpSession {
     stdin: Arc<Mutex<ChildStdin>>,
     next_request_id: u64,
@@ -255,9 +248,16 @@ pub struct AcpSessionManager {
 /// `seq` is the source line index, which gives entries a stable total order. The renderer
 /// merges the initial history fetch with live updates by `seq`, so an entry delivered by
 /// both paths is never duplicated.
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TerminalTimelineEntry {
+    #[serde(rename_all = "camelCase")]
+    Acp {
+        seq: u64,
+        timestamp: Option<String>,
+        category: String,
+        data: serde_json::Value,
+    },
     #[serde(rename_all = "camelCase")]
     UserMessage {
         seq: u64,
@@ -309,6 +309,7 @@ impl TerminalTimelineEntry {
             | Self::AssistantMessage { seq, .. }
             | Self::ToolCall { seq, .. }
             | Self::Permission { seq, .. }
+            | Self::Acp { seq, .. }
             | Self::Notice { seq, .. } => *seq,
         }
     }
@@ -387,12 +388,18 @@ fn truncate(text: &str, max: usize) -> String {
 
 // ----- Persistence -----
 
-fn upsert(db: &Connection, session: &TerminalSession, cursor: u64, seq: u64) -> AppResult<()> {
+fn upsert(
+    db: &Connection,
+    session: &TerminalSession,
+    cursor: u64,
+    seq: u64,
+    managed: bool,
+) -> AppResult<()> {
     db.execute(
         "INSERT INTO terminal_sessions (
            id, task_id, folder_path, label, repository, branch,
-           status, last_activity, pending_prompt, cursor, created_at, updated_at, seq, transport, generation, revision
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+           status, last_activity, pending_prompt, cursor, created_at, updated_at, seq, managed, transport, generation, revision
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
          ON CONFLICT(id) DO UPDATE SET
            task_id = excluded.task_id,
            folder_path = excluded.folder_path,
@@ -405,6 +412,7 @@ fn upsert(db: &Connection, session: &TerminalSession, cursor: u64, seq: u64) -> 
            cursor = excluded.cursor,
            updated_at = excluded.updated_at,
            seq = excluded.seq,
+           managed = excluded.managed,
            transport = excluded.transport,
            generation = excluded.generation,
            revision = excluded.revision",
@@ -422,6 +430,7 @@ fn upsert(db: &Connection, session: &TerminalSession, cursor: u64, seq: u64) -> 
             session.created_at,
             session.updated_at,
             seq as i64,
+            i64::from(managed),
             session.transport,
             session.generation,
             session.revision as i64,
@@ -1457,7 +1466,7 @@ fn persist(app: &AppHandle, session: &TerminalSession, cursor: u64, seq: u64) {
     }
     if let Some(state) = app.try_state::<DbState>() {
         if let Ok(db) = state.0.lock() {
-            let _ = upsert(&db, session, cursor, seq);
+            let _ = upsert(&db, session, cursor, seq, true);
         }
     }
 }
@@ -1662,7 +1671,7 @@ pub fn init(app: &AppHandle) -> AppResult<()> {
             .lock()
             .map_err(|_| AppError::msg("terminal session monitor mutex poisoned"))?;
         for mut watch in restored {
-            if (watch.managed || watch.session.transport == "sdk")
+            if (watch.managed || matches!(watch.session.transport.as_str(), "sdk" | "acp"))
                 && !watch.session.status.is_final()
             {
                 watch.session.status = TerminalSessionStatus::Done;
@@ -1729,7 +1738,7 @@ impl Drop for LaunchReservation {
 }
 
 fn session_is_running(app: &AppHandle, id: &str) -> AppResult<bool> {
-    if crate::copilot_sdk_sessions::has_unreleased_session(app, id)? {
+    if crate::copilot_acp_sessions::has_unreleased_session(app, id)? {
         return Ok(true);
     }
     let monitor = app.state::<TerminalSessionMonitor>();
@@ -1742,14 +1751,18 @@ fn session_is_running(app: &AppHandle, id: &str) -> AppResult<bool> {
     {
         return Ok(true);
     }
-    has_lock(&session_state_root()?.join(id))
+    if uuid::Uuid::parse_str(id).is_ok() {
+        has_lock(&session_state_root()?.join(id))
+    } else {
+        Ok(false)
+    }
 }
 
 #[tauri::command]
 pub fn terminal_sessions_is_running(app: AppHandle, id: String) -> AppResult<bool> {
-    let id = uuid::Uuid::parse_str(&id)
-        .map_err(|_| AppError::msg("Invalid Copilot session id."))?
-        .to_string();
+    if id.is_empty() || id.len() > 256 {
+        return Err(AppError::msg("Invalid Copilot session id."));
+    }
     session_is_running(&app, &id)
 }
 
@@ -1809,6 +1822,11 @@ fn start_external(
             req.prompt.as_deref().unwrap_or("")
         },
         Some(&id),
+        if req.resume_session_id.is_some() {
+            None
+        } else {
+            req.initial_mode.as_ref().map(CopilotSessionMode::as_str)
+        },
     );
     if !launched.ok {
         return Err(AppError::msg(launched.error.unwrap_or_else(|| {
@@ -1948,8 +1966,11 @@ pub(crate) fn watch_managed_session(
             ));
         }
     }
-    let path = session_state_root()?.join(id).join("events.jsonl");
-    let (cursor, seq) = history_cursor(&path)?;
+    let (cursor, seq) = if uuid::Uuid::parse_str(id).is_ok() {
+        history_cursor(&session_state_root()?.join(id).join("events.jsonl"))?
+    } else {
+        (0, 0)
+    };
     let session = {
         let monitor = app.state::<TerminalSessionMonitor>();
         let mut watches = monitor
@@ -1997,7 +2018,7 @@ pub(crate) fn watch_managed_session(
             let conn =
                 db.0.lock()
                     .map_err(|_| AppError::msg("database mutex poisoned"))?;
-            upsert(&conn, &session, cursor, seq)?;
+            upsert(&conn, &session, cursor, seq, true)?;
         }
         watches.insert(
             id.to_string(),
@@ -2044,13 +2065,15 @@ pub(crate) fn publish_native_session(app: &AppHandle, session: &TerminalSession)
     if watch.session.status != session.status
         || watch.session.pending_prompt != session.pending_prompt
         || watch.session.last_activity != session.last_activity
+        || watch.session.label != session.label
+        || watch.session.folder_path != session.folder_path
     {
         let state = app.state::<DbState>();
         let db = state
             .0
             .lock()
             .map_err(|_| AppError::msg("Database mutex poisoned."))?;
-        upsert(&db, session, watch.cursor, watch.seq)?;
+        upsert(&db, session, watch.cursor, watch.seq, true)?;
     }
     watch.session = session.clone();
     drop(watches);
@@ -2062,6 +2085,49 @@ pub(crate) fn publish_native_session(app: &AppHandle, session: &TerminalSession)
         },
     )
     .map_err(|error| AppError::msg(error.to_string()))
+}
+
+pub(crate) fn rekey_managed_session(
+    app: &AppHandle,
+    previous: &str,
+    actual: &str,
+) -> AppResult<()> {
+    if actual.is_empty() || actual.len() > 256 {
+        return Err(AppError::msg("Copilot returned an invalid session ID."));
+    }
+    let monitor = app.state::<TerminalSessionMonitor>();
+    let mut watches = monitor
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("Session mutex poisoned."))?;
+    if watches.contains_key(actual) {
+        return Err(AppError::msg(
+            "Copilot returned an ID already owned by another conversation.",
+        ));
+    }
+    let old = watches
+        .get(previous)
+        .ok_or_else(|| AppError::msg("The pending launch no longer exists."))?;
+    let mut session = old.session.clone();
+    session.id = actual.into();
+    let db = app.state::<DbState>();
+    let conn =
+        db.0.lock()
+            .map_err(|_| AppError::msg("Database mutex poisoned."))?;
+    let tx = conn.unchecked_transaction()?;
+    upsert(&tx, &session, old.cursor, old.seq, true)?;
+    tx.execute("DELETE FROM terminal_sessions WHERE id=?1", [previous])?;
+    tx.execute(
+        "UPDATE tasks SET copilot_session_id=?2 WHERE copilot_session_id=?1",
+        rusqlite::params![previous, actual],
+    )?;
+    tx.commit()?;
+    let mut watch = watches
+        .remove(previous)
+        .ok_or_else(|| AppError::msg("The pending launch no longer exists."))?;
+    watch.session = session;
+    watches.insert(actual.into(), watch);
+    Ok(())
 }
 
 #[allow(dead_code)]
@@ -2111,8 +2177,7 @@ fn start_acp_session(
                 "clientCapabilities": {
                     "fs": { "readTextFile": false, "writeTextFile": false },
                     "terminal": false,
-                    "elicitation": { "form": {}, "url": {} },
-                    "session": { "configOptions": { "boolean": {} } }
+                    "elicitation": { "form": {}, "url": {} }
                 },
                 "clientInfo": {
                     "name": "DevTrees",
@@ -2272,6 +2337,13 @@ pub async fn terminal_sessions_start(
     app: AppHandle,
     mut req: StartTerminalSessionRequest,
 ) -> AppResult<TerminalSessionResult> {
+    if app
+        .state::<crate::copilot_acp_sessions::SessionManager>()
+        .exiting
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return Err(AppError::msg("DevTrees is shutting down."));
+    }
     if !PathBuf::from(&req.folder_path).is_dir() {
         return Err(AppError::msg(
             "The session's working directory does not exist.",
@@ -2279,15 +2351,15 @@ pub async fn terminal_sessions_start(
     }
     let id = req
         .resume_session_id
-        .as_deref()
-        .map(uuid::Uuid::parse_str)
-        .transpose()
-        .map_err(|_| AppError::msg("Invalid Copilot session id."))?
-        .unwrap_or_else(uuid::Uuid::new_v4)
-        .to_string();
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    if id.is_empty() || id.len() > 256 {
+        return Err(AppError::msg("Invalid Copilot session id."));
+    }
     if req.resume_session_id.is_some() {
         req.resume_session_id = Some(id.clone());
         req.prompt = None;
+        req.initial_mode = None;
     }
     let _reservation = LaunchReservation::new(&app, &id)?;
     if session_is_running(&app, &id)? {
@@ -2296,10 +2368,15 @@ pub async fn terminal_sessions_start(
         ));
     }
     match crate::settings::settings_session_launch_mode(app.clone())? {
-        crate::settings::SessionLaunchMode::Sdk => {
-            crate::copilot_sdk_sessions::start(app, req).await
+        crate::settings::SessionLaunchMode::Acp => {
+            crate::copilot_acp_sessions::start(app, req).await
         }
         crate::settings::SessionLaunchMode::External => {
+            uuid::Uuid::parse_str(&id).map_err(|_| {
+                AppError::msg(
+                    "This agent session ID cannot be launched in an external Copilot terminal.",
+                )
+            })?;
             tauri::async_runtime::spawn_blocking(move || start_external(&app, req, id))
                 .await
                 .map_err(|error| AppError::msg(format!("Copilot launch failed: {error}")))?
@@ -2307,144 +2384,32 @@ pub async fn terminal_sessions_start(
     }
 }
 
-#[tauri::command]
-pub async fn terminal_sessions_prompt(app: AppHandle, id: String, prompt: String) -> AppResult<()> {
-    let prompt = prompt.trim();
-    if prompt.is_empty() {
-        return Err(AppError::msg("A message is required."));
-    }
-    send_acp_prompt(&app, &id, prompt)
-}
-
-#[tauri::command]
-pub async fn terminal_sessions_cancel(app: AppHandle, id: String) -> AppResult<()> {
-    let stdin = {
-        let manager = app.state::<AcpSessionManager>();
-        let sessions = manager
-            .sessions
-            .lock()
-            .map_err(|_| AppError::msg("Copilot session mutex poisoned"))?;
-        sessions
-            .get(&id)
-            .map(|session| session.stdin.clone())
-            .ok_or_else(|| AppError::msg("This Copilot session is no longer connected."))?
-    };
-    write_rpc(
-        &stdin,
-        &serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "session/cancel",
-            "params": { "sessionId": id }
-        }),
-    )
-}
-
-#[tauri::command]
-pub async fn terminal_sessions_interaction(
-    app: AppHandle,
-    id: String,
-) -> AppResult<Option<TerminalSessionInteraction>> {
-    let manager = app.state::<AcpSessionManager>();
-    let pending = manager
-        .pending
-        .lock()
-        .map_err(|_| AppError::msg("Copilot request mutex poisoned"))?;
-    Ok(pending_interaction_for_session(&pending, &id))
-}
-
-#[tauri::command]
-pub async fn terminal_sessions_respond(
-    app: AppHandle,
-    req: RespondTerminalSessionRequest,
-) -> AppResult<()> {
-    let (id, request_id, expected, result) = match req {
-        RespondTerminalSessionRequest::Permission {
-            id,
-            request_id,
-            option_id,
-        } => (
-            id,
-            request_id,
-            PendingAcpRequest::Permission,
-            serde_json::json!({
-                "outcome": { "outcome": "selected", "optionId": option_id }
-            }),
-        ),
-        RespondTerminalSessionRequest::Elicitation {
-            id,
-            request_id,
-            action,
-            content,
-        } => {
-            if !matches!(action.as_str(), "accept" | "decline" | "cancel") {
-                return Err(AppError::msg("Invalid elicitation response."));
-            }
-            let mut result = serde_json::json!({ "action": action });
-            if action == "accept" {
-                if let Some(content) = content {
-                    result["content"] = content;
-                }
-            }
-            (id, request_id, PendingAcpRequest::Elicitation, result)
-        }
-    };
-
-    {
-        let manager = app.state::<AcpSessionManager>();
-        let pending = manager
-            .pending
-            .lock()
-            .map_err(|_| AppError::msg("Copilot request mutex poisoned"))?;
-        match pending.get(&(id.clone(), request_id)) {
-            Some(TerminalSessionInteraction::Permission { .. })
-                if expected == PendingAcpRequest::Permission => {}
-            Some(TerminalSessionInteraction::Elicitation { .. })
-                if expected == PendingAcpRequest::Elicitation => {}
-            _ => return Err(AppError::msg("This Copilot request is no longer pending.")),
-        }
-    }
-
-    let stdin = {
-        let manager = app.state::<AcpSessionManager>();
-        let sessions = manager
-            .sessions
-            .lock()
-            .map_err(|_| AppError::msg("Copilot session mutex poisoned"))?;
-        sessions
-            .get(&id)
-            .map(|session| session.stdin.clone())
-            .ok_or_else(|| AppError::msg("This Copilot session is no longer connected."))?
-    };
-    write_rpc(
-        &stdin,
-        &serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": result
-        }),
-    )?;
-    if let Ok(mut pending) = app.state::<AcpSessionManager>().pending.lock() {
-        pending.remove(&(id.clone(), request_id));
-    }
-    emit_interaction(&app, &id, managed_pending_interaction(&app, &id));
-    set_managed_status(
-        &app,
-        &id,
-        TerminalSessionStatus::Working,
-        "Continuing after your response",
-        None,
-    );
-    Ok(())
-}
-
 /// Replay a session's event log into timeline entries, capped at the most recent
 /// `MAX_ENTRIES`. Streams line-by-line: these logs reach hundreds of megabytes.
 #[tauri::command]
-pub async fn terminal_sessions_history(id: String) -> AppResult<Vec<TerminalTimelineEntry>> {
+pub async fn terminal_sessions_history(
+    app: AppHandle,
+    id: String,
+) -> AppResult<Vec<TerminalTimelineEntry>> {
     let id = id.trim().to_string();
-    if id.is_empty() {
-        return Ok(Vec::new());
+    {
+        use rusqlite::OptionalExtension;
+        let db = app.state::<DbState>();
+        let saved: Option<String> =
+            db.0.lock()
+                .map_err(|_| AppError::msg("Database mutex poisoned."))?
+                .query_row(
+                    "SELECT payload FROM acp_transcripts WHERE session_id=?1",
+                    [&id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+        if let Some(saved) = saved {
+            return serde_json::from_str(&saved).map_err(Into::into);
+        }
     }
+    uuid::Uuid::parse_str(&id)
+        .map_err(|_| AppError::msg("This session has no compatible local Copilot history path."))?;
     let path = session_state_root()?.join(&id).join("events.jsonl");
     let file = match fs::File::open(&path) {
         Ok(file) => file,
@@ -2476,7 +2441,7 @@ pub async fn terminal_sessions_history(id: String) -> AppResult<Vec<TerminalTime
 /// Stop mirroring a session and drop it from the list.
 #[tauri::command]
 pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<()> {
-    crate::copilot_sdk_sessions::forget(&app, &id).await?;
+    crate::copilot_acp_sessions::forget(&app, &id).await?;
     if app
         .state::<AcpSessionManager>()
         .sessions
@@ -2582,7 +2547,11 @@ mod tests {
 
     #[test]
     fn launches_cannot_override_the_saved_setting() {
-        let req = serde_json::json!({ "folderPath": "repo", "label": "Copilot" });
+        let req = serde_json::json!({
+            "folderPath": "repo",
+            "label": "Copilot",
+            "initialMode": "plan"
+        });
         assert!(serde_json::from_value::<StartTerminalSessionRequest>(req.clone()).is_ok());
         let mut override_req = req;
         override_req["transport"] = serde_json::json!("sdk");
@@ -2696,45 +2665,28 @@ mod tests {
     }
 
     #[test]
-    fn renderer_responses_deserialize_with_camel_case_fields_and_zero_request_id() {
-        let permission: RespondTerminalSessionRequest = serde_json::from_value(serde_json::json!({
+    fn native_renderer_responses_preserve_offered_actions_and_typed_form_values() {
+        use crate::session_interactions::InteractionAnswer;
+        let permission: InteractionAnswer = serde_json::from_value(serde_json::json!({
             "kind": "permission",
-            "id": "session-1",
-            "requestId": 0,
-            "optionId": "allow_once"
+            "action": "opaque:allow_once"
         }))
         .unwrap();
         match permission {
-            RespondTerminalSessionRequest::Permission {
-                id,
-                request_id,
-                option_id,
-            } => {
-                assert_eq!(id, "session-1");
-                assert_eq!(request_id, 0);
-                assert_eq!(option_id, "allow_once");
+            InteractionAnswer::Permission { action } => {
+                assert_eq!(action, "opaque:allow_once");
             }
             _ => panic!("expected permission response"),
         }
 
-        let elicitation: RespondTerminalSessionRequest =
-            serde_json::from_value(serde_json::json!({
-                "kind": "elicitation",
-                "id": "session-2",
-                "requestId": 12,
-                "action": "accept",
-                "content": { "choice": "alpha" }
-            }))
-            .unwrap();
+        let elicitation: InteractionAnswer = serde_json::from_value(serde_json::json!({
+            "kind": "elicitation",
+            "action": "accept",
+            "content": { "choice": "alpha" }
+        }))
+        .unwrap();
         match elicitation {
-            RespondTerminalSessionRequest::Elicitation {
-                id,
-                request_id,
-                action,
-                content,
-            } => {
-                assert_eq!(id, "session-2");
-                assert_eq!(request_id, 12);
+            InteractionAnswer::Elicitation { action, content } => {
                 assert_eq!(action, "accept");
                 assert_eq!(content, Some(serde_json::json!({ "choice": "alpha" })));
             }

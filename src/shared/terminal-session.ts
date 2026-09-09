@@ -68,9 +68,13 @@ export type TerminalSessionResult =
   | { ok: true; session: TerminalSession }
   | { ok: false; error: string }
 
+export type CopilotSessionMode = 'interactive' | 'plan' | 'autopilot'
+
 export type StartTerminalSessionRequest = Omit<WatchTerminalSessionRequest, 'id'> & {
   prompt?: string
   resumeSessionId?: string
+  /** Mode for a fresh Copilot conversation. Ignored when resuming. */
+  initialMode?: CopilotSessionMode
 }
 
 export function isExternalSessionEnded(session: TerminalSession): boolean {
@@ -144,6 +148,7 @@ export function isTerminalSessionFinished(status: TerminalSessionStatus): boolea
  * history by sequence. Within either source, tool completion replaces its in-flight row.
  */
 export type TerminalTimelineEntry =
+  | { kind: 'acp'; seq: number; timestamp?: string | null; category: string; data: unknown }
   | { kind: 'userMessage'; seq: number; timestamp?: string | null; text: string }
   | { kind: 'assistantMessage'; seq: number; timestamp?: string | null; text: string }
   | {

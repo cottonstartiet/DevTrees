@@ -2,8 +2,21 @@
 import * as React from 'react'
 import { toast } from 'sonner'
 
-import { createTask, deleteTask, listTasks, moveTask, updateTask } from '@/lib/tasks'
-import type { CreateTaskRequest, Task, TaskStatus, UpdateTaskRequest } from '@shared/task'
+import {
+  createTask,
+  deleteTask,
+  listTasks,
+  moveTask,
+  setTaskQueueStatus,
+  updateTask
+} from '@/lib/tasks'
+import type {
+  CreateTaskRequest,
+  Task,
+  TaskQueueStatus,
+  TaskStatus,
+  UpdateTaskRequest
+} from '@shared/task'
 
 export const TASK_STATUSES: readonly TaskStatus[] = ['todo', 'in_progress', 'review', 'done']
 
@@ -22,6 +35,7 @@ export interface TaskBoardContextValue {
   updateTask: (req: UpdateTaskRequest) => Promise<Task | null>
   moveTask: (id: string, status: TaskStatus, beforeId?: string | null) => Promise<void>
   deleteTask: (id: string) => Promise<boolean>
+  setTaskQueueStatus: (id: string, queueStatus: TaskQueueStatus) => Promise<Task | null>
   setTaskLocal: (task: Task) => void
 }
 
@@ -171,6 +185,24 @@ export function TaskBoardProvider({ children }: { children: React.ReactNode }): 
     }
   }, [])
 
+  const handleSetTaskQueueStatus = React.useCallback(
+    async (id: string, queueStatus: TaskQueueStatus): Promise<Task | null> => {
+      try {
+        const res = await setTaskQueueStatus({ id, queueStatus })
+        if (!res.ok) {
+          toast.error(res.message ?? 'Could not update the task queue.')
+          return null
+        }
+        setTasks((prev) => prev.map((task) => (task.id === res.task.id ? res.task : task)))
+        return res.task
+      } catch (error) {
+        toast.error(errorMessage(error, 'Could not update the task queue.'))
+        return null
+      }
+    },
+    []
+  )
+
   const setTaskLocal = React.useCallback((task: Task): void => {
     setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)))
   }, [])
@@ -184,6 +216,7 @@ export function TaskBoardProvider({ children }: { children: React.ReactNode }): 
       updateTask: handleUpdateTask,
       moveTask: handleMoveTask,
       deleteTask: handleDeleteTask,
+      setTaskQueueStatus: handleSetTaskQueueStatus,
       setTaskLocal
     }),
     [
@@ -193,6 +226,7 @@ export function TaskBoardProvider({ children }: { children: React.ReactNode }): 
       handleUpdateTask,
       handleMoveTask,
       handleDeleteTask,
+      handleSetTaskQueueStatus,
       setTaskLocal
     ]
   )

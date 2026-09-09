@@ -25,6 +25,7 @@ import { DashboardProvider } from '@/contexts/dashboard-context'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { useRepositories } from '@/hooks/use-repositories'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
+import { useTaskQueue, type TaskQueueController } from '@/hooks/use-task-queue'
 import { openExternal } from '@/lib/system'
 import { DetailView } from '@/pages/detail-view'
 import { DashboardPage } from '@/pages/dashboard'
@@ -58,6 +59,7 @@ interface TasksPageContainerProps {
   onDialogOpenChange: (open: boolean) => void
   activeTask: Task | null
   onOpenTask: (task: Task | null) => void
+  queue?: TaskQueueController
 }
 
 /** Owns the "Start task" action, launching a managed Copilot session for the task. */
@@ -70,7 +72,8 @@ function TasksPageContainer({
   dialogOpen,
   onDialogOpenChange,
   activeTask,
-  onOpenTask
+  onOpenTask,
+  queue
 }: TasksPageContainerProps): React.JSX.Element {
   const { byId: terminalSessionsById } = useTerminalSessions()
   const launchCopilot = useCopilotLauncher()
@@ -130,21 +133,28 @@ function TasksPageContainer({
 
   const handleMoveTask = useCallback(
     async (task: Task, status: TaskStatus, beforeId?: string | null): Promise<void> => {
+      // Commit the user's status change to the board before preparing any worktree.
+      // The provider applies this optimistically, so slower setup continues off the interaction path.
+      const movePromise = moveTask(task.id, status, beforeId)
       const resolved = status === 'in_progress' ? await materializeTaskWorktree(task) : task
-      if (!resolved) return
-      await moveTask(resolved.id, status, beforeId)
+      if (!resolved) {
+        await movePromise
+        return
+      }
+      await movePromise
     },
     [materializeTaskWorktree, moveTask]
   )
 
   const handleStartTask = useCallback(
     async (task: Task): Promise<void> => {
+      if (task.status === 'todo') {
+        // Move immediately; worktree preparation and session launch continue asynchronously.
+        void moveTask(task.id, 'in_progress')
+      }
+
       const resolvedTask = await materializeTaskWorktree(task)
       if (!resolvedTask) return
-
-      if (resolvedTask.status === 'todo') {
-        await moveTask(resolvedTask.id, 'in_progress')
-      }
 
       // Already running? Don't spawn a second terminal for the same task.
       const linkedId = resolvedTask.copilotSessionId
@@ -200,6 +210,7 @@ function TasksPageContainer({
       const result = await launchCopilot({
         folderPath: worktreePath,
         prompt,
+        initialMode: 'plan',
         label: resolvedTask.title.trim() || resolvedTask.repositoryName,
         branch: resolvedTask.worktreeBranch ?? undefined,
         repository: resolvedTask.repositoryName,
@@ -213,7 +224,7 @@ function TasksPageContainer({
 
       // Link the mirrored CLI session to the task, so a second Start reuses it.
       const sessionId = result.sessionId
-      setTaskLocal({ ...resolvedTask, copilotSessionId: sessionId })
+      setTaskLocal({ ...resolvedTask, status: 'in_progress', copilotSessionId: sessionId })
       try {
         const res = await setTaskCopilotSession({
           id: resolvedTask.id,
@@ -226,8 +237,6 @@ function TasksPageContainer({
           error instanceof Error ? error.message : 'Could not link the session to this task.'
         )
       }
-
-      if (resolvedTask.status === 'todo') await moveTask(resolvedTask.id, 'in_progress')
 
       toast.success(`Copilot started for "${resolvedTask.title}".`)
     },
@@ -260,6 +269,9 @@ function TasksPageContainer({
 
   const handleReviewTask = useCallback(
     async (task: Task): Promise<void> => {
+      // Reflect the workflow transition immediately while review setup runs in the background.
+      void moveTask(task.id, 'review')
+
       if (task.copilotSessionId && !terminalSessionsById[task.copilotSessionId]) {
         try {
           if (await window.api.terminalSessions.isRunning(task.copilotSessionId)) {
@@ -321,7 +333,7 @@ function TasksPageContainer({
 
       // The review session becomes the task's current session, so the card tracks it.
       const sessionId = result.sessionId
-      setTaskLocal({ ...task, copilotSessionId: sessionId })
+      setTaskLocal({ ...task, status: 'review', copilotSessionId: sessionId })
       try {
         const res = await setTaskCopilotSession({ id: task.id, copilotSessionId: sessionId })
         if (res.ok) setTaskLocal(res.task)
@@ -332,7 +344,6 @@ function TasksPageContainer({
         )
       }
 
-      await moveTask(task.id, 'review')
       toast.success(`Code review started for "${task.title}".`)
     },
     [
@@ -346,20 +357,54 @@ function TasksPageContainer({
     ]
   )
 
+  const taskActions =
+    queue ??
+    ({
+      startTask: handleStartTask,
+      moveTask: handleMoveTask,
+      reviewTask: handleReviewTask,
+      canReviewTask
+    } satisfies Pick<
+      TaskQueueController,
+      'startTask' | 'moveTask' | 'reviewTask' | 'canReviewTask'
+    >)
+
   return (
     <TasksPage
       repositories={repositories}
       worktreesByRepositoryId={worktreesByRepositoryId}
-      onStartTask={handleStartTask}
-      onMoveTask={handleMoveTask}
-      onReviewTask={handleReviewTask}
-      canReviewTask={canReviewTask}
+      onStartTask={taskActions.startTask}
+      onMoveTask={taskActions.moveTask}
+      onReviewTask={taskActions.reviewTask}
+      canReviewTask={taskActions.canReviewTask}
       dialogOpen={dialogOpen}
       onDialogOpenChange={onDialogOpenChange}
       activeTask={activeTask}
       onOpenTask={onOpenTask}
     />
   )
+}
+
+function TaskQueueBridge({
+  repositories,
+  createWorktree,
+  refreshWorktreesFor,
+  checkWorktreeStatus,
+  children
+}: {
+  repositories: Repository[]
+  createWorktree: (repository: Repository, name: string) => Promise<boolean>
+  refreshWorktreesFor: (repositoryId: string) => Promise<void>
+  checkWorktreeStatus: (path: string) => Promise<WorktreeStatusResult>
+  children: (queue: TaskQueueController) => React.ReactNode
+}): React.JSX.Element {
+  const queue = useTaskQueue({
+    repositories,
+    createWorktree,
+    refreshWorktreesFor,
+    checkWorktreeStatus
+  })
+  return <>{children(queue)}</>
 }
 
 function AppShell(): React.JSX.Element {
@@ -841,166 +886,187 @@ function AppShell(): React.JSX.Element {
       onNavigateToSessions={handleNavigateToSessions}
       suppressNotifications={view === 'dashboard' || view === 'sessions'}
     >
-      <DashboardProvider repositories={repositories}>
-        <SidebarProvider className="flex h-svh flex-col">
-          <div className="flex min-h-0 w-full flex-1">
-            <ActivityRail activeView={view} onSelect={setView} />
-            {view === 'repositories' || view === 'reviews' || view === 'sessions' ? (
-              <AppSidebar
-                activeView={view}
-                onSelectView={setView}
-                repositories={repositories}
-                activeRepositoryId={view === 'reviews' ? reviewsRepositoryId : activeRepositoryId}
-                activeWorktreePath={view === 'repositories' ? activeWorktreePath : null}
-                worktreesByRepositoryId={worktreesByRepositoryId}
-                deletingWorktreePaths={deletingWorktreePaths}
-                onAddRepository={handleAddRepository}
-                onSelectRepository={
-                  view === 'reviews' ? handleSelectReviewsRepository : handleSelectRepository
-                }
-                onRemoveRepository={handleRemoveRepository}
-                onReorderRepositories={reorderRepositories}
-                onCreateWorktree={handleCreateWorktreeClick}
-                onSelectWorktree={handleSelectWorktree}
-                onDeleteWorktree={handleDeleteWorktreeClick}
-              />
-            ) : null}
-            <SidebarInset className="min-w-0 overflow-hidden">
-              {showDetailToolbar && detailFolderPath ? (
-                <DetailToolbar
-                  title={headerTitle}
-                  folderPath={detailFolderPath}
-                  branch={detailBranch}
-                  isDetached={detailIsDetached}
-                  headState={detailHeadState}
-                  isWorktree={!!activeWorktree}
-                  repositoryPath={activeRepository?.path ?? null}
-                  repo={repo}
-                  existingPullRequest={existingPullRequest}
-                  onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
-                  branchWebUrl={branchWebUrl}
-                  onOpenBranch={branchWebUrl ? handleOpenBranch : undefined}
-                />
-              ) : (
-                <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
-                  {view === 'repositories' || view === 'reviews' || view === 'sessions' ? (
-                    <>
-                      <SidebarTrigger className="-ml-1" />
-                      <Separator orientation="vertical" className="mr-2 h-4" />
-                    </>
-                  ) : null}
-                  <h2 className="text-sm font-medium">{headerTitle}</h2>
-                  {view === 'sessions' && <SessionsHeaderControls />}
-                  {view === 'tasks' && (
-                    <TasksHeaderControls
-                      taskCount={allTasks.length}
-                      onAddTask={handleOpenAddTaskDialog}
-                    />
-                  )}
-                </header>
-              )}
-              <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
-                {view === 'dashboard' ? (
-                  <DashboardPage
+      <TaskQueueBridge
+        repositories={repositories}
+        createWorktree={createWorktree}
+        refreshWorktreesFor={refreshWorktreesFor}
+        checkWorktreeStatus={checkWorktreeStatus}
+      >
+        {(taskQueue) => (
+          <DashboardProvider repositories={repositories}>
+            <SidebarProvider className="flex h-svh flex-col">
+              <div className="flex min-h-0 w-full flex-1">
+                <ActivityRail activeView={view} onSelect={setView} />
+                {view === 'repositories' || view === 'reviews' || view === 'sessions' ? (
+                  <AppSidebar
+                    activeView={view}
+                    onSelectView={setView}
                     repositories={repositories}
-                    onNavigateToSessions={handleNavigateToSessions}
-                    onNavigateToReviews={() => setView('reviews')}
-                  />
-                ) : view === 'tasks' ? (
-                  <TasksPageContainer
-                    repositories={repositories}
+                    activeRepositoryId={
+                      view === 'reviews' ? reviewsRepositoryId : activeRepositoryId
+                    }
+                    activeWorktreePath={view === 'repositories' ? activeWorktreePath : null}
                     worktreesByRepositoryId={worktreesByRepositoryId}
-                    createWorktree={createWorktree}
-                    refreshWorktreesFor={refreshWorktreesFor}
-                    checkWorktreeStatus={checkWorktreeStatus}
-                    dialogOpen={taskDialogOpen}
-                    onDialogOpenChange={setTaskDialogOpen}
-                    activeTask={activeTaskForDialog}
-                    onOpenTask={handleOpenTaskDialog}
+                    deletingWorktreePaths={deletingWorktreePaths}
+                    onAddRepository={handleAddRepository}
+                    onSelectRepository={
+                      view === 'reviews' ? handleSelectReviewsRepository : handleSelectRepository
+                    }
+                    onRemoveRepository={handleRemoveRepository}
+                    onReorderRepositories={reorderRepositories}
+                    onCreateWorktree={handleCreateWorktreeClick}
+                    onSelectWorktree={handleSelectWorktree}
+                    onDeleteWorktree={handleDeleteWorktreeClick}
                   />
-                ) : view === 'settings' ? (
-                  <div className="flex flex-1 flex-col gap-4 overflow-y-auto p-6">
-                    <SettingsPage />
+                ) : null}
+                <SidebarInset className="min-w-0 overflow-hidden">
+                  {showDetailToolbar && detailFolderPath ? (
+                    <DetailToolbar
+                      title={headerTitle}
+                      folderPath={detailFolderPath}
+                      branch={detailBranch}
+                      isDetached={detailIsDetached}
+                      headState={detailHeadState}
+                      isWorktree={!!activeWorktree}
+                      repositoryPath={activeRepository?.path ?? null}
+                      repo={repo}
+                      existingPullRequest={existingPullRequest}
+                      onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
+                      branchWebUrl={branchWebUrl}
+                      onOpenBranch={branchWebUrl ? handleOpenBranch : undefined}
+                    />
+                  ) : (
+                    <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
+                      {view === 'repositories' || view === 'reviews' || view === 'sessions' ? (
+                        <>
+                          <SidebarTrigger className="-ml-1" />
+                          <Separator orientation="vertical" className="mr-2 h-4" />
+                        </>
+                      ) : null}
+                      <h2 className="text-sm font-medium">{headerTitle}</h2>
+                      {view === 'sessions' && <SessionsHeaderControls />}
+                      {view === 'tasks' && (
+                        <TasksHeaderControls
+                          taskCount={allTasks.length}
+                          queuedCount={taskQueue.queuedCount}
+                          runningCount={taskQueue.runningCount}
+                          failedCount={taskQueue.failedCount}
+                          queueMode={taskQueue.settings.mode}
+                          queueRunning={taskQueue.manualRunActive}
+                          onRunQueue={taskQueue.runQueue}
+                          onAddTask={handleOpenAddTaskDialog}
+                        />
+                      )}
+                    </header>
+                  )}
+                  <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col">
+                    {view === 'dashboard' ? (
+                      <DashboardPage
+                        repositories={repositories}
+                        onNavigateToSessions={handleNavigateToSessions}
+                        onNavigateToReviews={(repositoryId) => {
+                          if (repositoryId) setReviewsRepositoryId(repositoryId)
+                          setView('reviews')
+                        }}
+                      />
+                    ) : view === 'tasks' ? (
+                      <TasksPageContainer
+                        repositories={repositories}
+                        worktreesByRepositoryId={worktreesByRepositoryId}
+                        createWorktree={createWorktree}
+                        refreshWorktreesFor={refreshWorktreesFor}
+                        checkWorktreeStatus={checkWorktreeStatus}
+                        dialogOpen={taskDialogOpen}
+                        onDialogOpenChange={setTaskDialogOpen}
+                        activeTask={activeTaskForDialog}
+                        onOpenTask={handleOpenTaskDialog}
+                        queue={taskQueue}
+                      />
+                    ) : view === 'settings' ? (
+                      <div className="flex min-h-0 flex-1 flex-col">
+                        <SettingsPage />
+                      </div>
+                    ) : view === 'history' ? (
+                      <HistoryPage />
+                    ) : view === 'analytics' ? (
+                      <AnalyticsPage repositories={repositories} />
+                    ) : view === 'reviews' ? (
+                      <ReviewsPage repository={reviewsRepository} />
+                    ) : view === 'sessions' ? (
+                      <SessionsPage />
+                    ) : (
+                      <DetailView
+                        repository={activeRepository}
+                        worktree={activeWorktree}
+                        folderPath={detailFolderPath}
+                        branch={detailBranch}
+                        defaultBranch={repo.defaultBranch ?? null}
+                        headState={detailHeadState}
+                        existingPullRequest={existingPullRequest}
+                        onCreateBranch={
+                          activeWorktree && activeWorktree.isDetached
+                            ? handleCreateBranchClick
+                            : undefined
+                        }
+                        onCreatePullRequest={
+                          detailHeadState === 'branch' &&
+                          detailFolderPath &&
+                          detailBranch &&
+                          repo.defaultBranch &&
+                          detailBranch !== repo.defaultBranch &&
+                          !existingPullRequest
+                            ? handleCreatePullRequest
+                            : undefined
+                        }
+                        onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
+                        onPullRequestTabActive={
+                          existingPullRequest ? handleRefreshPullRequest : undefined
+                        }
+                        isCreatingPullRequest={
+                          !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
+                        }
+                        isPullRequestStatusResolved={isPullRequestStatusResolved}
+                        onSelectWorktreePath={
+                          activeRepository
+                            ? (path: string) => handleSelectWorktree(activeRepository.id, path)
+                            : undefined
+                        }
+                      />
+                    )}
                   </div>
-                ) : view === 'history' ? (
-                  <HistoryPage />
-                ) : view === 'analytics' ? (
-                  <AnalyticsPage repositories={repositories} />
-                ) : view === 'reviews' ? (
-                  <ReviewsPage repository={reviewsRepository} />
-                ) : view === 'sessions' ? (
-                  <SessionsPage />
-                ) : (
-                  <DetailView
-                    repository={activeRepository}
-                    worktree={activeWorktree}
-                    folderPath={detailFolderPath}
-                    branch={detailBranch}
-                    defaultBranch={repo.defaultBranch ?? null}
-                    headState={detailHeadState}
-                    existingPullRequest={existingPullRequest}
-                    onCreateBranch={
-                      activeWorktree && activeWorktree.isDetached
-                        ? handleCreateBranchClick
-                        : undefined
-                    }
-                    onCreatePullRequest={
-                      detailHeadState === 'branch' &&
-                      detailFolderPath &&
-                      detailBranch &&
-                      repo.defaultBranch &&
-                      detailBranch !== repo.defaultBranch &&
-                      !existingPullRequest
-                        ? handleCreatePullRequest
-                        : undefined
-                    }
-                    onOpenPullRequest={existingPullRequest ? handleOpenPullRequest : undefined}
-                    onPullRequestTabActive={
-                      existingPullRequest ? handleRefreshPullRequest : undefined
-                    }
-                    isCreatingPullRequest={
-                      !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
-                    }
-                    isPullRequestStatusResolved={isPullRequestStatusResolved}
-                    onSelectWorktreePath={
-                      activeRepository
-                        ? (path: string) => handleSelectWorktree(activeRepository.id, path)
-                        : undefined
-                    }
-                  />
-                )}
+                </SidebarInset>
               </div>
-            </SidebarInset>
-          </div>
-          <StatusBar context={statusContext} />
-          <CreateWorktreeDialog
-            repository={dialogRepository}
-            open={dialogOpen}
-            onOpenChange={setDialogOpen}
-            onSubmit={handleDialogSubmit}
-          />
-          <DeleteWorktreeDialog
-            worktree={deleteTarget?.worktree ?? null}
-            repositoryName={
-              deleteTarget
-                ? (repositories.find((w) => w.id === deleteTarget.repositoryId)?.name ?? null)
-                : null
-            }
-            status={deleteStatus}
-            open={deleteOpen}
-            onOpenChange={handleDeleteOpenChange}
-            onConfirm={handleDeleteConfirm}
-          />
-          <CreateBranchDialog
-            repository={createBranchTarget?.repository ?? null}
-            worktree={createBranchTarget?.worktree ?? null}
-            open={createBranchOpen}
-            onOpenChange={handleCreateBranchOpenChange}
-            onSubmit={handleCreateBranchSubmit}
-          />
-          <Toaster richColors closeButton position="bottom-right" />
-        </SidebarProvider>
-      </DashboardProvider>
+              <StatusBar context={statusContext} />
+              <CreateWorktreeDialog
+                repository={dialogRepository}
+                open={dialogOpen}
+                onOpenChange={setDialogOpen}
+                onSubmit={handleDialogSubmit}
+              />
+              <DeleteWorktreeDialog
+                worktree={deleteTarget?.worktree ?? null}
+                repositoryName={
+                  deleteTarget
+                    ? (repositories.find((w) => w.id === deleteTarget.repositoryId)?.name ?? null)
+                    : null
+                }
+                status={deleteStatus}
+                open={deleteOpen}
+                onOpenChange={handleDeleteOpenChange}
+                onConfirm={handleDeleteConfirm}
+              />
+              <CreateBranchDialog
+                repository={createBranchTarget?.repository ?? null}
+                worktree={createBranchTarget?.worktree ?? null}
+                open={createBranchOpen}
+                onOpenChange={handleCreateBranchOpenChange}
+                onSubmit={handleCreateBranchSubmit}
+              />
+              <Toaster richColors closeButton position="bottom-right" />
+            </SidebarProvider>
+          </DashboardProvider>
+        )}
+      </TaskQueueBridge>
     </TerminalSessionsProvider>
   )
 }
