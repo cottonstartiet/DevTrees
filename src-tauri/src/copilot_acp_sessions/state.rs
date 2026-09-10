@@ -197,6 +197,19 @@ impl State {
         self.changed();
     }
 
+    pub fn can_reopen_plan_transition(&self) -> bool {
+        self.snapshot.phase == "idle"
+            && self.current_mode_matches("plan")
+            && !self.snapshot.plan_transition_available
+            && self.snapshot.interactions.is_empty()
+            && !self.snapshot.queue.iter().any(|item| {
+                matches!(
+                    item.status.as_str(),
+                    "queued" | "dispatching" | "active" | "delivery-unknown"
+                )
+            })
+    }
+
     pub fn notice(&mut self, text: impl Into<String>, error: bool) {
         let entry = TerminalTimelineEntry::Notice {
             seq: self.next_seq,
@@ -764,6 +777,38 @@ mod tests {
         assert_eq!(state.mode_id("plan"), Some("plan"));
         assert_eq!(state.mode_id("Plan"), Some("plan"));
         assert_eq!(state.mode_id("unsupported"), None);
+    }
+
+    #[test]
+    fn idle_resumed_plan_mode_can_reopen_transition_without_pending_work() {
+        let mut state = state();
+        modes(&mut state, "plan");
+        state.snapshot.phase = "idle".into();
+        state.snapshot.queue_paused = true;
+        state.snapshot.queue.push(QueuedPrompt {
+            id: "done".into(),
+            prompt: Arc::new(vec![json!({"type":"text","text":"Plan"})]),
+            status: "completed".into(),
+            error: None,
+        });
+        assert!(state.can_reopen_plan_transition());
+
+        state.snapshot.interactions.push(NativeInteraction {
+            id: "input".into(),
+            created_at: 0,
+            request: crate::session_interactions::InteractionRequest::Question {
+                message: "Choose".into(),
+                choices: vec!["One".into()],
+                allow_freeform: false,
+            },
+        });
+        assert!(!state.can_reopen_plan_transition());
+        state.snapshot.interactions.clear();
+
+        for status in ["queued", "dispatching", "active", "delivery-unknown"] {
+            state.snapshot.queue[0].status = status.into();
+            assert!(!state.can_reopen_plan_transition(), "{status}");
+        }
     }
 
     #[test]

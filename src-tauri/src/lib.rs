@@ -169,6 +169,7 @@ pub fn run() {
             terminal_sessions::terminal_sessions_forget,
             copilot_acp_sessions::native_session_snapshot,
             copilot_acp_sessions::native_session_respond,
+            copilot_acp_sessions::acp_session_reopen_plan_transition,
             copilot_acp_sessions::acp_session_plan_transition,
             copilot_acp_sessions::native_session_cancel,
             copilot_acp_sessions::native_session_end,

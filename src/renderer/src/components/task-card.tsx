@@ -1,9 +1,15 @@
 import * as React from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { FolderGit2Icon, GitBranchIcon, LoaderCircleIcon, PlayIcon } from 'lucide-react'
+import {
+  ChevronRightIcon,
+  FolderGit2Icon,
+  GitBranchIcon,
+  LoaderCircleIcon,
+  PlayIcon
+} from 'lucide-react'
 
-import { TerminalSessionStatusButton } from '@/components/sessions/terminal-session-status-badge'
+import { TerminalSessionStatusBadge } from '@/components/sessions/terminal-session-status-badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { Task } from '@shared/task'
@@ -83,16 +89,7 @@ export function TaskCard({
             {queueLabel}
           </span>
         ) : task.status === 'in_progress' && session ? (
-          <TerminalSessionStatusButton
-            status={session.status}
-            className="rounded px-1.5"
-            aria-label={`Open ${task.title} session`}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              onOpenSession(session)
-            }}
-          />
+          <TerminalSessionStatusBadge status={session.status} className="rounded px-1.5" />
         ) : null}
       </div>
       {task.description ? (
@@ -133,6 +130,19 @@ export function TaskCard({
         </div>
       ) : task.status === 'in_progress' || task.status === 'review' ? (
         <div className="mt-1 flex flex-wrap gap-2">
+          {task.status === 'in_progress' && session ? (
+            <Button
+              type="button"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenSession(session)
+              }}
+            >
+              Open
+              <ChevronRightIcon />
+            </Button>
+          ) : null}
           {task.status === 'in_progress' && canReview ? (
             <Button
               type="button"
@@ -143,7 +153,7 @@ export function TaskCard({
                 onReview(task)
               }}
             >
-              Move to review
+              Review
             </Button>
           ) : null}
           <Button
@@ -155,7 +165,7 @@ export function TaskCard({
               onDone(task)
             }}
           >
-            Mark done
+            Done
           </Button>
         </div>
       ) : task.status === 'done' ? (

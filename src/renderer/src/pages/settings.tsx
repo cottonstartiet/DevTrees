@@ -18,7 +18,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
-import { useTheme, type Theme } from '@/contexts/theme-context'
+import { useTheme, type ColorTheme, type Theme } from '@/contexts/theme-context'
 import { cn } from '@/lib/utils'
 import { getAppInfo } from '@/lib/system'
 import { saveTaskQueueSettings } from '@/lib/task-queue-settings'
@@ -41,61 +41,97 @@ const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; Icon: typeof S
   { value: 'system', label: 'System', Icon: MonitorIcon }
 ]
 
-function ThemeSwatch({ theme }: { theme: Theme }): React.JSX.Element {
-  if (theme === 'system') {
-    return (
-      <span className="border-border flex h-8 w-full overflow-hidden rounded-md border" aria-hidden>
-        <span className="flex w-1/2 bg-[oklch(0.985_0.006_158)]">
-          <span className="w-2.5 bg-[oklch(0.965_0.014_158)]" />
-          <span className="m-auto size-2.5 rounded-sm bg-[oklch(0.52_0.16_158)]" />
-        </span>
-        <span className="flex w-1/2 bg-[oklch(0.15_0.018_158)]">
-          <span className="w-2.5 bg-[oklch(0.185_0.025_158)]" />
-          <span className="m-auto size-2.5 rounded-sm bg-[oklch(0.76_0.16_158)]" />
-        </span>
-      </span>
-    )
-  }
+const COLOR_THEME_OPTIONS: ReadonlyArray<{
+  value: ColorTheme
+  label: string
+  description: string
+}> = [
+  { value: 'chalk', label: 'Chalk', description: 'Quiet blue-gray surfaces with ink controls.' },
+  { value: 'velocity', label: 'Velocity', description: 'Cool neutral surfaces with vivid blue.' }
+]
 
-  const isDark = theme === 'dark'
+type ThemePreviewColors = {
+  background: string
+  sidebar: string
+  primary: string
+  border: string
+}
+
+const COLOR_THEME_PREVIEWS: Record<
+  ColorTheme,
+  { light: ThemePreviewColors; dark: ThemePreviewColors }
+> = {
+  chalk: {
+    light: {
+      background: 'oklch(0.9745 0.0079 253.8524)',
+      sidebar: 'oklch(0.9601 0.0103 261.7889)',
+      primary: 'oklch(0.2038 0.0264 260.9332)',
+      border: 'oklch(0.9013 0.0156 257.2001)'
+    },
+    dark: {
+      background: 'oklch(0.2292 0.0304 259.0329)',
+      sidebar: 'oklch(0.2452 0.0305 256.8649)',
+      primary: 'oklch(0.8993 0.0119 239.9205)',
+      border: 'oklch(0.3299 0.0322 257.6775)'
+    }
+  },
+  velocity: {
+    light: {
+      background: 'oklch(0.9713 0.0053 286.3006)',
+      sidebar: 'oklch(1 0 0)',
+      primary: 'oklch(0.5607 0.2181 266.5346)',
+      border: 'oklch(0.8947 0.0149 286.0941)'
+    },
+    dark: {
+      background: 'oklch(0.1921 0.004 286.0181)',
+      sidebar: 'oklch(0.2099 0.0039 286.0588)',
+      primary: 'oklch(0.5607 0.2181 266.5346)',
+      border: 'oklch(0.249 0.0056 285.9851)'
+    }
+  }
+}
+
+function PreviewHalf({ colors }: { colors: ThemePreviewColors }): React.JSX.Element {
   return (
     <span
-      className={cn(
-        'flex h-8 w-full overflow-hidden rounded-md border',
-        isDark
-          ? 'border-[oklch(0.32_0.035_158)] bg-[oklch(0.15_0.018_158)]'
-          : 'border-[oklch(0.89_0.02_158)] bg-[oklch(0.985_0.006_158)]'
-      )}
-      aria-hidden
+      className="flex min-w-0 flex-1 overflow-hidden"
+      style={{ backgroundColor: colors.background }}
     >
       <span
-        className={cn(
-          'w-5 border-r',
-          isDark
-            ? 'border-[oklch(0.31_0.038_158)] bg-[oklch(0.185_0.025_158)]'
-            : 'border-[oklch(0.87_0.028_158)] bg-[oklch(0.965_0.014_158)]'
-        )}
+        className="w-5 shrink-0 border-r"
+        style={{ backgroundColor: colors.sidebar, borderColor: colors.border }}
       />
-      <span className="flex flex-1 items-center justify-center gap-1">
-        <span
-          className={cn(
-            'h-2 w-7 rounded-sm',
-            isDark ? 'bg-[oklch(0.76_0.16_158)]' : 'bg-[oklch(0.52_0.16_158)]'
-          )}
-        />
-        <span
-          className={cn(
-            'size-2 rounded-full',
-            isDark ? 'bg-[oklch(0.72_0.16_305)]' : 'bg-[oklch(0.57_0.19_305)]'
-          )}
-        />
-        <span
-          className={cn(
-            'size-2 rounded-full',
-            isDark ? 'bg-[oklch(0.8_0.14_80)]' : 'bg-[oklch(0.68_0.16_75)]'
-          )}
-        />
+      <span className="flex flex-1 items-center justify-center">
+        <span className="h-2 w-7 rounded-sm" style={{ backgroundColor: colors.primary }} />
       </span>
+    </span>
+  )
+}
+
+function ColorThemeSwatch({ colorTheme }: { colorTheme: ColorTheme }): React.JSX.Element {
+  const preview = COLOR_THEME_PREVIEWS[colorTheme]
+  return (
+    <span className="flex h-9 w-full overflow-hidden rounded-md border" aria-hidden>
+      <PreviewHalf colors={preview.light} />
+      <PreviewHalf colors={preview.dark} />
+    </span>
+  )
+}
+
+function ModeSwatch({
+  theme,
+  colorTheme
+}: {
+  theme: Theme
+  colorTheme: ColorTheme
+}): React.JSX.Element {
+  const preview = COLOR_THEME_PREVIEWS[colorTheme]
+  const modes = theme === 'system' ? [preview.light, preview.dark] : [preview[theme]]
+  return (
+    <span className="flex h-8 w-full overflow-hidden rounded-md border" aria-hidden>
+      {modes.map((colors, index) => (
+        <PreviewHalf key={`${theme}-${index}`} colors={colors} />
+      ))}
     </span>
   )
 }
@@ -339,7 +375,9 @@ function SavedPromptsSettings(): React.JSX.Element {
               value={draft.name}
               disabled={busy}
               placeholder="Code review"
-              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, name: event.target.value }))
+              }
             />
           </div>
 
@@ -627,7 +665,7 @@ function TaskQueueSettingsPanel(): React.JSX.Element {
 }
 
 function AppearanceSettings(): React.JSX.Element {
-  const { theme, setTheme } = useTheme()
+  const { theme, colorTheme, setTheme, setColorTheme } = useTheme()
 
   return (
     <section aria-labelledby="appearance-settings-title" className="flex max-w-2xl flex-col gap-6">
@@ -640,15 +678,57 @@ function AppearanceSettings(): React.JSX.Element {
 
       <div className="flex flex-col gap-3 border-t pt-5">
         <div className="flex flex-col gap-1">
-          <h2 className="text-sm font-medium">Theme</h2>
-          <p id="theme-help" className="text-muted-foreground text-xs">
+          <h2 className="text-sm font-medium">Color theme</h2>
+          <p id="color-theme-help" className="text-muted-foreground text-xs">
+            Choose the palette used across DevTrees.
+          </p>
+        </div>
+        <div
+          role="radiogroup"
+          aria-label="Color theme"
+          aria-describedby="color-theme-help"
+          className="grid grid-cols-2 gap-2"
+        >
+          {COLOR_THEME_OPTIONS.map(({ value, label, description }) => {
+            const isActive = colorTheme === value
+            return (
+              <Button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={isActive}
+                variant={isActive ? 'secondary' : 'outline'}
+                onClick={() => setColorTheme(value)}
+                className={cn(
+                  'h-auto min-h-28 flex-col items-stretch gap-2 px-3 py-3 text-left shadow-none',
+                  isActive && 'border border-primary/50 ring-primary/20 ring-2',
+                  !isActive && 'text-muted-foreground'
+                )}
+              >
+                <ColorThemeSwatch colorTheme={value} />
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-xs font-medium">{label}</span>
+                  <span className="text-muted-foreground text-[11px] font-normal">
+                    {description}
+                  </span>
+                </span>
+              </Button>
+            )
+          })}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 border-t pt-5">
+        <div className="flex flex-col gap-1">
+          <h2 className="text-sm font-medium">Mode</h2>
+          <p id="theme-mode-help" className="text-muted-foreground text-xs">
             Use a light or dark palette, or follow your Windows setting.
           </p>
         </div>
         <div
           role="radiogroup"
-          aria-label="Theme"
-          aria-describedby="theme-help"
+          aria-label="Theme mode"
+          aria-describedby="theme-mode-help"
           className="grid grid-cols-3 gap-2"
         >
           {THEME_OPTIONS.map(({ value, label, Icon }) => {
@@ -667,7 +747,7 @@ function AppearanceSettings(): React.JSX.Element {
                   !isActive && 'text-muted-foreground'
                 )}
               >
-                <ThemeSwatch theme={value} />
+                <ModeSwatch theme={value} colorTheme={colorTheme} />
                 <span className="flex items-center gap-1.5">
                   <Icon className="size-3.5" />
                   <span className="text-xs font-medium">{label}</span>

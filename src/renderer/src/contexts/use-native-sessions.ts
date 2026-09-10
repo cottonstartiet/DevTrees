@@ -271,6 +271,14 @@ export function useNativeSessions(
     [apply, runNative]
   )
 
+  const reopenPlanTransition = React.useCallback(
+    (session: TerminalSession): Promise<boolean> =>
+      runNative(session, nativeKey(session, 'plan-reopen'), async () => {
+        apply(await window.api.nativeSessions.reopenPlanTransition(target(session)))
+      }),
+    [apply, runNative]
+  )
+
   const promptNative = React.useCallback(
     (
       session: TerminalSession,
@@ -352,6 +360,7 @@ export function useNativeSessions(
     refreshNative,
     respondNative,
     transitionPlan,
+    reopenPlanTransition,
     promptNative,
     stopNative,
     endNative,

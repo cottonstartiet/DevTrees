@@ -464,6 +464,8 @@ const api = {
       target: TerminalTarget,
       action: PlanTransitionAction
     ): Promise<NativeSnapshot> => invoke('acp_session_plan_transition', { target, action }),
+    reopenPlanTransition: (target: TerminalTarget): Promise<NativeSnapshot> =>
+      invoke('acp_session_reopen_plan_transition', { target }),
     cancel: (target: TerminalTarget): Promise<void> => invoke('native_session_cancel', { target }),
     end: (target: TerminalTarget): Promise<void> => invoke('native_session_end', { target }),
     onUpdate: (cb: (snapshot: NativeSnapshot) => void): Promise<() => void> =>

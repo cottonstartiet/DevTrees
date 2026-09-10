@@ -14,6 +14,7 @@ import {
   nativeFields,
   nativeFormContent,
   nativeKey,
+  nativeSessionCanReopenPlanTransition,
   nativeSessionCanReplyToPlan,
   type NativeAnswer,
   type NativeField,
@@ -676,7 +677,8 @@ export function NativeSessionControls({
     nativeErrors,
     setNativeDraft,
     promptNative,
-    refreshNative
+    refreshNative,
+    reopenPlanTransition
   } = useTerminalSessions()
   const snapshot = nativeById[session.id]
   const current = snapshot?.session.generation === session.generation ? snapshot : undefined
@@ -685,6 +687,8 @@ export function NativeSessionControls({
   const pending = current?.interactions ?? []
   const finished = isTerminalSessionFinished(session.status)
   const planTransitionBusy = nativeBusy[nativeKey(session, 'plan-transition')] === true
+  const planReopenBusy = nativeBusy[nativeKey(session, 'plan-reopen')] === true
+  const canReopenPlanTransition = nativeSessionCanReopenPlanTransition(session, current)
   const errors = Object.entries(nativeErrors).filter(
     ([identity, error]) =>
       error &&
@@ -698,7 +702,9 @@ export function NativeSessionControls({
     errors.length === 0 &&
     pending.length === 0 &&
     !current.planTransitionAvailable &&
-    !planTransitionBusy
+    !planTransitionBusy &&
+    !canReopenPlanTransition &&
+    !planReopenBusy
   )
     return null
   return (
@@ -759,12 +765,27 @@ export function NativeSessionControls({
           View {pending.length - 1} more requests
         </Button>
       )}
+      {(canReopenPlanTransition || planReopenBusy) && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-muted-foreground text-xs">This session is still in Plan mode.</p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={planReopenBusy}
+            onClick={() => void reopenPlanTransition(session)}
+          >
+            {planReopenBusy ? 'Opening choices...' : 'Choose implementation mode'}
+          </Button>
+        </div>
+      )}
       <PlanCompletion session={session} compact={compact} />
       {showComposer &&
         !finished &&
         (!compact || pending.length === 0) &&
         !current?.planTransitionAvailable &&
         !planTransitionBusy &&
+        !canReopenPlanTransition &&
+        !planReopenBusy &&
         (session.transport === 'acp' ? (
           <AcpComposer session={session} compact={compact} />
         ) : (

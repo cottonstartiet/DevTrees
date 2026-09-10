@@ -115,6 +115,30 @@ export function nativeSessionCanReplyToPlan(
   )
 }
 
+export function nativeSessionCanReopenPlanTransition(
+  session: TerminalSession,
+  snapshot?: NativeSnapshot
+): boolean {
+  const currentMode = snapshot?.availableModes.find(
+    (mode) => mode.id.toLowerCase() === snapshot.currentModeId?.toLowerCase()
+  )
+  return Boolean(
+    session.transport === 'acp' &&
+    session.status === 'idle' &&
+    snapshot &&
+    snapshot.session.id === session.id &&
+    snapshot.session.generation === session.generation &&
+    snapshot.phase === 'idle' &&
+    !snapshot.planTransitionAvailable &&
+    snapshot.interactions.length === 0 &&
+    currentMode &&
+    (currentMode.id.toLowerCase() === 'plan' || currentMode.name.toLowerCase() === 'plan') &&
+    !snapshot.queue?.some((item) =>
+      ['queued', 'dispatching', 'active', 'delivery-unknown'].includes(item.status)
+    )
+  )
+}
+
 export function nativeSessionKeepsTaskQueueSlot(
   session: TerminalSession,
   snapshot: NativeSnapshot | undefined,

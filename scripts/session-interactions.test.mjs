@@ -22,6 +22,7 @@ const {
   nativeSessionNeedsUserAction,
   nativeSessionPresentationStatus,
   nativeSessionCanReplyToPlan,
+  nativeSessionCanReopenPlanTransition,
   latestNativeAssistantResponse,
   acpPermissionOptionIsRemembered,
   acpPermissionOptionScope,
@@ -212,6 +213,66 @@ test('plan replies are available only for the current idle decision without stru
   assert.equal(nativeSessionCanReplyToPlan({ ...session, status: 'done' }, planSnapshot), false)
   assert.equal(
     nativeSessionCanReplyToPlan({ ...session, transport: 'external' }, planSnapshot),
+    false
+  )
+})
+
+test('idle resumed Plan sessions can reopen implementation choices safely', () => {
+  const session = {
+    id: 'same-session',
+    generation: 'current',
+    transport: 'acp',
+    status: 'idle'
+  }
+  const planSnapshot = {
+    ...snapshot('current', 1),
+    phase: 'idle',
+    availableModes: [
+      { id: 'interactive', name: 'Interactive' },
+      { id: 'plan-mode', name: 'Plan' }
+    ],
+    currentModeId: 'plan-mode',
+    planTransitionAvailable: false,
+    interactions: [],
+    queuePaused: true,
+    queue: [{ id: 'done', status: 'completed' }]
+  }
+  assert.equal(nativeSessionCanReopenPlanTransition(session, planSnapshot), true)
+  assert.equal(
+    nativeSessionCanReopenPlanTransition(session, {
+      ...planSnapshot,
+      planTransitionAvailable: true
+    }),
+    false
+  )
+  assert.equal(
+    nativeSessionCanReopenPlanTransition(session, {
+      ...planSnapshot,
+      interactions: [{ id: 'request' }]
+    }),
+    false
+  )
+  for (const status of ['queued', 'dispatching', 'active', 'delivery-unknown']) {
+    assert.equal(
+      nativeSessionCanReopenPlanTransition(session, {
+        ...planSnapshot,
+        queue: [{ id: status, status }]
+      }),
+      false
+    )
+  }
+  assert.equal(
+    nativeSessionCanReopenPlanTransition(
+      { ...session, status: 'working' },
+      { ...planSnapshot, phase: 'working' }
+    ),
+    false
+  )
+  assert.equal(
+    nativeSessionCanReopenPlanTransition(session, {
+      ...planSnapshot,
+      session: { ...planSnapshot.session, generation: 'stale' }
+    }),
     false
   )
 })

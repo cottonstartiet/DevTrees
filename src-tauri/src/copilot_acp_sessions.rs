@@ -1188,6 +1188,25 @@ pub fn native_session_snapshot(app: AppHandle, target: Target) -> AppResult<Snap
 }
 
 #[tauri::command]
+pub fn acp_session_reopen_plan_transition(app: AppHandle, target: Target) -> AppResult<Snapshot> {
+    let owner = get(&app, &target)?;
+    if owner.stopping.load(Ordering::SeqCst) {
+        return Err(error("The session is stopping."));
+    }
+    {
+        let mut state = owner.state.lock().map_err(error)?;
+        if !state.can_reopen_plan_transition() {
+            return Err(error(
+                "Implementation choices are available only for an idle Plan session with no pending work.",
+            ));
+        }
+        state.snapshot.plan_transition_available = true;
+        state.changed();
+    }
+    owner.publish()
+}
+
+#[tauri::command]
 pub async fn acp_session_plan_transition(
     app: AppHandle,
     target: Target,
@@ -1237,6 +1256,11 @@ pub async fn acp_session_plan_transition(
         return Err(e);
     }
     if action != "exit_only" {
+        {
+            let mut state = owner.state.lock().map_err(error)?;
+            state.snapshot.queue_paused = false;
+            state.changed();
+        }
         if let Err(e) = stage_plan_continuation(&owner, action == "autopilot_fleet") {
             if let Err(mode_error) = set_session_mode(&owner, "plan").await {
                 owner.fail(format!(

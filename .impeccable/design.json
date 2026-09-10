@@ -6,32 +6,28 @@
     "colorMeta": {
       "primary": {
         "role": "primary",
-        "displayName": "Cockpit Ink",
-        "canonical": "oklch(0.205 0 0)",
+        "displayName": "Theme Primary",
+        "canonical": "oklch(0.2038 0.0264 260.9332)",
         "tonalRamp": [
-          "oklch(0.145 0 0)",
-          "oklch(0.205 0 0)",
-          "oklch(0.269 0 0)",
-          "oklch(0.371 0 0)",
-          "oklch(0.556 0 0)",
-          "oklch(0.708 0 0)",
-          "oklch(0.87 0 0)",
-          "oklch(0.97 0 0)"
+          "oklch(0.2038 0.0264 260.9332)",
+          "oklch(0.5607 0.2181 266.5346)",
+          "oklch(0.6503 0.022 257.4949)",
+          "oklch(0.8993 0.0119 239.9205)"
         ]
       },
       "ink": {
         "role": "neutral",
-        "displayName": "Ink",
-        "canonical": "oklch(0.145 0 0)",
+        "displayName": "Chalk Ink",
+        "canonical": "oklch(0.1443 0.0191 261.1564)",
         "tonalRamp": [
-          "oklch(0.145 0 0)",
-          "oklch(0.205 0 0)",
-          "oklch(0.32 0 0)",
-          "oklch(0.556 0 0)",
-          "oklch(0.708 0 0)",
-          "oklch(0.87 0 0)",
-          "oklch(0.97 0 0)",
-          "oklch(1 0 0)"
+          "oklch(0.1443 0.0191 261.1564)",
+          "oklch(0.2292 0.0304 259.0329)",
+          "oklch(0.3299 0.0322 257.6775)",
+          "oklch(0.5195 0.0188 262.6912)",
+          "oklch(0.6604 0.0245 248.1982)",
+          "oklch(0.9013 0.0156 257.2001)",
+          "oklch(0.9745 0.0079 253.8524)",
+          "oklch(0.9897 0.0051 247.8755)"
         ]
       },
       "destructive": {
@@ -50,9 +46,30 @@
         ]
       }
     },
+    "themes": {
+      "default": "chalk",
+      "storageKey": "devtrees-color-theme",
+      "modeStorageKey": "devtrees-theme",
+      "options": {
+        "chalk": {
+          "displayName": "Chalk",
+          "lightPrimary": "oklch(0.2038 0.0264 260.9332)",
+          "darkPrimary": "oklch(0.8993 0.0119 239.9205)"
+        },
+        "velocity": {
+          "displayName": "Velocity",
+          "lightPrimary": "oklch(0.5607 0.2181 266.5346)",
+          "darkPrimary": "oklch(0.5607 0.2181 266.5346)"
+        }
+      },
+      "modes": ["light", "dark", "system"]
+    },
     "typographyMeta": {
       "title": { "displayName": "Title", "purpose": "Page/section headings and dialog titles." },
-      "body": { "displayName": "Body", "purpose": "The workhorse: list items, descriptions, most UI text." },
+      "body": {
+        "displayName": "Body",
+        "purpose": "The workhorse: list items, descriptions, most UI text."
+      },
       "label": { "displayName": "Label", "purpose": "Button text, form labels, active nav." }
     },
     "shadows": [
@@ -83,7 +100,7 @@
       "refersTo": "button-primary",
       "description": "Default solid action button; 36px compact height.",
       "html": "<button class=\"ds-btn-primary\">Create worktree</button>",
-      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; font-size: 0.875rem; font-weight: 500; border: none; border-radius: 8px; background: var(--primary, oklch(0.205 0 0)); color: var(--primary-foreground, oklch(0.985 0 0)); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); cursor: pointer; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { background: color-mix(in oklab, var(--primary, oklch(0.205 0 0)) 90%, transparent); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.708 0 0)) 50%, transparent); }"
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; font-size: 0.875rem; font-weight: 500; border: none; border-radius: 8px; background: var(--primary, oklch(0.2038 0.0264 260.9332)); color: var(--primary-foreground, oklch(0.9851 0 0)); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); cursor: pointer; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { background: color-mix(in oklab, var(--primary, oklch(0.2038 0.0264 260.9332)) 90%, transparent); } .ds-btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.6503 0.022 257.4949)) 50%, transparent); }"
     },
     {
       "name": "Outline Button",
@@ -91,7 +108,7 @@
       "refersTo": "button-outline",
       "description": "Secondary bordered button on the base surface.",
       "html": "<button class=\"ds-btn-outline\">Open in VS Code</button>",
-      "css": ".ds-btn-outline { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; font-size: 0.875rem; font-weight: 500; border: 1px solid var(--border, oklch(0.922 0 0)); border-radius: 8px; background: var(--background, oklch(1 0 0)); color: var(--foreground, oklch(0.145 0 0)); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); cursor: pointer; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-outline:hover { background: var(--accent, oklch(0.97 0 0)); } .ds-btn-outline:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.708 0 0)) 50%, transparent); }"
+      "css": ".ds-btn-outline { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; font-size: 0.875rem; font-weight: 500; border: 1px solid var(--border, oklch(0.9013 0.0156 257.2001)); border-radius: 8px; background: var(--background, oklch(0.9745 0.0079 253.8524)); color: var(--foreground, oklch(0.1443 0.0191 261.1564)); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); cursor: pointer; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-outline:hover { background: var(--accent, oklch(0.9442 0.0137 258.3455)); } .ds-btn-outline:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.6503 0.022 257.4949)) 50%, transparent); }"
     },
     {
       "name": "Ghost Icon Button",
@@ -99,7 +116,7 @@
       "refersTo": "button-ghost",
       "description": "Chrome-free toolbar/icon action; fills with accent on hover.",
       "html": "<button class=\"ds-btn-ghost\" aria-label=\"Refresh\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8\"/><path d=\"M21 3v5h-5\"/><path d=\"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16\"/><path d=\"M8 16H3v5\"/></svg></button>",
-      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: none; border-radius: 8px; background: transparent; color: var(--foreground, oklch(0.145 0 0)); cursor: pointer; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-ghost:hover { background: var(--accent, oklch(0.97 0 0)); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.708 0 0)) 50%, transparent); }"
+      "css": ".ds-btn-ghost { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: none; border-radius: 8px; background: transparent; color: var(--foreground, oklch(0.1443 0.0191 261.1564)); cursor: pointer; transition: all 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-ghost:hover { background: var(--accent, oklch(0.9442 0.0137 258.3455)); } .ds-btn-ghost:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.6503 0.022 257.4949)) 50%, transparent); }"
     },
     {
       "name": "Text Input",
@@ -107,23 +124,35 @@
       "refersTo": "input",
       "description": "Single-line field; border-shift plus 3px ring on focus.",
       "html": "<input class=\"ds-input\" type=\"text\" placeholder=\"Branch name\" />",
-      "css": ".ds-input { display: flex; width: 100%; height: 36px; padding: 4px 12px; font-size: 0.875rem; border: 1px solid var(--input, oklch(0.922 0 0)); border-radius: 8px; background: transparent; color: var(--foreground, oklch(0.145 0 0)); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); outline: none; transition: color 150ms, box-shadow 150ms; } .ds-input::placeholder { color: var(--muted-foreground, oklch(0.556 0 0)); } .ds-input:focus-visible { border-color: var(--ring, oklch(0.708 0 0)); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.708 0 0)) 50%, transparent); }"
+      "css": ".ds-input { display: flex; width: 100%; height: 36px; padding: 4px 12px; font-size: 0.875rem; border: 1px solid var(--input, oklch(0.9013 0.0156 257.2001)); border-radius: 8px; background: transparent; color: var(--foreground, oklch(0.1443 0.0191 261.1564)); box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05); outline: none; transition: color 150ms, box-shadow 150ms; } .ds-input::placeholder { color: var(--muted-foreground, oklch(0.5195 0.0188 262.6912)); } .ds-input:focus-visible { border-color: var(--ring, oklch(0.6503 0.022 257.4949)); box-shadow: 0 0 0 3px color-mix(in oklab, var(--ring, oklch(0.6503 0.022 257.4949)) 50%, transparent); }"
     }
   ],
   "narrative": {
     "northStar": "The Developer Cockpit",
-    "overview": "DevTrees is an instrument panel for parallel development. Every surface is a readout or a control: worktree lists, branch/PR status, session history, launch buttons. Information density is high but never chaotic; the developer scans it at a glance and reaches for the right control by reflex. Built on shadcn/ui (new-york, neutral) with two coordinated themes (light and dark), color stays functional and depth comes from tonal layering rather than shadows.",
+    "overview": "DevTrees is an instrument panel for parallel development. Every surface is a readout or a control: worktree lists, branch/PR status, session history, launch buttons. Information density is high but never chaotic; the developer scans it at a glance and reaches for the right control by reflex. Built on shadcn/ui (new-york) with selectable Chalk and Velocity palettes, each supporting light and dark modes, color stays functional and depth comes from tonal layering rather than shadows.",
     "keyCharacteristics": [
-      "Neutral grayscale foundation; color is functional, not decorative",
+      "Two restrained palettes: Chalk and Velocity, coordinated across light and dark",
       "Compact scale: 36px controls, 0.875rem body text, tight 6-10px radii",
       "Flat surfaces with tonal layering for depth; no drop-shadow theater",
-      "Two coordinated themes sharing one token contract",
+      "One semantic token contract across every palette and mode",
       "3px focus rings on every interactive element; keyboard-first"
     ],
     "rules": [
-      { "name": "The One Accent Rule", "body": "Only one saturated hue is live per theme (near-black/white); red is reserved exclusively for destructive actions.", "section": "colors" },
-      { "name": "The Weight-Not-Family Rule", "body": "Distinguish hierarchy with weight (400/500/600) and muted foreground, never a second font family.", "section": "typography" },
-      { "name": "The Tonal-Depth Rule", "body": "Layer surfaces by lightness bordered with hairlines, never float on soft drop-shadows.", "section": "elevation" }
+      {
+        "name": "The Semantic Accent Rule",
+        "body": "Use the selected theme's primary color for actions, focus, and current selection rather than decoration; reserve red for destructive and error states.",
+        "section": "colors"
+      },
+      {
+        "name": "The Weight-Not-Family Rule",
+        "body": "Distinguish hierarchy with weight (400/500/600) and muted foreground, never a second font family.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tonal-Depth Rule",
+        "body": "Layer surfaces by lightness bordered with hairlines, never float on soft drop-shadows.",
+        "section": "elevation"
+      }
     ],
     "dos": [
       "Do keep controls compact: 36px height, text-sm, 6-10px radii.",
@@ -131,13 +160,13 @@
       "Do reserve saturated color for state (red for destructive only).",
       "Do distinguish hierarchy with weight and muted foreground, never a second font family.",
       "Do give every interactive element a visible 3px focus ring.",
-      "Do ensure body and placeholder text hit at least 4.5:1 across all three themes."
+      "Do ensure body and placeholder text hit at least 4.5:1 across both themes and modes."
     ],
     "donts": [
       "Don't build heavy-enterprise density-without-clarity: no nested config panels, modal mazes, or Jira-style sprawl.",
       "Don't drift toward consumer-chat softness: no oversized rounded bubbles, avatars, or playful decorative color.",
       "Don't float surfaces on soft drop-shadows; use tonal layers and hairline borders.",
-      "Don't introduce a second accent hue or use red for anything but destructive actions.",
+      "Don't use theme accents decoratively or use red for anything but destructive and error states.",
       "Don't add a display/serif font or gradient text; hierarchy is weight and size.",
       "Don't use side-stripe border-left accents on cards or list items."
     ]
