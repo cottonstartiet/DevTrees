@@ -15,8 +15,11 @@ import { invoke } from '@tauri-apps/api/core'
 import type { TerminalTarget } from '@shared/terminal-session'
 import type {
   CopilotPermissionProfile,
+  CreateSavedPromptRequest,
+  SavedPrompt,
   SessionLaunchMode,
-  TaskQueueSettings
+  TaskQueueSettings,
+  UpdateSavedPromptRequest
 } from '@shared/settings'
 import type {
   NativeAnswer,
@@ -407,7 +410,18 @@ const api = {
       invoke('settings_set_copilot_permission_profile', { profile }),
     taskQueue: (): Promise<TaskQueueSettings> => invoke('settings_task_queue'),
     setTaskQueue: (settings: TaskQueueSettings): Promise<void> =>
-      invoke('settings_set_task_queue', { settings })
+      invoke('settings_set_task_queue', { settings }),
+    savedPrompts: (): Promise<SavedPrompt[]> => invoke('settings_saved_prompts'),
+    createSavedPrompt: (request: CreateSavedPromptRequest): Promise<SavedPrompt> =>
+      invoke('settings_create_saved_prompt', { ...request }),
+    updateSavedPrompt: (request: UpdateSavedPromptRequest): Promise<SavedPrompt> =>
+      invoke('settings_update_saved_prompt', { ...request }),
+    deleteSavedPrompt: (id: string): Promise<void> =>
+      invoke('settings_delete_saved_prompt', { id }),
+    browserCodeReviewPrompt: (): Promise<SavedPrompt> =>
+      invoke('settings_browser_code_review_prompt'),
+    setBrowserCodeReviewPrompt: (id: string): Promise<void> =>
+      invoke('settings_set_browser_code_review_prompt', { id })
   },
   copilotHistory: {
     list: (): Promise<CopilotHistoryListResult> =>

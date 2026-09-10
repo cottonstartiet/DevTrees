@@ -3,11 +3,11 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { FolderGit2Icon, GitBranchIcon, LoaderCircleIcon, PlayIcon } from 'lucide-react'
 
-import { TerminalSessionStatusBadge } from '@/components/sessions/terminal-session-status-badge'
+import { TerminalSessionStatusButton } from '@/components/sessions/terminal-session-status-badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { Task } from '@shared/task'
-import type { TerminalSessionStatus } from '@shared/terminal-session'
+import type { TerminalSession } from '@shared/terminal-session'
 
 function worktreeLabel(path: string): string {
   const idx = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
@@ -16,20 +16,24 @@ function worktreeLabel(path: string): string {
 
 export function TaskCard({
   task,
-  sessionStatus,
+  session,
   onOpen,
+  onOpenSession,
   onStart,
   onReview,
   onDone,
+  onDelete,
   isStarting,
   canReview
 }: {
   task: Task
-  sessionStatus: TerminalSessionStatus | undefined
+  session: TerminalSession | undefined
   onOpen: (task: Task) => void
+  onOpenSession: (session: TerminalSession) => void
   onStart: (task: Task) => void
   onReview: (task: Task) => void
   onDone: (task: Task) => void
+  onDelete: (task: Task) => void
   isStarting: boolean
   canReview: boolean
 }): React.JSX.Element {
@@ -78,8 +82,17 @@ export function TaskCard({
             ) : null}
             {queueLabel}
           </span>
-        ) : task.status === 'in_progress' && sessionStatus ? (
-          <TerminalSessionStatusBadge status={sessionStatus} className="rounded px-1.5" />
+        ) : task.status === 'in_progress' && session ? (
+          <TerminalSessionStatusButton
+            status={session.status}
+            className="rounded px-1.5"
+            aria-label={`Open ${task.title} session`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpenSession(session)
+            }}
+          />
         ) : null}
       </div>
       {task.description ? (
@@ -143,6 +156,20 @@ export function TaskCard({
             }}
           >
             Mark done
+          </Button>
+        </div>
+      ) : task.status === 'done' ? (
+        <div className="mt-1 flex">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(task)
+            }}
+          >
+            Delete
           </Button>
         </div>
       ) : null}

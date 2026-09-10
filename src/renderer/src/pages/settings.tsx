@@ -1,6 +1,7 @@
 import * as React from 'react'
 import {
   Bot as BotIcon,
+  FileText as FileTextIcon,
   Info as InfoIcon,
   ListTodo as ListTodoIcon,
   MessageSquare as MessageSquareIcon,
@@ -13,8 +14,10 @@ import {
 
 import appIcon from '../assets/icon.png'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
 import { useTheme, type Theme } from '@/contexts/theme-context'
 import { cn } from '@/lib/utils'
 import { getAppInfo } from '@/lib/system'
@@ -24,12 +27,13 @@ import {
   copilotPermissionProfileLabel,
   sessionLaunchModeLabel,
   type CopilotPermissionProfile,
+  type SavedPrompt,
   type SessionLaunchMode,
   type TaskQueueMode,
   type TaskQueueSettings
 } from '@shared/settings'
 
-type SettingsSection = 'copilot' | 'queue' | 'appearance' | 'about'
+type SettingsSection = 'copilot' | 'prompts' | 'queue' | 'appearance' | 'about'
 
 const THEME_OPTIONS: ReadonlyArray<{ value: Theme; label: string; Icon: typeof SunIcon }> = [
   { value: 'light', label: 'Light', Icon: SunIcon },
@@ -109,6 +113,12 @@ const SETTINGS_SECTIONS: ReadonlyArray<{
     Icon: BotIcon
   },
   {
+    value: 'prompts',
+    label: 'Saved prompts',
+    description: 'Reusable agent instructions',
+    Icon: FileTextIcon
+  },
+  {
     value: 'queue',
     label: 'Task queue',
     description: 'Execution and concurrency',
@@ -127,6 +137,302 @@ const SETTINGS_SECTIONS: ReadonlyArray<{
     Icon: InfoIcon
   }
 ]
+
+type PromptDraft = {
+  id: string | null
+  name: string
+  details: string
+}
+
+const EMPTY_PROMPT_DRAFT: PromptDraft = { id: null, name: '', details: '' }
+
+function promptDraft(prompt: SavedPrompt): PromptDraft {
+  return { id: prompt.id, name: prompt.name, details: prompt.details }
+}
+
+function SavedPromptsSettings(): React.JSX.Element {
+  const [prompts, setPrompts] = React.useState<SavedPrompt[]>([])
+  const [assignedId, setAssignedId] = React.useState<string | null>(null)
+  const [draft, setDraft] = React.useState<PromptDraft>(EMPTY_PROMPT_DRAFT)
+  const [loaded, setLoaded] = React.useState(false)
+  const [busy, setBusy] = React.useState(false)
+  const [error, setError] = React.useState<string | null>(null)
+  const [deleteOpen, setDeleteOpen] = React.useState(false)
+
+  React.useEffect(() => {
+    let active = true
+    void Promise.all([
+      window.api.settings.savedPrompts(),
+      window.api.settings.browserCodeReviewPrompt()
+    ])
+      .then(([savedPrompts, browserPrompt]) => {
+        if (!active) return
+        setPrompts(savedPrompts)
+        setAssignedId(browserPrompt.id)
+        setDraft(savedPrompts[0] ? promptDraft(savedPrompts[0]) : EMPTY_PROMPT_DRAFT)
+      })
+      .catch((error) => {
+        if (active) setError(`Could not load saved prompts: ${String(error)}`)
+      })
+      .finally(() => {
+        if (active) {
+          setLoaded(true)
+          setBusy(false)
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const selectedPrompt = draft.id
+    ? (prompts.find((prompt) => prompt.id === draft.id) ?? null)
+    : null
+  const dirty = selectedPrompt
+    ? draft.name !== selectedPrompt.name || draft.details !== selectedPrompt.details
+    : Boolean(draft.name || draft.details)
+
+  const selectPrompt = (prompt: SavedPrompt): void => {
+    setDraft(promptDraft(prompt))
+    setError(null)
+  }
+
+  const save = async (): Promise<void> => {
+    const name = draft.name.trim()
+    const details = draft.details.trim()
+    if (!name) {
+      setError('Prompt name is required.')
+      return
+    }
+    if (!details) {
+      setError('Prompt details are required.')
+      return
+    }
+
+    setBusy(true)
+    setError(null)
+    try {
+      const saved = draft.id
+        ? await window.api.settings.updateSavedPrompt({ id: draft.id, name, details })
+        : await window.api.settings.createSavedPrompt({ name, details })
+      setPrompts((current) =>
+        [...current.filter((prompt) => prompt.id !== saved.id), saved].sort((a, b) =>
+          a.name.localeCompare(b.name)
+        )
+      )
+      setDraft(promptDraft(saved))
+    } catch (error) {
+      setError(`Could not save prompt: ${String(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const assign = async (): Promise<void> => {
+    if (!draft.id || dirty) return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.api.settings.setBrowserCodeReviewPrompt(draft.id)
+      setAssignedId(draft.id)
+    } catch (error) {
+      setError(`Could not assign prompt: ${String(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const deletePrompt = async (): Promise<void> => {
+    if (!draft.id) return
+    setBusy(true)
+    setError(null)
+    try {
+      await window.api.settings.deleteSavedPrompt(draft.id)
+      const remaining = prompts.filter((prompt) => prompt.id !== draft.id)
+      setPrompts(remaining)
+      setDraft(remaining[0] ? promptDraft(remaining[0]) : EMPTY_PROMPT_DRAFT)
+    } catch (error) {
+      setError(`Could not delete prompt: ${String(error)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section aria-labelledby="saved-prompts-title" className="flex max-w-4xl flex-col gap-6">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 id="saved-prompts-title" className="text-base font-semibold tracking-tight">
+            Saved prompts
+          </h1>
+          <p className="text-muted-foreground max-w-2xl text-sm">
+            Keep reusable agent instructions in DevTrees and choose which one starts browser code
+            reviews.
+          </p>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => {
+            setDraft(EMPTY_PROMPT_DRAFT)
+            setError(null)
+          }}
+        >
+          New prompt
+        </Button>
+      </div>
+
+      <div className="grid min-h-[28rem] grid-cols-[minmax(10rem,15rem)_minmax(0,1fr)] border-t">
+        <div className="flex min-w-0 flex-col gap-1 border-r py-4 pr-4">
+          {!loaded ? (
+            <div className="flex flex-col gap-2">
+              <Skeleton className="h-14 w-full" />
+              <Skeleton className="h-14 w-full" />
+            </div>
+          ) : prompts.length === 0 ? (
+            <p className="text-muted-foreground px-2 py-3 text-xs">
+              No saved prompts. Create one to get started.
+            </p>
+          ) : (
+            prompts.map((prompt) => {
+              const selected = draft.id === prompt.id
+              return (
+                <button
+                  key={prompt.id}
+                  type="button"
+                  aria-current={selected ? 'true' : undefined}
+                  onClick={() => selectPrompt(prompt)}
+                  className={cn(
+                    'hover:bg-accent focus-visible:ring-ring/50 flex min-w-0 flex-col gap-1 rounded-md px-2.5 py-2 text-left transition-colors focus-visible:ring-3 focus-visible:outline-none',
+                    selected && 'bg-secondary'
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                      {prompt.name}
+                    </span>
+                    {assignedId === prompt.id ? (
+                      <span className="bg-primary text-primary-foreground shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium">
+                        Browser
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="text-muted-foreground line-clamp-2 text-xs leading-4">
+                    {prompt.details}
+                  </span>
+                </button>
+              )
+            })
+          )}
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-5 py-4 pl-5">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="saved-prompt-name" className="text-sm font-medium">
+              Short name
+            </label>
+            <Input
+              id="saved-prompt-name"
+              maxLength={80}
+              value={draft.name}
+              disabled={busy}
+              placeholder="Code review"
+              onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))}
+            />
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+            <label htmlFor="saved-prompt-details" className="text-sm font-medium">
+              Prompt details
+            </label>
+            <Textarea
+              id="saved-prompt-details"
+              value={draft.details}
+              disabled={busy}
+              placeholder="Write the instructions Copilot should follow..."
+              className="min-h-64 flex-1 resize-y"
+              onChange={(event) =>
+                setDraft((current) => ({ ...current, details: event.target.value }))
+              }
+            />
+            <p className="text-muted-foreground text-xs leading-5">
+              Browser reviews support {'{{url}}'}, {'{{pageTitle}}'}, and {'{{host}}'} placeholders.
+            </p>
+          </div>
+
+          {error ? (
+            <p role="alert" className="text-destructive text-xs">
+              {error}
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+            <div>
+              {draft.id ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  disabled={busy || assignedId === draft.id}
+                  onClick={() => setDeleteOpen(true)}
+                >
+                  Delete
+                </Button>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              {draft.id && assignedId !== draft.id ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || dirty}
+                  onClick={() => void assign()}
+                >
+                  Use for browser reviews
+                </Button>
+              ) : assignedId === draft.id && draft.id ? (
+                <span className="text-muted-foreground self-center text-xs">
+                  Used for browser reviews
+                </span>
+              ) : null}
+              {dirty && selectedPrompt ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => setDraft(promptDraft(selectedPrompt))}
+                >
+                  Cancel
+                </Button>
+              ) : null}
+              <Button type="button" size="sm" disabled={busy || !dirty} onClick={() => void save()}>
+                {busy ? 'Saving...' : 'Save prompt'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete saved prompt?"
+        description={
+          draft.name
+            ? `“${draft.name}” will be permanently removed.`
+            : 'This prompt will be permanently removed.'
+        }
+        confirmLabel="Delete prompt"
+        confirmVariant="destructive"
+        onConfirm={() => void deletePrompt()}
+      />
+    </section>
+  )
+}
 
 const SESSION_MODE_OPTIONS: ReadonlyArray<{
   value: SessionLaunchMode
@@ -650,6 +956,9 @@ export function SettingsPage(): React.JSX.Element {
           </div>
           <div hidden={activeSection !== 'appearance'}>
             <AppearanceSettings />
+          </div>
+          <div hidden={activeSection !== 'prompts'}>
+            <SavedPromptsSettings />
           </div>
           <div hidden={activeSection !== 'queue'}>
             <TaskQueueSettingsPanel />

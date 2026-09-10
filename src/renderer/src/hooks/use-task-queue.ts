@@ -11,6 +11,7 @@ import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { saveTaskQueueSettings, TASK_QUEUE_SETTINGS_CHANGED_EVENT } from '@/lib/task-queue-settings'
 import { claimTaskRun, setTaskCopilotSession } from '@/lib/tasks'
 import { listWorktreesForRepository } from '@/lib/worktrees'
+import { nativeKey, nativeSessionKeepsTaskQueueSlot } from '@shared/native-session'
 import type { Repository } from '@shared/repository'
 import {
   selectTaskQueueCandidates,
@@ -55,7 +56,12 @@ export function useTaskQueue({
   checkWorktreeStatus
 }: UseTaskQueueOptions): TaskQueueController {
   const { tasks, moveTask, setTaskLocal, setTaskQueueStatus, updateTask } = useTaskBoard()
-  const { byId: terminalSessionsById, observationNow } = useTerminalSessions()
+  const {
+    byId: terminalSessionsById,
+    nativeById,
+    nativeBusy,
+    observationNow
+  } = useTerminalSessions()
   const launchCopilot = useCopilotLauncher()
   const [settings, setSettings] = React.useState<TaskQueueSettings>(DEFAULT_SETTINGS)
   const [settingsBusy, setSettingsBusy] = React.useState(true)
@@ -395,6 +401,13 @@ export function useTaskQueue({
       }
       const session = terminalSessionsById[sessionId]
       if (session?.status === 'idle' || session?.status === 'done') {
+        const planTransitionBusy = nativeBusy[nativeKey(session, 'plan-transition')] === true
+        if (
+          session.status === 'idle' &&
+          nativeSessionKeepsTaskQueueSlot(session, nativeById[sessionId], planTransitionBusy)
+        ) {
+          continue
+        }
         settlingRef.current.add(task.id)
         void settleTask('complete').finally(() => {
           settlingRef.current.delete(task.id)
@@ -423,7 +436,15 @@ export function useTaskQueue({
           reconcilingRef.current.delete(task.id)
         })
     }
-  }, [moveTask, observationNow, runningTasks, setTaskQueueStatus, terminalSessionsById])
+  }, [
+    moveTask,
+    nativeBusy,
+    nativeById,
+    observationNow,
+    runningTasks,
+    setTaskQueueStatus,
+    terminalSessionsById
+  ])
 
   const canReviewTask = React.useCallback(
     (task: Task): boolean => {

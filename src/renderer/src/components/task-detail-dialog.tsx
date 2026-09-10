@@ -50,6 +50,12 @@ export interface TaskDetailDialogProps {
   task: Task | null
   repositories: Repository[]
   worktreesByRepositoryId: Record<string, Worktree[]>
+  initialDraft?: {
+    id: string
+    title: string
+    description: string
+    repositoryName: string | null
+  } | null
   onCreate: (input: {
     title: string
     description: string
@@ -82,16 +88,32 @@ function TaskDetailForm({
   task,
   repositories,
   worktreesByRepositoryId,
+  initialDraft,
   onCreate,
   onUpdate,
   onDelete
 }: TaskFormProps): React.JSX.Element {
   const isEdit = task != null
 
-  const [title, setTitle] = React.useState(task?.title ?? '')
-  const [description, setDescription] = React.useState(task?.description ?? '')
+  const matchedDraftRepositories = initialDraft?.repositoryName
+    ? repositories.filter(
+        (repository) =>
+          repository.name.localeCompare(initialDraft.repositoryName!, undefined, {
+            sensitivity: 'accent'
+          }) === 0
+      )
+    : []
+  const [title, setTitle] = React.useState(task?.title ?? initialDraft?.title ?? '')
+  const [description, setDescription] = React.useState(
+    task?.description ?? initialDraft?.description ?? ''
+  )
   const [repositoryId, setRepositoryId] = React.useState<string>(
-    task?.repositoryId ?? repositories[0]?.id ?? ''
+    task?.repositoryId ??
+      (initialDraft
+        ? matchedDraftRepositories.length === 1
+          ? matchedDraftRepositories[0].id
+          : ''
+        : (repositories[0]?.id ?? ''))
   )
   const initialSelection = task?.pendingWorktreeName
     ? NEW_WORKTREE_VALUE
@@ -100,7 +122,12 @@ function TaskDetailForm({
       : (task?.worktreePath ?? '')
   const [worktreeSelection, setWorktreeSelection] = React.useState<string>(initialSelection)
   const [newWorktreeName, setNewWorktreeName] = React.useState(task?.pendingWorktreeName ?? '')
-  const [touched, setTouched] = React.useState(false)
+  const [editedFields, setEditedFields] = React.useState({
+    title: false,
+    worktree: false,
+    newWorktreeName: false
+  })
+  const [submitAttempted, setSubmitAttempted] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
   const [portalContainer, setPortalContainer] = React.useState<HTMLDivElement | null>(null)
 
@@ -110,17 +137,33 @@ function TaskDetailForm({
   /** Once work has started, the task's scope is frozen — the fields become read-only. */
   const readOnly = isEdit && task.status !== 'todo'
 
-  const titleError = touched && !title.trim() ? 'Title is required.' : null
+  const titleError = !title.trim() ? 'Title is required.' : null
   const worktreeNameError = creatingNewWorktree ? validateWorktreeName(newWorktreeName) : null
   const worktreeError =
-    touched && !creatingNewWorktree && !worktreeSelection
-      ? 'Select where this task will run.'
-      : null
+    !creatingNewWorktree && !worktreeSelection ? 'Select where this task will run.' : null
+  const showTitleError = (editedFields.title || submitAttempted) && titleError !== null
+  const showWorktreeError = (editedFields.worktree || submitAttempted) && worktreeError !== null
+  const showWorktreeNameError =
+    (editedFields.newWorktreeName || submitAttempted) && worktreeNameError !== null
 
   const handleRepositoryChange = (id: string): void => {
     setRepositoryId(id)
     setWorktreeSelection('')
     setNewWorktreeName('')
+    setEditedFields((current) => ({
+      ...current,
+      worktree: false,
+      newWorktreeName: false
+    }))
+  }
+
+  const handleWorktreeSelectionChange = (selection: string): void => {
+    setWorktreeSelection(selection)
+    setEditedFields((current) => ({
+      ...current,
+      worktree: true,
+      newWorktreeName: false
+    }))
   }
 
   const resolveWorktree = (): {
@@ -157,7 +200,7 @@ function TaskDetailForm({
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault()
     if (readOnly) return
-    setTouched(true)
+    setSubmitAttempted(true)
     if (!title.trim() || !repository) return
     if (creatingNewWorktree && worktreeNameError) return
     if (!creatingNewWorktree && !worktreeSelection) return
@@ -222,12 +265,14 @@ function TaskDetailForm({
             autoFocus
             disabled={readOnly}
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => setTouched(true)}
+            onChange={(e) => {
+              setTitle(e.target.value)
+              setEditedFields((current) => ({ ...current, title: true }))
+            }}
             placeholder="Fix the login bug"
-            aria-invalid={titleError !== null || undefined}
+            aria-invalid={showTitleError || undefined}
           />
-          {titleError ? <p className="text-destructive text-xs">{titleError}</p> : null}
+          {showTitleError ? <p className="text-destructive text-xs">{titleError}</p> : null}
         </div>
 
         <div className="flex min-w-0 flex-col gap-1.5">
@@ -269,10 +314,14 @@ function TaskDetailForm({
           </span>
           <Select
             value={worktreeSelection}
-            onValueChange={setWorktreeSelection}
+            onValueChange={handleWorktreeSelectionChange}
             disabled={readOnly || !repository}
           >
-            <SelectTrigger className="w-full min-w-0" aria-labelledby="task-worktree-label">
+            <SelectTrigger
+              className="w-full min-w-0"
+              aria-labelledby="task-worktree-label"
+              aria-invalid={showWorktreeError || undefined}
+            >
               <SelectValue placeholder="Select a worktree" />
             </SelectTrigger>
             <SelectContent portalContainer={portalContainer}>
@@ -285,17 +334,19 @@ function TaskDetailForm({
               <SelectItem value={NEW_WORKTREE_VALUE}>+ Create new worktree…</SelectItem>
             </SelectContent>
           </Select>
-          {worktreeError ? <p className="text-destructive text-xs">{worktreeError}</p> : null}
+          {showWorktreeError ? <p className="text-destructive text-xs">{worktreeError}</p> : null}
           {creatingNewWorktree ? (
             <div className="flex flex-col gap-1 pt-1">
               <Input
                 value={newWorktreeName}
-                onChange={(e) => setNewWorktreeName(e.target.value)}
-                onBlur={() => setTouched(true)}
+                onChange={(e) => {
+                  setNewWorktreeName(e.target.value)
+                  setEditedFields((current) => ({ ...current, newWorktreeName: true }))
+                }}
                 placeholder="feature-x"
-                aria-invalid={(touched && worktreeNameError !== null) || undefined}
+                aria-invalid={showWorktreeNameError || undefined}
               />
-              {touched && worktreeNameError ? (
+              {showWorktreeNameError ? (
                 <p className="text-destructive text-xs">{worktreeNameError}</p>
               ) : (
                 <p className="text-muted-foreground text-xs">
@@ -331,7 +382,7 @@ function TaskDetailForm({
 }
 
 export function TaskDetailDialog(props: TaskDetailDialogProps): React.JSX.Element {
-  const { open, onOpenChange, task } = props
+  const { open, onOpenChange, task, initialDraft } = props
 
   const handleOpenChange = (nextOpen: boolean): void => {
     onOpenChange(nextOpen)
@@ -339,7 +390,7 @@ export function TaskDetailDialog(props: TaskDetailDialogProps): React.JSX.Elemen
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      {open ? <TaskDetailForm key={task?.id ?? 'new'} {...props} /> : null}
+      {open ? <TaskDetailForm key={task?.id ?? initialDraft?.id ?? 'new'} {...props} /> : null}
     </Dialog>
   )
 }

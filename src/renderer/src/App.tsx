@@ -23,6 +23,12 @@ import { useRepositories } from '@/hooks/use-repositories'
 import { useAutoUpdate } from '@/hooks/use-auto-update'
 import { useTaskQueue, type TaskQueueController } from '@/hooks/use-task-queue'
 import { openExternal } from '@/lib/system'
+import {
+  createBrowserCodeReviewDraft,
+  parseDevTreesDeepLink,
+  subscribeToDevTreesDeepLinks,
+  type BrowserCodeReviewDraft
+} from '@/lib/deep-links'
 import { DetailView } from '@/pages/detail-view'
 import { DashboardPage } from '@/pages/dashboard'
 import { HistoryPage } from '@/pages/history'
@@ -47,7 +53,9 @@ interface TasksPageContainerProps {
   dialogOpen: boolean
   onDialogOpenChange: (open: boolean) => void
   activeTask: Task | null
+  taskDraft: BrowserCodeReviewDraft | null
   onOpenTask: (task: Task | null) => void
+  onNavigateToSessions: () => void
   queue: TaskQueueController
 }
 
@@ -57,7 +65,9 @@ function TasksPageContainer({
   dialogOpen,
   onDialogOpenChange,
   activeTask,
+  taskDraft,
   onOpenTask,
+  onNavigateToSessions,
   queue
 }: TasksPageContainerProps): React.JSX.Element {
   return (
@@ -71,7 +81,9 @@ function TasksPageContainer({
       dialogOpen={dialogOpen}
       onDialogOpenChange={onDialogOpenChange}
       activeTask={activeTask}
+      taskDraft={taskDraft}
       onOpenTask={onOpenTask}
+      onNavigateToSessions={onNavigateToSessions}
     />
   )
 }
@@ -263,14 +275,17 @@ function AppShell(): React.JSX.Element {
   const { tasks: allTasks } = useTaskBoard()
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [activeTaskForDialog, setActiveTaskForDialog] = useState<Task | null>(null)
+  const [taskDraft, setTaskDraft] = useState<BrowserCodeReviewDraft | null>(null)
 
   const handleOpenAddTaskDialog = useCallback((): void => {
     setActiveTaskForDialog(null)
+    setTaskDraft(null)
     setTaskDialogOpen(true)
   }, [])
 
   const handleOpenTaskDialog = useCallback((task: Task | null): void => {
     setActiveTaskForDialog(task)
+    setTaskDraft(null)
     setTaskDialogOpen(true)
   }, [])
 
@@ -278,8 +293,46 @@ function AppShell(): React.JSX.Element {
     setTaskDialogOpen(open)
     if (!open) {
       setActiveTaskForDialog(null)
+      setTaskDraft(null)
     }
   }, [])
+
+  const handleDeepLink = useCallback(async (rawUrl: string): Promise<void> => {
+    try {
+      const action = parseDevTreesDeepLink(rawUrl)
+      const savedPrompt = await window.api.settings.browserCodeReviewPrompt()
+      const draft = createBrowserCodeReviewDraft(action, savedPrompt.details)
+      setView('tasks')
+      setActiveTaskForDialog(null)
+      setTaskDraft(draft)
+      setTaskDialogOpen(true)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not open the DevTrees link.')
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    let unlisten: (() => void) | undefined
+    void subscribeToDevTreesDeepLinks((url) => {
+      if (active) void handleDeepLink(url)
+    })
+      .then((unsubscribe) => {
+        if (active) unlisten = unsubscribe
+        else unsubscribe()
+      })
+      .catch((error) => {
+        if (active) {
+          toast.error(
+            error instanceof Error ? error.message : 'Could not listen for DevTrees links.'
+          )
+        }
+      })
+    return () => {
+      active = false
+      unlisten?.()
+    }
+  }, [handleDeepLink])
 
   const headerTitle =
     view === 'dashboard'
@@ -674,7 +727,9 @@ function AppShell(): React.JSX.Element {
                         dialogOpen={taskDialogOpen}
                         onDialogOpenChange={handleTaskDialogOpenChange}
                         activeTask={activeTaskForDialog}
+                        taskDraft={taskDraft}
                         onOpenTask={handleOpenTaskDialog}
+                        onNavigateToSessions={handleNavigateToSessions}
                         queue={taskQueue}
                       />
                     ) : view === 'settings' ? (

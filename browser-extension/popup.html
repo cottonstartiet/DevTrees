@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DevTrees</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="icons/icon-32.png" alt="" width="24" height="24" />
+        <div>
+          <h1>DevTrees</h1>
+          <p>Browser actions</p>
+        </div>
+      </header>
+
+      <section class="page-context" aria-labelledby="page-context-title">
+        <h2 id="page-context-title">Current page</h2>
+        <p id="page-title" class="page-title">Loading page...</p>
+        <p id="page-host" class="page-host"></p>
+      </section>
+
+      <button id="start-review" type="button" disabled>Start code review</button>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

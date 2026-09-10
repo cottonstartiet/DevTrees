@@ -115,22 +115,139 @@ export function nativeSessionCanReplyToPlan(
   )
 }
 
-export function latestNativeAssistantResponse(
-  session: Pick<TerminalSession, 'id' | 'generation'>,
-  snapshot?: NativeSnapshot
-): string | null {
+export function nativeSessionKeepsTaskQueueSlot(
+  session: TerminalSession,
+  snapshot: NativeSnapshot | undefined,
+  planTransitionBusy: boolean
+): boolean {
   if (
     !snapshot ||
     snapshot.session.id !== session.id ||
     snapshot.session.generation !== session.generation
   ) {
-    return null
+    return false
   }
-  for (let index = snapshot.entries.length - 1; index >= 0; index--) {
-    const entry = snapshot.entries[index]
-    if (entry.kind === 'assistantMessage' && entry.text.trim()) return entry.text
+  if (planTransitionBusy || snapshot.planTransitionAvailable) return true
+  return Boolean(
+    snapshot.queue?.some((item) => ['queued', 'dispatching', 'active'].includes(item.status))
+  )
+}
+
+export type SessionActivityPreview = {
+  text: string
+  markdown: boolean
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function text(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function acpContentText(value: unknown): string | null {
+  const content = record(value)
+  if (content.type === 'text') return text(content.text)
+  if (content.type === 'content') return acpContentText(content.content)
+  if (content.type === 'diff') return text(content.newText) ?? text(content.path)
+  if (content.type === 'resource') {
+    const resource = record(content.resource)
+    return text(resource.text) ?? text(resource.uri)
+  }
+  if (content.type === 'resource_link') {
+    const name = text(content.name)
+    const uri = text(content.uri)
+    return name && uri ? `${name}: ${uri}` : (name ?? uri)
   }
   return null
+}
+
+function acpEntryText(category: string, data: unknown): string | null {
+  const value = record(data)
+  if (category === 'tool') {
+    if (Array.isArray(value.content)) {
+      for (let index = value.content.length - 1; index >= 0; index--) {
+        const content = acpContentText(value.content[index])
+        if (content) return content
+      }
+    }
+    const title = text(value.title) ?? 'Tool'
+    const status = text(value.status)
+    return status ? `${title} ${status}` : title
+  }
+  if (category === 'plan' && Array.isArray(value.entries)) {
+    for (let index = value.entries.length - 1; index >= 0; index--) {
+      const entry = record(value.entries[index])
+      const content = text(entry.content)
+      if (content) return content
+    }
+  }
+  if (category === 'agent_thought_chunk') return 'Reasoning'
+  return acpContentText(data)
+}
+
+export function terminalTimelineEntryPreview(
+  entry: TerminalTimelineEntry
+): SessionActivityPreview | null {
+  switch (entry.kind) {
+    case 'userMessage':
+    case 'assistantMessage':
+      return text(entry.text) ? { text: entry.text, markdown: true } : null
+    case 'notice':
+      return text(entry.text) ? { text: entry.text, markdown: false } : null
+    case 'permission': {
+      const permissionText = text(entry.resolution) ?? text(entry.description)
+      return permissionText ? { text: permissionText, markdown: false } : null
+    }
+    case 'toolCall': {
+      const toolText = text(entry.result) ?? text(entry.detail) ?? text(entry.name)
+      return toolText ? { text: toolText, markdown: false } : null
+    }
+    case 'acp': {
+      const acpText = acpEntryText(entry.category, entry.data)
+      return acpText ? { text: acpText, markdown: entry.category !== 'tool' } : null
+    }
+  }
+}
+
+function latestTimelinePreview(entries: TerminalTimelineEntry[]): SessionActivityPreview | null {
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const preview = terminalTimelineEntryPreview(entries[index])
+    if (preview) return preview
+  }
+  return null
+}
+
+export function terminalSessionActivityPreview(
+  session: TerminalSession,
+  snapshot?: NativeSnapshot,
+  observationIssue?: string | null
+): SessionActivityPreview {
+  if (observationIssue) return { text: observationIssue, markdown: false }
+
+  const current =
+    snapshot?.session.id === session.id && snapshot.session.generation === session.generation
+      ? snapshot
+      : undefined
+  const currentError = text(current?.error)
+  if (currentError) return { text: currentError, markdown: false }
+
+  const interactionMessage = text(current?.interactions[0]?.message)
+  if (interactionMessage) return { text: interactionMessage, markdown: false }
+  if (current?.planTransitionAvailable) {
+    return { text: 'Plan complete. Choose the next step.', markdown: false }
+  }
+
+  const pendingPrompt = text(session.pendingPrompt)
+  if (pendingPrompt) return { text: pendingPrompt, markdown: false }
+
+  const timelinePreview = current ? latestTimelinePreview(current.entries) : null
+  if (timelinePreview) return timelinePreview
+
+  return { text: session.lastActivity, markdown: false }
 }
 
 export type PlanTransitionAction = 'interactive' | 'autopilot' | 'autopilot_fleet' | 'exit_only'

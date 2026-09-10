@@ -1,7 +1,6 @@
 import * as React from 'react'
 import {
   AlertCircleIcon,
-  ArrowUpRightIcon,
   ChevronRightIcon,
   Clock3Icon,
   CircleCheckIcon,
@@ -29,9 +28,9 @@ import {
   type TerminalSession
 } from '@shared/terminal-session'
 import {
-  latestNativeAssistantResponse,
   nativeSessionNeedsUserAction,
   nativeSessionPresentationStatus,
+  terminalSessionActivityPreview,
   type NativeInteraction
 } from '@shared/native-session'
 import type { Repository } from '@shared/repository'
@@ -163,8 +162,11 @@ export function DashboardPage({
                 const needsAction = nativeSessionNeedsUserAction(session, snapshot)
                 const presentationStatus = nativeSessionPresentationStatus(session, snapshot)
                 const observationIssue = terminalObservationIssue(session, observationNow)
-                const latestResponse = latestNativeAssistantResponse(session, snapshot)
-                const statusMessage = observationIssue || session.pendingPrompt
+                const activityPreview = terminalSessionActivityPreview(
+                  session,
+                  snapshot,
+                  observationIssue
+                )
                 const StatusIcon = TERMINAL_SESSION_STATUS_ICON[presentationStatus]
                 return (
                   <div
@@ -224,26 +226,22 @@ export function DashboardPage({
                           </p>
                         )}
                       </div>
-                      <span className="text-muted-foreground flex shrink-0 items-center gap-1 pt-0.5 text-[10px]">
-                        Open session
-                        <ArrowUpRightIcon className="size-3" />
-                      </span>
+                      <ChevronRightIcon
+                        aria-hidden="true"
+                        className="text-muted-foreground size-3.5 shrink-0"
+                      />
                     </button>
                     <div className="border-t px-3 py-3">
-                      {statusMessage ? (
+                      {activityPreview.markdown ? (
+                        <MarkdownBody text={activityPreview.text} />
+                      ) : (
                         <p
                           className={cn(
-                            'text-xs leading-relaxed',
+                            'whitespace-pre-wrap break-words text-xs leading-relaxed',
                             needsAction ? 'text-foreground' : 'text-muted-foreground'
                           )}
                         >
-                          {statusMessage}
-                        </p>
-                      ) : latestResponse ? (
-                        <MarkdownBody text={latestResponse} />
-                      ) : (
-                        <p className="text-muted-foreground text-xs leading-relaxed">
-                          {session.lastActivity}
+                          {activityPreview.text}
                         </p>
                       )}
                     </div>

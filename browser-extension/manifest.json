@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "DevTrees",
+  "description": "Send browser context to the DevTrees desktop app.",
+  "version": "0.1.0",
+  "permissions": ["activeTab"],
+  "action": {
+    "default_title": "DevTrees actions",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "32": "icons/icon-32.png",
+      "64": "icons/icon-64.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "32": "icons/icon-32.png",
+    "64": "icons/icon-64.png",
+    "128": "icons/icon-128.png"
+  }
+}

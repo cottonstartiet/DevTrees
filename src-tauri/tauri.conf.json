@@ -39,6 +39,11 @@
     ]
   },
   "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["devtrees"]
+      }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDMyMjZCMUEzREYzN0QwN0YKUldSLzBEZmZvN0VtTXJESUZZSU5OTC8vczlDbFBjZ3hUMGpNR2ZsQ2hJcHd2dXR6cUNxaWdMTGoK",
       "endpoints": [

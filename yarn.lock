@@ -1481,6 +1481,13 @@
     "@tauri-apps/cli-win32-ia32-msvc" "2.11.3"
     "@tauri-apps/cli-win32-x64-msvc" "2.11.3"
 
+"@tauri-apps/plugin-deep-link@^2.4.5":
+  version "2.4.10"
+  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@tauri-apps/plugin-deep-link/-/plugin-deep-link-2.4.10.tgz#294c255617335d95ac929fd43cf7ea8146418abb"
+  integrity sha1-KUwlVhczXZWskp/UPPfqgUZBirs=
+  dependencies:
+    "@tauri-apps/api" "^2.11.0"
+
 "@tauri-apps/plugin-notification@^2":
   version "2.4.0"
   resolved "https://ms-feed-17.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@tauri-apps/plugin-notification/-/plugin-notification-2.4.0.tgz#f188d3a191cc801f20f4a598cfe39eb6fe49525a"

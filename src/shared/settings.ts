@@ -7,6 +7,23 @@ export type TaskQueueSettings = {
   concurrency: number
 }
 
+export type SavedPrompt = {
+  id: string
+  name: string
+  details: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type CreateSavedPromptRequest = {
+  name: string
+  details: string
+}
+
+export type UpdateSavedPromptRequest = CreateSavedPromptRequest & {
+  id: string
+}
+
 export function sessionLaunchModeLabel(mode: SessionLaunchMode): string {
   return mode === 'external' ? 'External Copilot terminal' : 'In-app chat'
 }

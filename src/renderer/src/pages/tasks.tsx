@@ -14,11 +14,12 @@ import { TaskColumn } from '@/components/task-column'
 import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
+import type { BrowserCodeReviewDraft } from '@/lib/deep-links'
 import { cn } from '@/lib/utils'
 import type { Repository } from '@shared/repository'
 import type { TaskQueueMode } from '@shared/settings'
 import type { Task, TaskStatus } from '@shared/task'
-import type { TerminalSession, TerminalSessionStatus } from '@shared/terminal-session'
+import type { TerminalSession } from '@shared/terminal-session'
 import type { Worktree } from '@shared/worktree'
 
 interface TasksPageProps {
@@ -31,7 +32,9 @@ interface TasksPageProps {
   dialogOpen: boolean
   onDialogOpenChange: (open: boolean) => void
   activeTask: Task | null
+  taskDraft: BrowserCodeReviewDraft | null
   onOpenTask: (task: Task | null) => void
+  onNavigateToSessions: () => void
 }
 
 interface TasksHeaderControlsProps {
@@ -132,13 +135,15 @@ export function TasksPage({
   dialogOpen,
   onDialogOpenChange,
   activeTask,
-  onOpenTask
+  taskDraft,
+  onOpenTask,
+  onNavigateToSessions
 }: TasksPageProps): React.JSX.Element {
   const { tasks, tasksByStatus, createTask, updateTask, deleteTask } = useTaskBoard()
-  const { sessions, byId: sessionsById } = useTerminalSessions()
+  const { sessions, byId: sessionsById, select } = useTerminalSessions()
   const startingTaskIdsRef = React.useRef(new Set<string>())
   const [startingTaskIds, setStartingTaskIds] = React.useState<ReadonlySet<string>>(() => new Set())
-  const sessionStatusByTaskId = React.useMemo(() => {
+  const sessionByTaskId = React.useMemo(() => {
     const newestSessionByTaskId = new Map<string, TerminalSession>()
     for (const session of sessions) {
       if (!session.taskId) continue
@@ -148,16 +153,24 @@ export function TasksPage({
       }
     }
 
-    const statuses: Partial<Record<string, TerminalSessionStatus>> = {}
+    const resolved: Partial<Record<string, TerminalSession>> = {}
     for (const task of tasks) {
       const persistedSession = task.copilotSessionId
         ? sessionsById[task.copilotSessionId]
         : undefined
       const session = persistedSession ?? newestSessionByTaskId.get(task.id)
-      if (session) statuses[task.id] = session.status
+      if (session) resolved[task.id] = session
     }
-    return statuses
+    return resolved
   }, [sessions, sessionsById, tasks])
+
+  const handleOpenSession = React.useCallback(
+    (session: TerminalSession): void => {
+      select(session.id)
+      onNavigateToSessions()
+    },
+    [onNavigateToSessions, select]
+  )
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))
 
@@ -210,11 +223,13 @@ export function TasksPage({
                 status={status}
                 label={TASK_STATUS_LABELS[status]}
                 tasks={tasksByStatus[status]}
-                sessionStatusByTaskId={sessionStatusByTaskId}
+                sessionByTaskId={sessionByTaskId}
                 onOpenTask={onOpenTask}
+                onOpenSession={handleOpenSession}
                 onStartTask={(task) => void handleStartTask(task)}
                 onReviewTask={(task) => void onReviewTask(task)}
                 onDoneTask={(task) => void onMoveTask(task, 'done')}
+                onDeleteTask={(task) => void deleteTask(task.id)}
                 startingTaskIds={startingTaskIds}
                 canReviewTask={canReviewTask}
               />
@@ -227,6 +242,7 @@ export function TasksPage({
         open={dialogOpen}
         onOpenChange={onDialogOpenChange}
         task={activeTask}
+        initialDraft={taskDraft}
         repositories={repositories}
         worktreesByRepositoryId={worktreesByRepositoryId}
         onCreate={async ({

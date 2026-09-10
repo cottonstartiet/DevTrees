@@ -174,17 +174,7 @@ export function AcpComposer({
                   : undefined
               }
               rows={compact ? 2 : 3}
-              placeholder={
-                compact
-                  ? undefined
-                  : context === 'plan-followup'
-                    ? 'Reply to refine the plan.'
-                    : `${
-                        phase === 'idle'
-                          ? 'Message Copilot or type / for commands.'
-                          : 'Queue your next instruction.'
-                      }\nCtrl+Enter to submit. Stop pauses the queue; reopening never sends saved items automatically.`
-              }
+              placeholder={compact ? undefined : 'Ctrl+Enter to submit.'}
               disabled={disabled}
               value={message}
               onChange={(event) => {

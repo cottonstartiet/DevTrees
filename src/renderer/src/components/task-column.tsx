@@ -5,28 +5,32 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { TaskCard } from '@/components/task-card'
 import { cn } from '@/lib/utils'
 import type { Task, TaskStatus } from '@shared/task'
-import type { TerminalSessionStatus } from '@shared/terminal-session'
+import type { TerminalSession } from '@shared/terminal-session'
 
 export function TaskColumn({
   status,
   label,
   tasks,
-  sessionStatusByTaskId,
+  sessionByTaskId,
   onOpenTask,
+  onOpenSession,
   onStartTask,
   onReviewTask,
   onDoneTask,
+  onDeleteTask,
   startingTaskIds,
   canReviewTask
 }: {
   status: TaskStatus
   label: string
   tasks: Task[]
-  sessionStatusByTaskId: Partial<Record<string, TerminalSessionStatus>>
+  sessionByTaskId: Partial<Record<string, TerminalSession>>
   onOpenTask: (task: Task) => void
+  onOpenSession: (session: TerminalSession) => void
   onStartTask: (task: Task) => void
   onReviewTask: (task: Task) => void
   onDoneTask: (task: Task) => void
+  onDeleteTask: (task: Task) => void
   startingTaskIds: ReadonlySet<string>
   canReviewTask: (task: Task) => boolean
 }): React.JSX.Element {
@@ -50,11 +54,13 @@ export function TaskColumn({
             <TaskCard
               key={task.id}
               task={task}
-              sessionStatus={sessionStatusByTaskId[task.id]}
+              session={sessionByTaskId[task.id]}
               onOpen={onOpenTask}
+              onOpenSession={onOpenSession}
               onStart={onStartTask}
               onReview={onReviewTask}
               onDone={onDoneTask}
+              onDelete={onDeleteTask}
               isStarting={startingTaskIds.has(task.id)}
               canReview={canReviewTask(task)}
             />

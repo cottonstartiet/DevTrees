@@ -24,6 +24,8 @@ mod worktrees;
 use std::sync::Mutex;
 
 use tauri::Manager;
+#[cfg(all(windows, debug_assertions))]
+use tauri_plugin_deep_link::DeepLinkExt;
 
 use db::DbState;
 use terminal_sessions::TerminalSessionMonitor;
@@ -52,12 +54,15 @@ pub fn run() {
     }
 
     builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            #[cfg(all(windows, debug_assertions))]
+            app.deep_link().register_all()?;
             let conn = db::init(&app.path().app_data_dir()?)?;
             app.manage(DbState(Mutex::new(conn)));
             app.manage(system::KeepAwakeState::default());
@@ -95,6 +100,12 @@ pub fn run() {
             settings::settings_set_copilot_permission_profile,
             settings::settings_task_queue,
             settings::settings_set_task_queue,
+            settings::settings_saved_prompts,
+            settings::settings_create_saved_prompt,
+            settings::settings_update_saved_prompt,
+            settings::settings_delete_saved_prompt,
+            settings::settings_browser_code_review_prompt,
+            settings::settings_set_browser_code_review_prompt,
             ado::ado_pr_threads,
             ado::ado_repo_open_prs,
             ado::ado_pr_detail,
