@@ -573,7 +573,7 @@ export function AppSidebar({
         {activeView === 'reviews' ? (
           <SidebarGroup className="shrink-0">
             <SidebarGroupLabel className="h-9 text-sm font-semibold text-sidebar-foreground">
-              Repositories
+              Reviews
             </SidebarGroupLabel>
             <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
               <PlusIcon />
