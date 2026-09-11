@@ -403,7 +403,6 @@ export function AppSidebar({
   onSelectWorktree,
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
-  const [repositoriesOpen, setRepositoriesOpen] = React.useState(true)
   const [completedSessionsOpen, setCompletedSessionsOpen] = React.useState(false)
   const launchCopilot = useCopilotLauncher()
   const { sessions, selectedId, select, forget, nativeById } = useTerminalSessions()
@@ -521,68 +520,54 @@ export function AppSidebar({
     >
       <SidebarContent className="overflow-x-hidden">
         {activeView === 'repositories' ? (
-          <Collapsible
-            open={repositoriesOpen}
-            onOpenChange={setRepositoriesOpen}
-            className="flex flex-col"
-          >
-            <SidebarGroup className="shrink-0">
-              <SidebarGroupLabel
-                asChild
-                className="h-9 cursor-pointer rounded-md text-sm font-semibold text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              >
-                <CollapsibleTrigger className="group/ws-label flex w-full items-center">
-                  <ChevronRightIcon className="mr-1.5 size-4 transition-transform group-data-[state=open]/ws-label:rotate-90 group-data-[collapsible=icon]:hidden" />
-                  Repositories
-                </CollapsibleTrigger>
-              </SidebarGroupLabel>
-              <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
-                <PlusIcon />
-                <span className="sr-only">Add repository</span>
-              </SidebarGroupAction>
-            </SidebarGroup>
-            <CollapsibleContent className="group-data-[collapsible=icon]:overflow-visible">
-              <SidebarGroupContent>
-                {repositories.length === 0 ? (
-                  <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
-                    No repositories yet. Click + to add a git repository.
-                  </p>
-                ) : (
-                  <SidebarMenu>
-                    <DndContext
-                      sensors={sensors}
-                      collisionDetection={closestCenter}
-                      onDragEnd={handleRepositoryDragEnd}
+          <SidebarGroup className="shrink-0">
+            <SidebarGroupLabel className="h-9 text-sm font-semibold text-sidebar-foreground">
+              Repositories
+            </SidebarGroupLabel>
+            <SidebarGroupAction title="Add repository" onClick={onAddRepository}>
+              <PlusIcon />
+              <span className="sr-only">Add repository</span>
+            </SidebarGroupAction>
+            <SidebarGroupContent>
+              {repositories.length === 0 ? (
+                <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
+                  No repositories yet. Click + to add a git repository.
+                </p>
+              ) : (
+                <SidebarMenu>
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleRepositoryDragEnd}
+                  >
+                    <SortableContext
+                      items={repositories.map((w) => w.id)}
+                      strategy={verticalListSortingStrategy}
                     >
-                      <SortableContext
-                        items={repositories.map((w) => w.id)}
-                        strategy={verticalListSortingStrategy}
-                      >
-                        {repositories.map((ws) => (
-                          <SortableRepositoryItem
-                            key={ws.id}
-                            ws={ws}
-                            worktrees={worktreesByRepositoryId[ws.id] ?? []}
-                            activeView={activeView}
-                            activeRepositoryId={activeRepositoryId}
-                            activeWorktreePath={activeWorktreePath}
-                            deletingWorktreePaths={deletingWorktreePaths}
-                            onSelectRepository={onSelectRepository}
-                            onCreateWorktree={onCreateWorktree}
-                            onRemoveRepository={onRemoveRepository}
-                            onSelectWorktree={onSelectWorktree}
-                            onDeleteWorktree={onDeleteWorktree}
-                            onOpenTerminal={handleOpenTerminal}
-                            onStartCopilotSession={handleStartCopilotSession}
-                          />
-                        ))}
-                      </SortableContext>
-                    </DndContext>
-                  </SidebarMenu>
-                )}
-              </SidebarGroupContent>
-            </CollapsibleContent>
-          </Collapsible>
+                      {repositories.map((ws) => (
+                        <SortableRepositoryItem
+                          key={ws.id}
+                          ws={ws}
+                          worktrees={worktreesByRepositoryId[ws.id] ?? []}
+                          activeView={activeView}
+                          activeRepositoryId={activeRepositoryId}
+                          activeWorktreePath={activeWorktreePath}
+                          deletingWorktreePaths={deletingWorktreePaths}
+                          onSelectRepository={onSelectRepository}
+                          onCreateWorktree={onCreateWorktree}
+                          onRemoveRepository={onRemoveRepository}
+                          onSelectWorktree={onSelectWorktree}
+                          onDeleteWorktree={onDeleteWorktree}
+                          onOpenTerminal={handleOpenTerminal}
+                          onStartCopilotSession={handleStartCopilotSession}
+                        />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                </SidebarMenu>
+              )}
+            </SidebarGroupContent>
+          </SidebarGroup>
         ) : null}
 
         {activeView === 'reviews' ? (
