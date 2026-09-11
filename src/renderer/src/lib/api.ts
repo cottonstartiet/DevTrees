@@ -476,6 +476,8 @@ const api = {
     start: (req: StartTerminalSessionRequest): Promise<TerminalSessionResult> =>
       result('terminal_sessions_start', { req }, (error) => ({ ok: false, error })),
     isRunning: (id: string): Promise<boolean> => invoke('terminal_sessions_is_running', { id }),
+    focus: (id: string): Promise<LaunchResult> =>
+      result('terminal_sessions_focus', { id }, (error) => ({ ok: false, error })),
     forget: (id: string): Promise<void> => invoke('terminal_sessions_forget', { id }),
     history: (id: string): Promise<TerminalTimelineEntry[]> =>
       invoke('terminal_sessions_history', { id }),

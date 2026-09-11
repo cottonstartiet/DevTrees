@@ -1795,6 +1795,32 @@ pub fn terminal_sessions_is_running(app: AppHandle, id: String) -> AppResult<boo
     session_is_running(&app, &id)
 }
 
+#[tauri::command]
+pub fn terminal_sessions_focus(
+    app: AppHandle,
+    id: String,
+) -> AppResult<crate::system::LaunchResult> {
+    if id.is_empty() || id.len() > 256 {
+        return Err(AppError::msg("Invalid Copilot session id."));
+    }
+    let monitor = app.state::<TerminalSessionMonitor>();
+    let watches = monitor
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("Session mutex poisoned."))?;
+    let session = watches
+        .get(&id)
+        .map(|watch| &watch.session)
+        .ok_or_else(|| AppError::msg("This Copilot session is no longer running."))?;
+    if session.transport != "external" || session.status.is_final() {
+        return Err(AppError::msg(
+            "Only a running external Copilot session has a terminal window.",
+        ));
+    }
+    drop(watches);
+    Ok(crate::system::focus_copilot_terminal(&id))
+}
+
 fn start_external(
     app: &AppHandle,
     req: StartTerminalSessionRequest,

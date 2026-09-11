@@ -240,6 +240,8 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              VALUES ('task_queue_mode', 'manual');
          INSERT OR IGNORE INTO app_settings (key, value)
              VALUES ('task_queue_concurrency', '2');
+         INSERT OR IGNORE INTO app_settings (key, value)
+             VALUES ('tray_close_notice_shown', '0');
          UPDATE app_settings SET value = 'acp'
              WHERE key = 'session_launch_mode' AND value = 'sdk';
          UPDATE app_settings SET value = 'external'
@@ -346,7 +348,7 @@ mod tests {
             assert_eq!(
                 count,
                 match table.as_str() {
-                    "app_settings" => 6,
+                    "app_settings" => 7,
                     "saved_prompts" => 1,
                     _ => 0,
                 }

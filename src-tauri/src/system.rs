@@ -345,6 +345,42 @@ fn is_valid_copilot_session_id(id: &str) -> bool {
     re.is_match(id)
 }
 
+fn copilot_terminal_title(session_id: &str) -> Result<String, &'static str> {
+    if !is_valid_copilot_session_id(session_id) {
+        return Err("Invalid Copilot session id.");
+    }
+    Ok(format!("DevTrees Copilot {session_id}"))
+}
+
+fn copilot_terminal_args(
+    folder_path: &str,
+    encoded_command: String,
+    session_id: Option<&str>,
+) -> Result<Vec<String>, &'static str> {
+    let mut args = Vec::new();
+    if let Some(session_id) = session_id {
+        args.extend([
+            "-w".into(),
+            "new".into(),
+            "new-tab".into(),
+            "-d".into(),
+            folder_path.into(),
+            "--title".into(),
+            copilot_terminal_title(session_id)?,
+            "--suppressApplicationTitle".into(),
+        ]);
+    } else {
+        args.extend(["-d".into(), folder_path.into()]);
+    }
+    args.extend([
+        "powershell".into(),
+        "-NoExit".into(),
+        "-EncodedCommand".into(),
+        encoded_command,
+    ]);
+    Ok(args)
+}
+
 pub(crate) fn launch_copilot_cli(
     folder_path: &str,
     prompt: &str,
@@ -369,17 +405,77 @@ pub(crate) fn launch_copilot_cli(
         Err(error) => return LaunchResult::err(error),
     };
     let encoded = encode_ps_command(&ps_command);
-    launch_detached(
-        "wt",
-        &[
-            "-d".into(),
-            folder_path.into(),
-            "powershell".into(),
-            "-NoExit".into(),
-            "-EncodedCommand".into(),
-            encoded,
-        ],
-    )
+    let args = match copilot_terminal_args(folder_path, encoded, session_id) {
+        Ok(args) => args,
+        Err(error) => return LaunchResult::err(error),
+    };
+    launch_detached("wt", &args)
+}
+
+#[cfg(windows)]
+pub(crate) fn focus_copilot_terminal(session_id: &str) -> LaunchResult {
+    use std::ptr;
+    use winapi::shared::minwindef::{BOOL, LPARAM};
+    use winapi::shared::windef::HWND;
+    use winapi::um::winuser::{
+        EnumWindows, GetWindowTextLengthW, GetWindowTextW, IsIconic, IsWindowVisible,
+        SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+
+    struct WindowSearch {
+        title: Vec<u16>,
+        found: HWND,
+    }
+
+    unsafe extern "system" fn find_window(hwnd: HWND, value: LPARAM) -> BOOL {
+        let search = &mut *(value as *mut WindowSearch);
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+        let length = GetWindowTextLengthW(hwnd);
+        if length <= 0 || length as usize != search.title.len() {
+            return 1;
+        }
+        let mut title = vec![0u16; length as usize + 1];
+        let copied = GetWindowTextW(hwnd, title.as_mut_ptr(), title.len() as i32);
+        if copied > 0 && title[..copied as usize] == search.title {
+            search.found = hwnd;
+            return 0;
+        }
+        1
+    }
+
+    let title = match copilot_terminal_title(session_id) {
+        Ok(title) => title.encode_utf16().collect(),
+        Err(error) => return LaunchResult::err(error),
+    };
+    let mut search = WindowSearch {
+        title,
+        found: ptr::null_mut(),
+    };
+    unsafe {
+        EnumWindows(
+            Some(find_window),
+            &mut search as *mut WindowSearch as LPARAM,
+        );
+        if search.found.is_null() {
+            return LaunchResult::err("The Copilot terminal window could not be found.");
+        }
+        if IsIconic(search.found) != 0 {
+            ShowWindow(search.found, SW_RESTORE);
+        }
+        if SetForegroundWindow(search.found) == 0 {
+            return LaunchResult::err(
+                "Windows did not allow DevTrees to focus the Copilot terminal.",
+            );
+        }
+    }
+    LaunchResult::ok()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn focus_copilot_terminal(_session_id: &str) -> LaunchResult {
+    LaunchResult::err("Focusing an external Copilot terminal is currently Windows-only.")
 }
 
 fn copilot_command(
@@ -493,7 +589,12 @@ mod tests {
 
     static WORKER_EXECUTION_CALLS: AtomicU8 = AtomicU8::new(0);
     static STATE_EXECUTION_CALLS: AtomicU8 = AtomicU8::new(0);
+    static STATE_ENABLE_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static STATE_DISABLE_CALLS: AtomicUsize = AtomicUsize::new(0);
     static WORKER_STARTS: AtomicUsize = AtomicUsize::new(0);
+    static FAILED_WORKER_STARTS: AtomicUsize = AtomicUsize::new(0);
+    static SHUTDOWN_ENABLE_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static SHUTDOWN_DISABLE_CALLS: AtomicUsize = AtomicUsize::new(0);
 
     fn mock_worker_execution_state(enabled: bool) -> Result<(), String> {
         WORKER_EXECUTION_CALLS.fetch_or(if enabled { 1 } else { 2 }, Ordering::SeqCst);
@@ -502,6 +603,11 @@ mod tests {
 
     fn mock_state_execution_state(enabled: bool) -> Result<(), String> {
         STATE_EXECUTION_CALLS.fetch_or(if enabled { 1 } else { 2 }, Ordering::SeqCst);
+        if enabled {
+            STATE_ENABLE_CALLS.fetch_add(1, Ordering::SeqCst);
+        } else {
+            STATE_DISABLE_CALLS.fetch_add(1, Ordering::SeqCst);
+        }
         Ok(())
     }
 
@@ -509,9 +615,27 @@ mod tests {
         Err("native failure".to_string())
     }
 
+    fn mock_shutdown_execution_state(enabled: bool) -> Result<(), String> {
+        if enabled {
+            SHUTDOWN_ENABLE_CALLS.fetch_add(1, Ordering::SeqCst);
+        } else {
+            SHUTDOWN_DISABLE_CALLS.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
     fn mock_worker() -> Result<KeepAwakeWorker, String> {
         WORKER_STARTS.fetch_add(1, Ordering::SeqCst);
         start_worker(mock_state_execution_state)
+    }
+
+    fn failing_worker() -> Result<KeepAwakeWorker, String> {
+        FAILED_WORKER_STARTS.fetch_add(1, Ordering::SeqCst);
+        Err("worker startup failure".to_string())
+    }
+
+    fn shutdown_worker() -> Result<KeepAwakeWorker, String> {
+        start_worker(mock_shutdown_execution_state)
     }
 
     #[test]
@@ -531,6 +655,35 @@ mod tests {
         }
         assert!(copilot_command(cli, "", Some("bad;command"), None).is_err());
         assert!(copilot_command(cli, "", None, Some("invalid")).is_err());
+    }
+
+    #[test]
+    fn external_terminal_window_identity_is_stable_and_safe() {
+        let id = "00112233-4455-6677-8899-aabbccddeeff";
+        assert_eq!(
+            copilot_terminal_title(id).unwrap(),
+            "DevTrees Copilot 00112233-4455-6677-8899-aabbccddeeff"
+        );
+        assert!(copilot_terminal_title("bad;title").is_err());
+
+        let args = copilot_terminal_args(r"C:\repo", "encoded-command".into(), Some(id)).unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "-w",
+                "new",
+                "new-tab",
+                "-d",
+                r"C:\repo",
+                "--title",
+                "DevTrees Copilot 00112233-4455-6677-8899-aabbccddeeff",
+                "--suppressApplicationTitle",
+                "powershell",
+                "-NoExit",
+                "-EncodedCommand",
+                "encoded-command",
+            ]
+        );
     }
 
     #[test]
@@ -574,6 +727,8 @@ mod tests {
     #[test]
     fn keep_awake_state_transitions_are_idempotent() {
         STATE_EXECUTION_CALLS.store(0, Ordering::SeqCst);
+        STATE_ENABLE_CALLS.store(0, Ordering::SeqCst);
+        STATE_DISABLE_CALLS.store(0, Ordering::SeqCst);
         WORKER_STARTS.store(0, Ordering::SeqCst);
         let state = KeepAwakeState::default();
 
@@ -583,5 +738,35 @@ mod tests {
         assert!(!state.set_enabled_with(false, mock_worker).unwrap());
         assert!(!state.set_enabled_with(false, mock_worker).unwrap());
         assert_eq!(STATE_EXECUTION_CALLS.load(Ordering::SeqCst), 3);
+        assert_eq!(STATE_ENABLE_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(STATE_DISABLE_CALLS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn keep_awake_state_stays_disabled_when_worker_startup_fails() {
+        FAILED_WORKER_STARTS.store(0, Ordering::SeqCst);
+        let state = KeepAwakeState::default();
+
+        assert_eq!(
+            state.set_enabled_with(true, failing_worker).unwrap_err(),
+            "worker startup failure"
+        );
+        assert!(!state.is_enabled().unwrap());
+        assert_eq!(FAILED_WORKER_STARTS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn keep_awake_shutdown_releases_an_active_worker_once() {
+        SHUTDOWN_ENABLE_CALLS.store(0, Ordering::SeqCst);
+        SHUTDOWN_DISABLE_CALLS.store(0, Ordering::SeqCst);
+        let state = KeepAwakeState::default();
+
+        assert!(state.set_enabled_with(true, shutdown_worker).unwrap());
+        state.shutdown();
+        state.shutdown();
+
+        assert!(!state.is_enabled().unwrap());
+        assert_eq!(SHUTDOWN_ENABLE_CALLS.load(Ordering::SeqCst), 1);
+        assert_eq!(SHUTDOWN_DISABLE_CALLS.load(Ordering::SeqCst), 1);
     }
 }

@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   Clock3Icon,
   CircleCheckIcon,
+  ExternalLinkIcon,
   GitPullRequestIcon,
   Loader2Icon,
   RefreshCwIcon
@@ -80,7 +81,7 @@ export function DashboardPage({
   onNavigateToSessions: () => void
   onNavigateToReviews: (repositoryId?: string) => void
 }): React.JSX.Element {
-  const { sessions, nativeById, select, observationNow } = useTerminalSessions()
+  const { sessions, nativeById, select, focusExternal, observationNow } = useTerminalSessions()
   const interactionById = React.useMemo(
     () =>
       Object.fromEntries(
@@ -178,7 +179,21 @@ export function DashboardPage({
                   >
                     <button
                       type="button"
-                      onClick={() => openSession(session.id)}
+                      onClick={() =>
+                        session.transport === 'external'
+                          ? void focusExternal(session.id)
+                          : openSession(session.id)
+                      }
+                      title={
+                        session.transport === 'external'
+                          ? `Focus terminal for ${session.label}`
+                          : `Open ${session.label}`
+                      }
+                      aria-label={
+                        session.transport === 'external'
+                          ? `Focus terminal for ${session.label}`
+                          : `Open ${session.label} in Sessions`
+                      }
                       className={cn(
                         'hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-start gap-3 p-3 text-left transition-colors',
                         'focus-visible:outline-none focus-visible:ring-3'
@@ -226,10 +241,17 @@ export function DashboardPage({
                           </p>
                         )}
                       </div>
-                      <ChevronRightIcon
-                        aria-hidden="true"
-                        className="text-muted-foreground size-3.5 shrink-0"
-                      />
+                      {session.transport === 'external' ? (
+                        <ExternalLinkIcon
+                          aria-hidden="true"
+                          className="text-muted-foreground size-3.5 shrink-0"
+                        />
+                      ) : (
+                        <ChevronRightIcon
+                          aria-hidden="true"
+                          className="text-muted-foreground size-3.5 shrink-0"
+                        />
+                      )}
                     </button>
                     <div className="border-t px-3 py-3">
                       {activityPreview.markdown ? (

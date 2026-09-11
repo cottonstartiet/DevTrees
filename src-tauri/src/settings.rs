@@ -185,6 +185,27 @@ fn write_permission_profile(db: &Connection, profile: CopilotPermissionProfile) 
     Ok(())
 }
 
+pub(crate) fn claim_tray_close_notice(db: &Connection) -> AppResult<bool> {
+    let shown: String = db.query_row(
+        "SELECT value FROM app_settings WHERE key = 'tray_close_notice_shown'",
+        [],
+        |row| row.get(0),
+    )?;
+    match shown.as_str() {
+        "0" => {
+            db.execute(
+                "UPDATE app_settings SET value = '1' WHERE key = 'tray_close_notice_shown'",
+                [],
+            )?;
+            Ok(true)
+        }
+        "1" => Ok(false),
+        _ => Err(AppError::msg(
+            "The saved close-to-tray notice state is invalid.",
+        )),
+    }
+}
+
 pub(crate) fn read_task_queue_settings(db: &Connection) -> AppResult<TaskQueueSettings> {
     let mode: String = db.query_row(
         "SELECT value FROM app_settings WHERE key = 'task_queue_mode'",
@@ -432,6 +453,31 @@ pub fn settings_set_browser_code_review_prompt(app: AppHandle, id: String) -> Ap
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tray_close_notice_is_claimed_once() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO app_settings (key, value) VALUES ('tray_close_notice_shown', '0');",
+        )
+        .unwrap();
+
+        assert!(claim_tray_close_notice(&db).unwrap());
+        assert!(!claim_tray_close_notice(&db).unwrap());
+    }
+
+    #[test]
+    fn tray_close_notice_rejects_invalid_state() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO app_settings (key, value) VALUES ('tray_close_notice_shown', 'invalid');",
+        )
+        .unwrap();
+
+        assert!(claim_tray_close_notice(&db).is_err());
+    }
 
     #[test]
     fn launch_mode_roundtrips_and_rejects_invalid_values() {

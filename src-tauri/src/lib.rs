@@ -19,6 +19,8 @@ mod settings;
 mod system;
 mod tasks;
 mod terminal_sessions;
+#[cfg(desktop)]
+mod tray;
 mod worktrees;
 
 use std::sync::Mutex;
@@ -43,14 +45,12 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                if window.is_minimized().unwrap_or(false) {
-                    let _ = window.unminimize();
-                }
-                let _ = window.set_focus();
+            if let Err(error) = tray::show_main_window(app) {
+                eprintln!("failed to restore DevTrees from second-instance activation: {error}");
             }
         }));
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+        builder = builder.on_window_event(tray::handle_window_event);
     }
 
     builder
@@ -69,6 +69,8 @@ pub fn run() {
             app.manage(TerminalSessionMonitor::default());
             app.manage(terminal_sessions::AcpSessionManager::default());
             app.manage(copilot_acp_sessions::SessionManager::default());
+            #[cfg(desktop)]
+            tray::setup(app)?;
             // Restore native history; external status watches belong to this app run only.
             if let Err(e) = terminal_sessions::init(app.handle()) {
                 eprintln!("failed to restore terminal session watches: {e}");
@@ -166,6 +168,7 @@ pub fn run() {
             terminal_sessions::terminal_sessions_start,
             terminal_sessions::terminal_sessions_history,
             terminal_sessions::terminal_sessions_is_running,
+            terminal_sessions::terminal_sessions_focus,
             terminal_sessions::terminal_sessions_forget,
             copilot_acp_sessions::native_session_snapshot,
             copilot_acp_sessions::native_session_respond,

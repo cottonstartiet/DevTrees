@@ -13,6 +13,7 @@ import {
 import { toast } from 'sonner'
 
 import type { AppView } from '@/components/app-sidebar'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { cn } from '@/lib/utils'
 import { isTerminalSessionFinished } from '@shared/terminal-session'
@@ -91,24 +92,40 @@ function KeepAwakeButton({
   pending: boolean
   onToggle: () => void
 }): React.JSX.Element {
+  const tooltip = pending
+    ? 'Checking automatic sleep state'
+    : enabled
+      ? 'Automatic sleep is blocked until turned off or DevTrees exits'
+      : 'Prevent automatic sleep while DevTrees is open'
+
   return (
-    <button
-      type="button"
-      aria-label={`Keep computer awake: ${enabled ? 'on' : 'off'}`}
-      aria-pressed={enabled}
-      disabled={pending}
-      onClick={onToggle}
-      className={cn(
-        'flex w-14 flex-col items-center gap-0.5 rounded-md py-1.5 text-sidebar-foreground/65 transition-colors',
-        'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-        'focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-sidebar-ring/50',
-        'disabled:pointer-events-none disabled:opacity-50',
-        enabled && 'bg-sidebar-accent text-sidebar-accent-foreground'
-      )}
-    >
-      <CoffeeIcon className="size-5" />
-      <span className="max-w-full truncate text-[10px] leading-none font-medium">Awake</span>
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex w-14">
+          <button
+            type="button"
+            aria-label={`Prevent automatic computer sleep: ${enabled ? 'on' : 'off'}`}
+            aria-pressed={enabled}
+            aria-busy={pending}
+            disabled={pending}
+            onClick={onToggle}
+            className={cn(
+              'flex w-14 flex-col items-center gap-0.5 rounded-md py-1.5 text-sidebar-foreground/65 transition-colors',
+              'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+              'focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-sidebar-ring/50',
+              'disabled:pointer-events-none disabled:opacity-50',
+              enabled && 'bg-sidebar-accent text-sidebar-accent-foreground'
+            )}
+          >
+            <CoffeeIcon className="size-5" />
+            <span className="max-w-full truncate text-[10px] leading-none font-medium">Awake</span>
+          </button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={8}>
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

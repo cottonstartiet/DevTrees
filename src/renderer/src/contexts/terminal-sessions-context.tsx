@@ -32,6 +32,8 @@ export interface TerminalSessionsContextValue extends NativeSessionsContextValue
   observationNow: number
   select: (id: string | null, interactionId?: string) => void
   start: (req: StartTerminalSessionRequest, foreground?: boolean) => Promise<TerminalSession | null>
+  /** Bring a running external session's Windows Terminal window to the foreground. */
+  focusExternal: (id: string) => Promise<void>
   /** Stop mirroring and remove a session from the list. */
   forget: (id: string) => Promise<void>
 }
@@ -340,6 +342,13 @@ export function TerminalSessionsProvider({
     [forgetNative]
   )
 
+  const focusExternal = React.useCallback(async (id: string): Promise<void> => {
+    const result = await window.api.terminalSessions.focus(id)
+    if (!result.ok) {
+      toast.error(result.error ?? 'Could not focus the Copilot terminal.')
+    }
+  }, [])
+
   const sessions = React.useMemo(
     () =>
       Object.values(byId)
@@ -398,6 +407,7 @@ export function TerminalSessionsProvider({
       observationNow,
       select,
       start,
+      focusExternal,
       forget
     }),
     [
@@ -412,6 +422,7 @@ export function TerminalSessionsProvider({
       observationNow,
       select,
       start,
+      focusExternal,
       forget
     ]
   )
