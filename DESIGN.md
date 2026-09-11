@@ -11,7 +11,7 @@ colors:
   destructive: 'oklch(0.577 0.245 27.325)'
   dark-surface: 'oklch(0.2292 0.0304 259.0329)'
   dark-card: 'oklch(0.261 0.0307 254.7604)'
-  velocity-primary: 'oklch(0.5607 0.2181 266.5346)'
+  enterprise-primary: 'oklch(0.5565 0.2430 261.9529)'
 typography:
   title:
     fontFamily: "ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif"
@@ -83,11 +83,11 @@ the _data_ (branch names, statuses, diffs) is the loudest thing on screen.
 
 The system is built on shadcn/ui (new-york) with two selectable color themes,
 each supporting Light, Dark, and System modes. **Chalk** is the quiet default:
-blue-gray tonal surfaces with ink-like controls. **Velocity** keeps the same
-cool neutral discipline but introduces vivid blue for primary actions and
-selection. Color stays functional, with red reserved for destructive actions.
-Depth is conveyed through tonal layering (sidebar, cards, popovers sit at
-subtly different lightness), not shadows.
+blue-gray tonal surfaces with ink-like controls. **Enterprise** pairs a
+violet-blue action color with softer corners and more pronounced elevation.
+Color stays functional, with red reserved for destructive actions. Chalk uses
+tonal layering for depth; Enterprise combines tonal layers with controlled soft
+shadows.
 
 This system explicitly rejects **heavy-enterprise density-without-clarity**
 (Jira-style nested panels, modal mazes, config sprawl) and **consumer-chat
@@ -96,9 +96,9 @@ developer respects, not an app that entertains them.
 
 **Key Characteristics:**
 
-- Two restrained palettes: Chalk and Velocity, each coordinated across light and dark
-- Compact scale: 36px control height, 0.875rem body text, tight radii (6–10px)
-- Flat surfaces with tonal layering for depth; no drop-shadow theater
+- Two restrained palettes: Chalk and Enterprise, each coordinated across light and dark
+- Compact 36px controls and 0.875rem body text, with theme-specific corner treatment
+- Chalk uses flat tonal layering; Enterprise adds deliberate soft elevation
 - One semantic token contract across every palette/mode combination
 - 3px focus rings on every interactive element — keyboard-first
 
@@ -115,13 +115,14 @@ tuned independently for light and dark modes.
 - **Chalk Surface** (`oklch(0.9745 0.0079 253.8524)` light /
   `oklch(0.2292 0.0304 259.0329)` dark): A subtly blue-gray cockpit foundation.
 
-### Velocity
+### Enterprise
 
-- **Velocity Blue** (`oklch(0.5607 0.2181 266.5346)` in both modes): The vivid
-  accent for primary actions, focus, and active navigation.
-- **Velocity Surface** (`oklch(0.9713 0.0053 286.3006)` light /
-  `oklch(0.1921 0.004 286.0181)` dark): A cooler neutral base that lets state
-  and action color read quickly.
+- **Enterprise Blue** (`oklch(0.5565 0.2430 261.9529)` light /
+  `oklch(0.6449 0.2024 288.1131)` dark): The violet-blue accent for primary
+  actions, focus, and active navigation.
+- **Enterprise Surface** (`oklch(0.9946 0.0026 286.3519)` light /
+  `oklch(0.1457 0.0043 285.8570)` dark): A near-neutral foundation with
+  coordinated violet secondary and accent layers.
 
 ### Neutral
 
@@ -146,12 +147,15 @@ visualizations.
 
 ## 3. Typography
 
-**Body / UI Font:** System sans stack (`ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif`)
+**Body / UI Font:** Chalk uses the system sans stack
+(`ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif`). Enterprise
+requests Inter with a generic sans-serif fallback and also declares
+Merriweather and JetBrains Mono tokens for explicitly serif or code-oriented
+content.
 
-**Character:** No custom or display typeface. DevTrees uses the OS-native system
-font at compact sizes for a fast, developer-native feel that renders crisply in
-WebView2 on Windows. Hierarchy comes from **weight and size**, not from font
-pairing.
+**Character:** Product UI stays on the active theme's sans family at compact
+sizes for a fast, developer-native feel in WebView2. Hierarchy comes from
+**weight and size**, not decorative font pairing.
 
 ### Hierarchy
 
@@ -162,34 +166,40 @@ pairing.
 
 ### Named Rules
 
-**The Weight-Not-Family Rule.** Never introduce a second font family for
-emphasis. Distinguish hierarchy with weight (400 → 500 → 600) and the muted
-foreground color. No display serifs, no decorative type.
+**The Weight-Not-Family Rule.** Never switch font families merely for emphasis.
+Distinguish UI hierarchy with weight (400 → 500 → 600) and the muted foreground
+color. Serif is reserved for content that explicitly calls for it; mono is
+reserved for code, branches, commands, and terminal-oriented content.
 
 ## 4. Elevation
 
-DevTrees is **flat by default with tonal layering**. Depth is conveyed by
-stepping background lightness (base → sidebar → card → popover), not by casting
-shadows. The only shadow in the system is `shadow-xs` on buttons and inputs — a
-1px hairline that reads as a crisp edge, not a lift. Overlays (dialogs,
-dropdowns, tooltips) sit on the popover surface with a border, relying on a
-scrim rather than a large blurred shadow.
+DevTrees uses theme-specific elevation while preserving one semantic shadow
+scale. Chalk is **flat by default with tonal layering**: depth comes from
+stepping background lightness (base → sidebar → card → popover), with only a
+crisp control edge. Enterprise retains those tonal steps and adds soft,
+theme-defined shadows (15px blur in light mode, 25px in dark mode) for a more
+polished raised treatment.
 
 ### Shadow Vocabulary
 
-- **Control edge** (`box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05)` / `shadow-xs`): The sole resting shadow, on buttons and inputs. Reads as definition, not elevation.
+- **Control edge** (`box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05)` / `shadow-xs`): Chalk's resting shadow on buttons and inputs. Reads as definition, not elevation.
+- **Enterprise elevation** (`shadow-xs` through `shadow-2xl`): Soft neutral
+  shadows with a 4px light-mode or 10px dark-mode vertical offset. Use the
+  existing semantic shadow utility appropriate to the component; do not invent
+  one-off values.
 
 ### Named Rules
 
-**The Tonal-Depth Rule.** Layer surfaces by lightness, not by shadow. A raised
-element is one lightness step off its parent, bordered with a hairline — never
-floated on a soft drop-shadow.
+**The Theme-Depth Rule.** Always establish hierarchy with tonal layering first.
+Chalk stops at hairline definition; Enterprise may add its supplied semantic
+shadow after the tonal relationship is clear.
 
 ## 5. Components
 
 ### Buttons
 
-- **Shape:** `rounded-md` (8px), 36px default height (`h-9`), compact.
+- **Shape:** `rounded-md`, 36px default height (`h-9`), compact. Chalk resolves
+  to 8px; Enterprise resolves from its 1.4rem base radius.
 - **Primary:** Solid `primary` fill, `primary-foreground` text, `shadow-xs`. Hover drops to 90% opacity.
 - **Outline:** 1px border, transparent/surface background. Hover fills with `accent`.
 - **Ghost:** No border or fill at rest; hover fills with `accent`. Used for toolbar and icon actions.
@@ -211,7 +221,7 @@ floated on a soft drop-shadow.
 
 ### Dialogs / Popovers
 
-- **Surface:** `popover`/`card` tonal layer with 1px border, `rounded-lg` (10px).
+- **Surface:** `popover`/`card` tonal layer with 1px border and the active theme's `rounded-lg` radius.
 - **Overlay:** Scrim backdrop; content centered, no heavy shadow.
 
 ### Status Bar (signature)
@@ -270,10 +280,10 @@ runtime, changing Settings, and resuming. Pending requests do not transfer.
 
 ### Do:
 
-- **Do** keep controls compact: 36px height, `text-sm`, 6–10px radii.
-- **Do** convey depth with tonal layering (step background lightness), bordered with hairlines.
+- **Do** keep controls compact: 36px height and `text-sm`, with radii supplied by the active theme.
+- **Do** establish depth with tonal layering, then use only the active theme's semantic shadows.
 - **Do** reserve saturated color for action, selection, focus, and data; red is destructive only.
-- **Do** distinguish hierarchy with weight (400/500/600) and muted foreground, never a second font family.
+- **Do** distinguish UI hierarchy with weight (400/500/600) and muted foreground; reserve mono for developer content.
 - **Do** give every interactive element a visible 3px focus ring; the app is keyboard-first.
 - **Do** ensure body and placeholder text hit ≥4.5:1 across both themes and modes.
 
@@ -281,7 +291,7 @@ runtime, changing Settings, and resuming. Pending requests do not transfer.
 
 - **Don't** build heavy-enterprise density-without-clarity: no nested config panels, modal mazes, or Jira-style sprawl.
 - **Don't** drift toward consumer-chat softness: no oversized rounded bubbles, avatars, or playful decorative color.
-- **Don't** float surfaces on soft drop-shadows — use tonal layers and hairline borders.
+- **Don't** invent one-off shadows or use elevation without a clear tonal hierarchy.
 - **Don't** use theme accents decoratively or use red for anything but destructive/error states.
-- **Don't** add a display/serif font or gradient text; hierarchy is weight and size.
+- **Don't** use serif or mono as decorative UI emphasis, or use gradient text.
 - **Don't** use side-stripe `border-left` accents on cards or list items.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-07-09T18:45:22+05:30",
+  "generatedAt": "2026-09-10T13:00:32+05:30",
   "title": "Design System: DevTrees",
   "extensions": {
     "colorMeta": {
@@ -10,7 +10,7 @@
         "canonical": "oklch(0.2038 0.0264 260.9332)",
         "tonalRamp": [
           "oklch(0.2038 0.0264 260.9332)",
-          "oklch(0.5607 0.2181 266.5346)",
+          "oklch(0.5565 0.2430 261.9529)",
           "oklch(0.6503 0.022 257.4949)",
           "oklch(0.8993 0.0119 239.9205)"
         ]
@@ -56,10 +56,10 @@
           "lightPrimary": "oklch(0.2038 0.0264 260.9332)",
           "darkPrimary": "oklch(0.8993 0.0119 239.9205)"
         },
-        "velocity": {
-          "displayName": "Velocity",
-          "lightPrimary": "oklch(0.5607 0.2181 266.5346)",
-          "darkPrimary": "oklch(0.5607 0.2181 266.5346)"
+        "enterprise": {
+          "displayName": "Enterprise",
+          "lightPrimary": "oklch(0.5565 0.2430 261.9529)",
+          "darkPrimary": "oklch(0.6449 0.2024 288.1131)"
         }
       },
       "modes": ["light", "dark", "system"]
@@ -76,7 +76,12 @@
       {
         "name": "control-edge",
         "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
-        "purpose": "The sole resting shadow (shadow-xs) on buttons and inputs. Reads as a crisp edge, not a lift."
+        "purpose": "Chalk's resting shadow (shadow-xs) on buttons and inputs. Reads as a crisp edge, not a lift."
+      },
+      {
+        "name": "enterprise-elevation",
+        "value": "0 4px 15px rgb(0 0 0 / 0.15) light; 0 10px 25px rgb(0 0 0 / 0.15) dark",
+        "purpose": "Enterprise's semantic elevation foundation; use the existing shadow scale rather than one-off values."
       }
     ],
     "motion": [
@@ -129,11 +134,11 @@
   ],
   "narrative": {
     "northStar": "The Developer Cockpit",
-    "overview": "DevTrees is an instrument panel for parallel development. Every surface is a readout or a control: worktree lists, branch/PR status, session history, launch buttons. Information density is high but never chaotic; the developer scans it at a glance and reaches for the right control by reflex. Built on shadcn/ui (new-york) with selectable Chalk and Velocity palettes, each supporting light and dark modes, color stays functional and depth comes from tonal layering rather than shadows.",
+    "overview": "DevTrees is an instrument panel for parallel development. Every surface is a readout or a control: worktree lists, branch/PR status, session history, launch buttons. Information density is high but never chaotic; the developer scans it at a glance and reaches for the right control by reflex. Built on shadcn/ui (new-york) with selectable Chalk and Enterprise palettes, each supporting light and dark modes, color stays functional while elevation follows the active theme.",
     "keyCharacteristics": [
-      "Two restrained palettes: Chalk and Velocity, coordinated across light and dark",
-      "Compact scale: 36px controls, 0.875rem body text, tight 6-10px radii",
-      "Flat surfaces with tonal layering for depth; no drop-shadow theater",
+      "Two restrained palettes: Chalk and Enterprise, coordinated across light and dark",
+      "Compact 36px controls and 0.875rem body text with theme-specific radii",
+      "Chalk uses flat tonal layering; Enterprise adds deliberate soft elevation",
       "One semantic token contract across every palette and mode",
       "3px focus rings on every interactive element; keyboard-first"
     ],
@@ -145,29 +150,29 @@
       },
       {
         "name": "The Weight-Not-Family Rule",
-        "body": "Distinguish hierarchy with weight (400/500/600) and muted foreground, never a second font family.",
+        "body": "Distinguish UI hierarchy with weight (400/500/600) and muted foreground; reserve mono for developer content and serif for explicitly styled content.",
         "section": "typography"
       },
       {
-        "name": "The Tonal-Depth Rule",
-        "body": "Layer surfaces by lightness bordered with hairlines, never float on soft drop-shadows.",
+        "name": "The Theme-Depth Rule",
+        "body": "Establish hierarchy with tonal layering first, then apply only the active theme's semantic shadow scale.",
         "section": "elevation"
       }
     ],
     "dos": [
-      "Do keep controls compact: 36px height, text-sm, 6-10px radii.",
-      "Do convey depth with tonal layering, bordered with hairlines.",
+      "Do keep controls compact: 36px height and text-sm, with theme-defined radii.",
+      "Do establish depth with tonal layering, then use the active theme's semantic shadows.",
       "Do reserve saturated color for state (red for destructive only).",
-      "Do distinguish hierarchy with weight and muted foreground, never a second font family.",
+      "Do distinguish UI hierarchy with weight and muted foreground; reserve mono for developer content.",
       "Do give every interactive element a visible 3px focus ring.",
       "Do ensure body and placeholder text hit at least 4.5:1 across both themes and modes."
     ],
     "donts": [
       "Don't build heavy-enterprise density-without-clarity: no nested config panels, modal mazes, or Jira-style sprawl.",
       "Don't drift toward consumer-chat softness: no oversized rounded bubbles, avatars, or playful decorative color.",
-      "Don't float surfaces on soft drop-shadows; use tonal layers and hairline borders.",
+      "Don't invent one-off shadows or use elevation without clear tonal hierarchy.",
       "Don't use theme accents decoratively or use red for anything but destructive and error states.",
-      "Don't add a display/serif font or gradient text; hierarchy is weight and size.",
+      "Don't use serif or mono as decorative UI emphasis, or use gradient text.",
       "Don't use side-stripe border-left accents on cards or list items."
     ]
   }

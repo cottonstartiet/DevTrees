@@ -47,7 +47,11 @@ const COLOR_THEME_OPTIONS: ReadonlyArray<{
   description: string
 }> = [
   { value: 'chalk', label: 'Chalk', description: 'Quiet blue-gray surfaces with ink controls.' },
-  { value: 'velocity', label: 'Velocity', description: 'Cool neutral surfaces with vivid blue.' }
+  {
+    value: 'enterprise',
+    label: 'Enterprise',
+    description: 'Polished violet-blue surfaces with softer depth.'
+  }
 ]
 
 type ThemePreviewColors = {
@@ -75,18 +79,18 @@ const COLOR_THEME_PREVIEWS: Record<
       border: 'oklch(0.3299 0.0322 257.6775)'
     }
   },
-  velocity: {
+  enterprise: {
     light: {
-      background: 'oklch(0.9713 0.0053 286.3006)',
-      sidebar: 'oklch(1 0 0)',
-      primary: 'oklch(0.5607 0.2181 266.5346)',
-      border: 'oklch(0.8947 0.0149 286.0941)'
+      background: 'oklch(0.9946 0.0026 286.3519)',
+      sidebar: 'oklch(0.9946 0.0026 286.3519)',
+      primary: 'oklch(0.5565 0.243 261.9529)',
+      border: 'oklch(0.9163 0.0162 286.0759)'
     },
     dark: {
-      background: 'oklch(0.1921 0.004 286.0181)',
-      sidebar: 'oklch(0.2099 0.0039 286.0588)',
-      primary: 'oklch(0.5607 0.2181 266.5346)',
-      border: 'oklch(0.249 0.0056 285.9851)'
+      background: 'oklch(0.1457 0.0043 285.857)',
+      sidebar: 'oklch(0.1795 0.0082 285.5496)',
+      primary: 'oklch(0.6449 0.2024 288.1131)',
+      border: 'oklch(0.2897 0.0199 285.0881)'
     }
   }
 }

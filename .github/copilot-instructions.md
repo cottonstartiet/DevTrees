@@ -8,7 +8,7 @@ This project has captured design context for frontend/UI work:
   (`desktop`, with an embedded React/WebView2 renderer), target users, product purpose, brand personality
   (_fast, developer-native, AI-forward_), anti-references, and design principles.
 - **DESIGN.md** (root) — the visual system: OKLCH color tokens, two selectable
-  themes (Chalk / Velocity) with light and dark modes, typography, flat + tonal-layering elevation, and
+  themes (Chalk / Enterprise) with light and dark modes, typography, theme-specific elevation, and
   component specs. North Star: **"The Developer Cockpit."**
 - **.impeccable/design.json** — machine-readable sidecar (tonal ramps, motion,
   drop-in component snippets) extending DESIGN.md.

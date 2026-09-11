@@ -3,7 +3,7 @@ import * as React from 'react'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
-export type ColorTheme = 'chalk' | 'velocity'
+export type ColorTheme = 'chalk' | 'enterprise'
 
 export const THEME_STORAGE_KEY = 'devtrees-theme'
 export const COLOR_THEME_STORAGE_KEY = 'devtrees-color-theme'
@@ -16,7 +16,7 @@ function isTheme(value: unknown): value is Theme {
 }
 
 function isColorTheme(value: unknown): value is ColorTheme {
-  return value === 'chalk' || value === 'velocity'
+  return value === 'chalk' || value === 'enterprise'
 }
 
 export function getStoredTheme(): Theme {
@@ -33,6 +33,14 @@ export function getStoredColorTheme(): ColorTheme {
   try {
     const stored = window.localStorage.getItem(COLOR_THEME_STORAGE_KEY)
     if (isColorTheme(stored)) return stored
+    if (stored === 'velocity') {
+      try {
+        window.localStorage.setItem(COLOR_THEME_STORAGE_KEY, 'enterprise')
+      } catch {
+        // The migrated value still applies for this session if persistence is unavailable.
+      }
+      return 'enterprise'
+    }
   } catch {
     // localStorage may be unavailable (private mode / disabled). Fall back below.
   }

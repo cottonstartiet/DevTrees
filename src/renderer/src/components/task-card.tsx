@@ -130,19 +130,6 @@ export function TaskCard({
         </div>
       ) : task.status === 'in_progress' || task.status === 'review' ? (
         <div className="mt-1 flex flex-wrap gap-2">
-          {task.status === 'in_progress' && session ? (
-            <Button
-              type="button"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenSession(session)
-              }}
-            >
-              Open
-              <ChevronRightIcon />
-            </Button>
-          ) : null}
           {task.status === 'in_progress' && canReview ? (
             <Button
               type="button"
@@ -167,6 +154,19 @@ export function TaskCard({
           >
             Done
           </Button>
+          {task.status === 'in_progress' && session ? (
+            <Button
+              type="button"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenSession(session)
+              }}
+            >
+              Session
+              <ChevronRightIcon />
+            </Button>
+          ) : null}
         </div>
       ) : task.status === 'done' ? (
         <div className="mt-1 flex">
