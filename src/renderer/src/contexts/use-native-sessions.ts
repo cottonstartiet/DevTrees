@@ -1,11 +1,13 @@
 import * as React from 'react'
 import {
   acceptNativeSnapshot,
+  mergeNativeSnapshot,
   nativeKey,
   rekeyNativeState,
   type NativeAnswer,
   type NativeDraft,
   type NativeSnapshot,
+  type NativeSnapshotUpdate,
   type PlanTransitionAction,
   type PromptContent
 } from '@shared/native-session'
@@ -43,19 +45,22 @@ export function useNativeSessions(
   const submitting = React.useRef(new Set<string>())
   const promptSubmissions = React.useRef(new Map<string, { fingerprint: string; id: string }>())
   const ignored = React.useRef(new Set<string>())
+  const refreshing = React.useRef(new Map<string, Promise<void>>())
   React.useEffect(() => {
     known.current = sessions
   }, [sessions])
 
   const apply = React.useCallback(
-    (snapshot: NativeSnapshot): void => {
-      const id = snapshot.session.id
+    (incoming: NativeSnapshotUpdate): boolean => {
+      const id = incoming.session.id
       if (
         ignored.current.has(id) ||
-        !acceptNativeSnapshot(snapshot, snapshots.current[id], known.current[id])
+        !acceptNativeSnapshot(incoming, snapshots.current[id], known.current[id])
       )
-        return
+        return true
       const previous = snapshots.current[id]
+      const snapshot = mergeNativeSnapshot(incoming, previous)
+      if (!snapshot) return false
       if (
         snapshot.replacesId &&
         snapshot.replacesId !== id &&
@@ -80,21 +85,30 @@ export function useNativeSessions(
           onInteraction(snapshot.session, request.id, request.message)
         }
       }
+      return true
     },
     [ingest, onInteraction, onRekey]
   )
 
   const refreshNative = React.useCallback(
-    async (session: TerminalSession): Promise<void> => {
+    (session: TerminalSession): Promise<void> => {
       const key = nativeKey(session, 'connection')
-      try {
-        const snapshot = await window.api.nativeSessions.snapshot(target(session))
-        apply(snapshot)
-        setNativeErrors((current) => (current[key] ? { ...current, [key]: undefined } : current))
-      } catch (error) {
-        setNativeErrors((current) => ({ ...current, [key]: nativeError(error) }))
-        throw error
-      }
+      const pending = refreshing.current.get(key)
+      if (pending) return pending
+      const request = Promise.resolve().then(async () => {
+        try {
+          const snapshot = await window.api.nativeSessions.snapshot(target(session))
+          apply(snapshot)
+          setNativeErrors((current) => (current[key] ? { ...current, [key]: undefined } : current))
+        } catch (error) {
+          setNativeErrors((current) => ({ ...current, [key]: nativeError(error) }))
+          throw error
+        } finally {
+          refreshing.current.delete(key)
+        }
+      })
+      refreshing.current.set(key, request)
+      return request
     },
     [apply]
   )
@@ -104,7 +118,11 @@ export function useNativeSessions(
     let stop = (): void => {}
     void window.api.nativeSessions
       .onUpdate((snapshot) => {
-        if (active) apply(snapshot)
+        if (active && !apply(snapshot)) {
+          void refreshNative(snapshot.session).catch((error) => {
+            console.error('[native sessions] recovering missing updates:', error)
+          })
+        }
       })
       .then(async (unsubscribe) => {
         if (!active) {

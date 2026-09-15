@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Attention {
     pending: Vec<(String, &'static str, String)>,
     uncorrelated: u64,

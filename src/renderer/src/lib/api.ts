@@ -24,6 +24,7 @@ import type {
 import type {
   NativeAnswer,
   NativeSnapshot,
+  NativeSnapshotUpdate,
   PlanTransitionAction,
   PromptContent
 } from '@shared/native-session'
@@ -468,8 +469,8 @@ const api = {
       invoke('acp_session_reopen_plan_transition', { target }),
     cancel: (target: TerminalTarget): Promise<void> => invoke('native_session_cancel', { target }),
     end: (target: TerminalTarget): Promise<void> => invoke('native_session_end', { target }),
-    onUpdate: (cb: (snapshot: NativeSnapshot) => void): Promise<() => void> =>
-      listen<NativeSnapshot>('native-sessions:update', (event) => cb(event.payload))
+    onUpdate: (cb: (snapshot: NativeSnapshotUpdate) => void): Promise<() => void> =>
+      listen<NativeSnapshotUpdate>('native-sessions:update', (event) => cb(event.payload))
   },
   terminalSessions: {
     list: (): Promise<TerminalSession[]> => invoke('terminal_sessions_list'),

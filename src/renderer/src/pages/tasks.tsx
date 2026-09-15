@@ -15,6 +15,7 @@ import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import type { BrowserCodeReviewDraft } from '@/lib/deep-links'
+import { openTaskSession } from '@/lib/task-session-routing'
 import { cn } from '@/lib/utils'
 import type { Repository } from '@shared/repository'
 import type { TaskQueueMode } from '@shared/settings'
@@ -140,7 +141,7 @@ export function TasksPage({
   onNavigateToSessions
 }: TasksPageProps): React.JSX.Element {
   const { tasks, tasksByStatus, createTask, updateTask, deleteTask } = useTaskBoard()
-  const { sessions, byId: sessionsById, select } = useTerminalSessions()
+  const { sessions, byId: sessionsById, select, focusExternal } = useTerminalSessions()
   const startingTaskIdsRef = React.useRef(new Set<string>())
   const [startingTaskIds, setStartingTaskIds] = React.useState<ReadonlySet<string>>(() => new Set())
   const sessionByTaskId = React.useMemo(() => {
@@ -166,10 +167,13 @@ export function TasksPage({
 
   const handleOpenSession = React.useCallback(
     (session: TerminalSession): void => {
-      select(session.id)
-      onNavigateToSessions()
+      openTaskSession(session, {
+        select,
+        navigate: onNavigateToSessions,
+        focusExternal
+      })
     },
-    [onNavigateToSessions, select]
+    [focusExternal, onNavigateToSessions, select]
   )
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }))

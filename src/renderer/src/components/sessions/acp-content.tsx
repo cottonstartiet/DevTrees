@@ -1,3 +1,4 @@
+import * as React from 'react'
 import { MarkdownBody } from '@/components/pr-review/markdown-body'
 
 function object(value: unknown): Record<string, unknown> {
@@ -68,25 +69,27 @@ export function AcpContent({ value }: { value: unknown }) {
 }
 
 export function AcpEntry({ category, data }: { category: string; data: unknown }) {
+  const [expanded, setExpanded] = React.useState(false)
   const value = object(data)
   if (category === 'tool') {
     return (
-      <details className="space-y-2">
+      <details className="space-y-2" onToggle={(event) => setExpanded(event.currentTarget.open)}>
         <summary className="cursor-pointer text-sm font-medium">
           {String(value.title ?? 'Tool')}{' '}
           <span className="text-muted-foreground text-xs">{String(value.status ?? 'pending')}</span>
         </summary>
-        {value.rawInput != null && (
+        {expanded && value.rawInput != null && (
           <pre className="bg-muted max-h-48 overflow-auto rounded p-2 text-xs">
             {JSON.stringify(value.rawInput, null, 2)}
           </pre>
         )}
-        {value.rawOutput != null && (
+        {expanded && value.rawOutput != null && (
           <pre className="bg-muted max-h-64 overflow-auto rounded p-2 text-xs">
             {JSON.stringify(value.rawOutput, null, 2)}
           </pre>
         )}
-        {Array.isArray(value.content) &&
+        {expanded &&
+          Array.isArray(value.content) &&
           value.content.map((item, index) => <AcpContent key={index} value={item} />)}
       </details>
     )
@@ -110,9 +113,9 @@ export function AcpEntry({ category, data }: { category: string; data: unknown }
   }
   if (category === 'agent_thought_chunk') {
     return (
-      <details>
+      <details onToggle={(event) => setExpanded(event.currentTarget.open)}>
         <summary className="cursor-pointer text-xs">Reasoning</summary>
-        <AcpContent value={data} />
+        {expanded && <AcpContent value={data} />}
       </details>
     )
   }

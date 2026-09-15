@@ -1,6 +1,6 @@
 import * as React from 'react'
 
-import { DiffView } from '@/components/pr-review/diff-view'
+import { DiffView, type DiffLayout } from '@/components/pr-review/diff-view'
 import { FileTree } from '@/components/pr-review/file-tree'
 import { MarkdownPreview } from '@/components/pr-review/markdown-preview'
 import { MermaidViewer } from '@/components/pr-review/mermaid-viewer'
@@ -17,6 +17,11 @@ const VIEW_MODES: { key: ViewMode; label: string }[] = [
   { key: 'diff', label: 'Diff' },
   { key: 'preview', label: 'Preview' },
   { key: 'raw', label: 'Raw' }
+]
+
+const DIFF_LAYOUTS: { key: DiffLayout; label: string }[] = [
+  { key: 'inline', label: 'Inline' },
+  { key: 'split', label: 'Side by side' }
 ]
 
 export type ReviewCommentCapabilities = {
@@ -67,6 +72,7 @@ function ReviewWorkspaceContent({
 }: ReviewWorkspaceProps): React.JSX.Element {
   const [explicitPath, setExplicitPath] = React.useState<string | null>(null)
   const [viewMode, setViewMode] = React.useState<ViewMode>('diff')
+  const [diffLayout, setDiffLayout] = React.useState<DiffLayout>('inline')
   const { isOpen: isDiagramOpen } = useMermaidZoom()
 
   const selectedPath =
@@ -190,6 +196,31 @@ function ReviewWorkspaceContent({
             >
               {selectedPath ?? 'No file selected'}
             </span>
+            {selectedFile?.isBinary !== true && selectedPath ? (
+              <div
+                className="flex items-center rounded-md border p-0.5"
+                role="group"
+                aria-label="Diff layout"
+              >
+                {DIFF_LAYOUTS.map((layout) => (
+                  <button
+                    key={layout.key}
+                    type="button"
+                    onClick={() => setDiffLayout(layout.key)}
+                    aria-pressed={diffLayout === layout.key}
+                    disabled={effectiveMode !== 'diff'}
+                    className={cn(
+                      'rounded px-2 py-0.5 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                      diffLayout === layout.key
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                    )}
+                  >
+                    {layout.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {isMarkdown ? (
               <div
                 className="flex items-center rounded-md border p-0.5"
@@ -225,6 +256,7 @@ function ReviewWorkspaceContent({
               <DiffView
                 key={selectedPath}
                 path={selectedPath}
+                layout={diffLayout}
                 diff={diffEntry.data}
                 error={diffEntry.error}
                 isLoading={diffEntry.isLoading}

@@ -86,7 +86,7 @@ fn run_az_blocking(args: &[String]) -> Result<AzOutput, AzError> {
 
     configure_no_window(&mut cmd);
 
-    let output = match cmd.output() {
+    let output = match crate::command::output(&mut cmd) {
         Ok(output) => output,
         Err(err) => {
             #[cfg(not(windows))]

@@ -31,7 +31,10 @@ export interface TerminalSessionsContextValue extends NativeSessionsContextValue
   selectionRevision: number
   observationNow: number
   select: (id: string | null, interactionId?: string) => void
-  start: (req: StartTerminalSessionRequest, foreground?: boolean) => Promise<TerminalSession | null>
+  start: (
+    req: StartTerminalSessionRequest,
+    presentation?: { select?: boolean; navigate?: boolean }
+  ) => Promise<TerminalSession | null>
   /** Bring a running external session's Windows Terminal window to the foreground. */
   focusExternal: (id: string) => Promise<void>
   /** Stop mirroring and remove a session from the list. */
@@ -142,7 +145,7 @@ export function TerminalSessionsProvider({
   const ingest = React.useCallback(
     (session: TerminalSession, notify: boolean): void => {
       if (forgottenRef.current.has(session.id)) return
-      if ((revisionsRef.current[session.id] ?? -1) > session.revision) return
+      if ((revisionsRef.current[session.id] ?? -1) >= session.revision) return
       revisionsRef.current[session.id] = session.revision
       const previous = statusRef.current[session.id]
       statusRef.current[session.id] = session.status
@@ -292,7 +295,7 @@ export function TerminalSessionsProvider({
   const start = React.useCallback(
     async (
       req: StartTerminalSessionRequest,
-      foreground = true
+      presentation: { select?: boolean; navigate?: boolean } = {}
     ): Promise<TerminalSession | null> => {
       if (req.resumeSessionId) {
         forgottenRef.current.delete(req.resumeSessionId)
@@ -310,10 +313,8 @@ export function TerminalSessionsProvider({
         clearLocalDetails(result.session.id)
       }
       ingest(result.session, false)
-      if (foreground) {
-        select(result.session.id)
-        navigateRef.current?.()
-      }
+      if (presentation.select !== false) select(result.session.id)
+      if (presentation.navigate !== false) navigateRef.current?.()
       return result.session
     },
     [ingest, select, registerNative, forgetNative, clearLocalDetails]

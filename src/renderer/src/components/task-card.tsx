@@ -1,13 +1,7 @@
 import * as React from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import {
-  ChevronRightIcon,
-  FolderGit2Icon,
-  GitBranchIcon,
-  LoaderCircleIcon,
-  PlayIcon
-} from 'lucide-react'
+import { FolderGit2Icon, GitBranchIcon, LoaderCircleIcon, PlayIcon } from 'lucide-react'
 
 import { TerminalSessionStatusBadge } from '@/components/sessions/terminal-session-status-badge'
 import { Button } from '@/components/ui/button'
@@ -67,7 +61,13 @@ export function TaskCard({
       style={style}
       {...attributes}
       {...listeners}
-      onClick={() => onOpen(task)}
+      onClick={() => {
+        if (task.status === 'in_progress' && session) {
+          onOpenSession(session)
+          return
+        }
+        onOpen(task)
+      }}
       className={cn(
         'bg-card flex cursor-pointer flex-col gap-2 rounded-md border p-3 text-left shadow-xs transition-colors',
         'hover:bg-accent/50',
@@ -154,19 +154,6 @@ export function TaskCard({
           >
             Done
           </Button>
-          {task.status === 'in_progress' && session ? (
-            <Button
-              type="button"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation()
-                onOpenSession(session)
-              }}
-            >
-              Session
-              <ChevronRightIcon />
-            </Button>
-          ) : null}
         </div>
       ) : task.status === 'done' ? (
         <div className="mt-1 flex">

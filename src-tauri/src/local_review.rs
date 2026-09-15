@@ -126,8 +126,7 @@ fn command_output(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    let output = command
-        .output()
+    let output = crate::command::output(&mut command)
         .map_err(|error| format!("Failed to run Git: {error}"))?;
     if output.status.success() {
         Ok(output.stdout)

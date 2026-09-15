@@ -1,6 +1,32 @@
 use super::*;
 
 #[test]
+fn session_setup_deadline_preserves_errors_and_bounds_unanswered_requests() {
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        assert_eq!(
+            setup_request(async { Ok(42) }, Duration::from_secs(1))
+                .await
+                .unwrap(),
+            42
+        );
+        let error = setup_request(
+            std::future::pending::<Result<(), acp::Error>>(),
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        let error = setup_request(
+            async { Err::<(), _>(protocol_error("agent refused setup")) },
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("agent refused setup"));
+    });
+}
+
+#[test]
 fn acp_exact_permission_options_reject_invented_grants() {
     let request = InteractionRequest::AcpPermission {
         message: "Read file?".into(),

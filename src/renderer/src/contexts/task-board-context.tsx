@@ -10,6 +10,7 @@ import {
   setTaskQueueStatus,
   updateTask
 } from '@/lib/tasks'
+import { moveTaskOptimistically, reconcileTaskList } from '@/lib/task-state'
 import type {
   CreateTaskRequest,
   Task,
@@ -33,7 +34,12 @@ export interface TaskBoardContextValue {
   loading: boolean
   createTask: (req: CreateTaskRequest) => Promise<Task | null>
   updateTask: (req: UpdateTaskRequest) => Promise<Task | null>
-  moveTask: (id: string, status: TaskStatus, beforeId?: string | null) => Promise<void>
+  moveTask: (
+    id: string,
+    status: TaskStatus,
+    beforeId?: string | null,
+    prepare?: () => Promise<void>
+  ) => Promise<void>
   deleteTask: (id: string) => Promise<boolean>
   setTaskQueueStatus: (id: string, queueStatus: TaskQueueStatus) => Promise<Task | null>
   setTaskLocal: (task: Task) => void
@@ -66,22 +72,57 @@ function errorMessage(error: unknown, fallback: string): string {
 export function TaskBoardProvider({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [tasks, setTasks] = React.useState<Task[]>([])
   const [loading, setLoading] = React.useState(true)
-  const moveSeqRef = React.useRef(0)
+  const [moves, setMoves] = React.useState<
+    { token: number; id: string; status: TaskStatus; beforeId?: string | null }[]
+  >([])
+  const nextMove = React.useRef(0)
+  const currentTasks = React.useRef(tasks)
+  const revision = React.useRef(0)
+  const changedAt = React.useRef(new Map<string, number>())
+  const mutationTail = React.useRef<Promise<unknown>>(Promise.resolve())
+
+  const writeTasks = React.useCallback((next: Task[]): void => {
+    const before = new Map(currentTasks.current.map((task) => [task.id, task]))
+    const after = new Map(next.map((task) => [task.id, task]))
+    const version = ++revision.current
+    for (const id of new Set([...before.keys(), ...after.keys()])) {
+      if (before.get(id) !== after.get(id)) changedAt.current.set(id, version)
+    }
+    currentTasks.current = next
+    setTasks(next)
+  }, [])
+
+  const applyResponse = React.useCallback(
+    (incoming: Task[], startedAt: { revision: number; tasks: Task[] }, complete = false): void => {
+      const protectedIds = new Set(
+        [...changedAt.current]
+          .filter(([, version]) => version > startedAt.revision)
+          .map(([id]) => id)
+      )
+      writeTasks(
+        reconcileTaskList(currentTasks.current, incoming, protectedIds, complete, startedAt.tasks)
+      )
+    },
+    [writeTasks]
+  )
+
+  const mutate = React.useCallback(<T,>(operation: () => Promise<T>): Promise<T> => {
+    const request = mutationTail.current.then(operation)
+    // The caller handles failure; a failed write must not poison subsequent writes.
+    mutationTail.current = request.then(
+      () => undefined,
+      () => undefined
+    )
+    return request
+  }, [])
 
   React.useEffect(() => {
     let active = true
+    const startedAt = { revision: revision.current, tasks: currentTasks.current }
     listTasks()
       .then((list) => {
         if (!active) return
-        // Merge rather than replace: a task created/updated locally while this initial
-        // fetch was in flight would otherwise be wiped out by the (now-stale) response.
-        setTasks((prev) => {
-          const byId = new Map(list.map((t) => [t.id, t]))
-          for (const t of prev) {
-            if (!byId.has(t.id)) byId.set(t.id, t)
-          }
-          return Array.from(byId.values())
-        })
+        applyResponse(list, startedAt, true)
       })
       .catch((error) => {
         if (active) toast.error(errorMessage(error, 'Could not load tasks.'))
@@ -92,125 +133,147 @@ export function TaskBoardProvider({ children }: { children: React.ReactNode }): 
     return () => {
       active = false
     }
-  }, [])
+  }, [applyResponse])
 
   const handleCreateTask = React.useCallback(
     async (req: CreateTaskRequest): Promise<Task | null> => {
       try {
-        const res = await createTask(req)
+        const res = await mutate(async () => {
+          const startedAt = { revision: revision.current, tasks: currentTasks.current }
+          const result = await createTask(req)
+          if (result.ok) applyResponse([result.task], startedAt)
+          return result
+        })
         if (!res.ok) {
           toast.error(res.message ?? 'Could not create task.')
           return null
         }
-        setTasks((prev) => [...prev, res.task])
         return res.task
       } catch (error) {
         toast.error(errorMessage(error, 'Could not create task.'))
         return null
       }
     },
-    []
+    [applyResponse, mutate]
   )
 
   const handleUpdateTask = React.useCallback(
     async (req: UpdateTaskRequest): Promise<Task | null> => {
       try {
-        const res = await updateTask(req)
+        const res = await mutate(async () => {
+          const startedAt = { revision: revision.current, tasks: currentTasks.current }
+          const result = await updateTask(req)
+          if (result.ok) applyResponse([result.task], startedAt)
+          return result
+        })
         if (!res.ok) {
           toast.error(res.message ?? 'Could not update task.')
           return null
         }
-        setTasks((prev) => prev.map((t) => (t.id === res.task.id ? res.task : t)))
         return res.task
       } catch (error) {
         toast.error(errorMessage(error, 'Could not update task.'))
         return null
       }
     },
-    []
+    [applyResponse, mutate]
   )
 
   const handleMoveTask = React.useCallback(
-    async (id: string, status: TaskStatus, beforeId?: string | null): Promise<void> => {
-      const seq = ++moveSeqRef.current
-      const previous = tasks
-      // Optimistic update so drag-and-drop feels immediate; rolled back on failure.
-      setTasks((prev) => {
-        const target = prev.find((t) => t.id === id)
-        if (!target) return prev
-        const rest = prev.filter((t) => t.id !== id)
-        const destIds = rest.filter((t) => t.status === status)
-        const insertIndex = beforeId != null ? destIds.findIndex((t) => t.id === beforeId) : -1
-        const moved: Task = { ...target, status }
-        if (insertIndex < 0) {
-          return [...rest, moved]
-        }
-        const before = destIds[insertIndex]
-        const idx = rest.findIndex((t) => t.id === before.id)
-        return [...rest.slice(0, idx), moved, ...rest.slice(idx)]
-      })
+    async (
+      id: string,
+      status: TaskStatus,
+      beforeId?: string | null,
+      prepare?: () => Promise<void>
+    ): Promise<void> => {
+      const token = ++nextMove.current
+      setMoves((current) => [...current, { token, id, status, beforeId }])
       try {
-        const res = await moveTask({ id, status, beforeId })
-        // Ignore stale responses: if a newer move has started since this one was issued,
-        // applying this result (success or failure) would clobber the newer optimistic
-        // state or a more recent server response.
-        if (seq !== moveSeqRef.current) return
+        await prepare?.()
+        const res = await mutate(async () => {
+          const startedAt = { revision: revision.current, tasks: currentTasks.current }
+          const result = await moveTask({ id, status, beforeId })
+          if (result.ok) applyResponse(result.tasks, startedAt, true)
+          return result
+        })
         if (!res.ok) {
           toast.error(res.message ?? 'Could not move task.')
-          setTasks(previous)
-          return
         }
-        setTasks(res.tasks)
       } catch (error) {
-        if (seq !== moveSeqRef.current) return
         toast.error(errorMessage(error, 'Could not move task.'))
-        setTasks(previous)
+      } finally {
+        setMoves((current) => current.filter((move) => move.token !== token))
       }
     },
-    [tasks]
+    [applyResponse, mutate]
   )
 
-  const handleDeleteTask = React.useCallback(async (id: string): Promise<boolean> => {
-    try {
-      const res = await deleteTask({ id })
-      if (!res.ok) {
-        toast.error(res.message ?? 'Could not delete task.')
+  const handleDeleteTask = React.useCallback(
+    async (id: string): Promise<boolean> => {
+      try {
+        const res = await mutate(async () => {
+          const result = await deleteTask({ id })
+          if (result.ok) {
+            changedAt.current.set(id, ++revision.current)
+            writeTasks(currentTasks.current.filter((task) => task.id !== id))
+          }
+          return result
+        })
+        if (!res.ok) {
+          toast.error(res.message ?? 'Could not delete task.')
+          return false
+        }
+        return true
+      } catch (error) {
+        toast.error(errorMessage(error, 'Could not delete task.'))
         return false
       }
-      setTasks((prev) => prev.filter((t) => t.id !== id))
-      return true
-    } catch (error) {
-      toast.error(errorMessage(error, 'Could not delete task.'))
-      return false
-    }
-  }, [])
+    },
+    [mutate, writeTasks]
+  )
 
   const handleSetTaskQueueStatus = React.useCallback(
     async (id: string, queueStatus: TaskQueueStatus): Promise<Task | null> => {
       try {
-        const res = await setTaskQueueStatus({ id, queueStatus })
+        const res = await mutate(async () => {
+          const startedAt = { revision: revision.current, tasks: currentTasks.current }
+          const result = await setTaskQueueStatus({ id, queueStatus })
+          if (result.ok) applyResponse([result.task], startedAt)
+          return result
+        })
         if (!res.ok) {
           toast.error(res.message ?? 'Could not update the task queue.')
           return null
         }
-        setTasks((prev) => prev.map((task) => (task.id === res.task.id ? res.task : task)))
         return res.task
       } catch (error) {
         toast.error(errorMessage(error, 'Could not update the task queue.'))
         return null
       }
     },
-    []
+    [applyResponse, mutate]
   )
 
-  const setTaskLocal = React.useCallback((task: Task): void => {
-    setTasks((prev) => prev.map((t) => (t.id === task.id ? task : t)))
-  }, [])
+  const setTaskLocal = React.useCallback(
+    (task: Task): void => {
+      writeTasks(currentTasks.current.map((current) => (current.id === task.id ? task : current)))
+    },
+    [writeTasks]
+  )
+
+  const visibleTasks = React.useMemo(
+    () =>
+      moves.reduce(
+        (current, move) => moveTaskOptimistically(current, move.id, move.status, move.beforeId),
+        tasks
+      ),
+    [tasks, moves]
+  )
 
   const value = React.useMemo<TaskBoardContextValue>(
     () => ({
-      tasks,
-      tasksByStatus: groupByStatus(tasks),
+      tasks: visibleTasks,
+      tasksByStatus: groupByStatus(visibleTasks),
       loading,
       createTask: handleCreateTask,
       updateTask: handleUpdateTask,
@@ -220,7 +283,7 @@ export function TaskBoardProvider({ children }: { children: React.ReactNode }): 
       setTaskLocal
     }),
     [
-      tasks,
+      visibleTasks,
       loading,
       handleCreateTask,
       handleUpdateTask,

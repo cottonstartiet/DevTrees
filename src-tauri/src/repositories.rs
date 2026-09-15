@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use regex::Regex;
 use rusqlite::Connection;
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::db::DbState;
@@ -246,15 +246,13 @@ fn is_unique_violation(err: &rusqlite::Error) -> bool {
 // ----- Tauri commands -----
 
 #[tauri::command]
-pub async fn repositories_list(state: State<'_, DbState>) -> AppResult<Vec<Repository>> {
-    load_repositories(&state)
+pub async fn repositories_list(app: AppHandle) -> AppResult<Vec<Repository>> {
+    tauri::async_runtime::spawn_blocking(move || load_repositories(&app.state::<DbState>()))
+        .await
+        .map_err(|error| AppError::msg(format!("Repository loading failed: {error}")))?
 }
 
-#[tauri::command]
-pub async fn repositories_remove(
-    state: State<'_, DbState>,
-    id: String,
-) -> AppResult<Vec<Repository>> {
+fn remove_repository(state: State<'_, DbState>, id: String) -> AppResult<Vec<Repository>> {
     {
         let conn = state
             .0
@@ -265,8 +263,7 @@ pub async fn repositories_remove(
     load_repositories(&state)
 }
 
-#[tauri::command]
-pub async fn repositories_reorder(
+fn reorder_repositories(
     state: State<'_, DbState>,
     ordered_ids: Vec<String>,
 ) -> AppResult<Vec<Repository>> {
@@ -311,12 +308,13 @@ pub async fn repositories_reorder(
 }
 
 #[tauri::command]
-pub async fn repositories_pick_and_add(
-    app: AppHandle,
-    state: State<'_, DbState>,
-) -> AppResult<AddRepositoryResult> {
-    // The blocking folder picker dispatches the native dialog to the main thread and
-    // waits; calling it from this async command thread (not the main thread) is safe.
+pub async fn repositories_pick_and_add(app: AppHandle) -> AppResult<AddRepositoryResult> {
+    tauri::async_runtime::spawn_blocking(move || pick_and_add_repository(app))
+        .await
+        .map_err(|error| AppError::msg(format!("Adding repository failed: {error}")))?
+}
+
+fn pick_and_add_repository(app: AppHandle) -> AppResult<AddRepositoryResult> {
     let picked = app
         .dialog()
         .file()
@@ -329,5 +327,27 @@ pub async fn repositories_pick_and_add(
     let folder_path = folder
         .into_path()
         .map_err(|e| AppError::msg(e.to_string()))?;
-    Ok(add_repository(&state, &folder_path.to_string_lossy()))
+    Ok(add_repository(
+        &app.state::<DbState>(),
+        &folder_path.to_string_lossy(),
+    ))
+}
+
+#[tauri::command]
+pub async fn repositories_remove(app: AppHandle, id: String) -> AppResult<Vec<Repository>> {
+    tauri::async_runtime::spawn_blocking(move || remove_repository(app.state::<DbState>(), id))
+        .await
+        .map_err(|error| AppError::msg(format!("Removing repository failed: {error}")))?
+}
+
+#[tauri::command]
+pub async fn repositories_reorder(
+    app: AppHandle,
+    ordered_ids: Vec<String>,
+) -> AppResult<Vec<Repository>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        reorder_repositories(app.state::<DbState>(), ordered_ids)
+    })
+    .await
+    .map_err(|error| AppError::msg(format!("Reordering repositories failed: {error}")))?
 }

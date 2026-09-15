@@ -1,5 +1,6 @@
 {
   "include": [
+    "scripts/ui-regressions.tsx",
     "src/renderer/src/env.d.ts",
     "src/renderer/src/**/*",
     "src/renderer/src/**/*.tsx",

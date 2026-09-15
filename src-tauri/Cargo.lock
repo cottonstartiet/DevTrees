@@ -927,6 +927,7 @@ dependencies = [
  "agent-client-protocol",
  "base64 0.22.1",
  "dirs 5.0.1",
+ "libc",
  "regex",
  "rusqlite",
  "serde",

@@ -13,6 +13,13 @@ export default defineConfig({
   // Tauri expects a relative base so assets resolve under the custom app protocol.
   base: './',
   resolve: {
+    // These modules own document-wide modal state and must be shared by every popup.
+    dedupe: [
+      'react',
+      'react-dom',
+      '@radix-ui/react-dismissable-layer',
+      '@radix-ui/react-focus-scope'
+    ],
     alias: {
       '@renderer': resolve(__dirname, 'src/renderer/src'),
       '@': resolve(__dirname, 'src/renderer/src'),

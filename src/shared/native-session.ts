@@ -77,6 +77,51 @@ export type NativeSnapshot = {
   planTransitionAvailable: boolean
 }
 
+export type NativeSnapshotUpdate = NativeSnapshot & {
+  /** Present only on events; commands always return a complete snapshot. */
+  baseRevision?: number
+  entrySeqs?: number[]
+}
+
+/** Returns null when a missing event requires an authoritative snapshot. */
+export function mergeNativeSnapshot(
+  incoming: NativeSnapshotUpdate,
+  previous?: NativeSnapshot
+): NativeSnapshot | null {
+  const old =
+    previous?.session.id === incoming.session.id &&
+    previous.session.generation === incoming.session.generation
+      ? previous
+      : undefined
+  const bySeq = new Map(old?.entries.map((entry) => [entry.seq, entry]))
+  let entries: TerminalTimelineEntry[]
+  if (incoming.baseRevision !== undefined) {
+    if (!old || old.session.revision !== incoming.baseRevision || !incoming.entrySeqs) return null
+    for (const entry of incoming.entries) bySeq.set(entry.seq, entry)
+    entries = []
+    for (const seq of incoming.entrySeqs) {
+      const entry = bySeq.get(seq)
+      if (!entry) return null
+      entries.push(entry)
+    }
+  } else {
+    entries = incoming.entries.map((entry) => {
+      const existing = bySeq.get(entry.seq)
+      return existing && JSON.stringify(existing) === JSON.stringify(entry) ? existing : entry
+    })
+  }
+  if (
+    old &&
+    entries.length === old.entries.length &&
+    entries.every((entry, index) => entry === old.entries[index])
+  )
+    entries = old.entries
+  const snapshot = { ...incoming, entries }
+  delete snapshot.baseRevision
+  delete snapshot.entrySeqs
+  return snapshot
+}
+
 export function nativeSessionNeedsUserAction(
   session: TerminalSession,
   snapshot?: NativeSnapshot
@@ -438,11 +483,7 @@ export function acceptNativeSnapshot(
   )
     return false
   if (!previous) return true
-  return (
-    incoming.session.revision > previous.session.revision ||
-    (incoming.session.revision === previous.session.revision &&
-      incoming.session.generation === previous.session.generation)
-  )
+  return incoming.session.revision > previous.session.revision
 }
 
 export type NativeField = {

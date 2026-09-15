@@ -40,6 +40,10 @@ pub struct Snapshot {
     pub session: TerminalSession,
     pub interactions: Vec<NativeInteraction>,
     pub entries: Vec<TerminalTimelineEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry_seqs: Option<Vec<u64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<u64>,
     pub history_truncated: bool,
     pub error: Option<String>,
     pub commands: Vec<Value>,
@@ -54,6 +58,32 @@ pub struct Snapshot {
     pub available_modes: Vec<SessionMode>,
     pub current_mode_id: Option<String>,
     pub plan_transition_available: bool,
+}
+
+impl Snapshot {
+    pub fn update_since(&self, previous: Option<&Self>) -> Self {
+        let mut update = self.clone();
+        if let Some(previous) = previous.filter(|old| {
+            old.session.id == self.session.id && old.session.generation == self.session.generation
+        }) {
+            let old: HashMap<_, _> = previous
+                .entries
+                .iter()
+                .map(|entry| (entry.seq(), entry))
+                .collect();
+            update
+                .entries
+                .retain(|entry| old.get(&entry.seq()).copied() != Some(entry));
+            update.entry_seqs = Some(
+                self.entries
+                    .iter()
+                    .map(TerminalTimelineEntry::seq)
+                    .collect(),
+            );
+            update.base_revision = Some(previous.session.revision);
+        }
+        update
+    }
 }
 
 pub struct State {
@@ -107,6 +137,8 @@ impl State {
                 session,
                 interactions: Vec::new(),
                 entries: Vec::new(),
+                entry_seqs: None,
+                base_revision: None,
                 history_truncated: false,
                 error: None,
                 commands: Vec::new(),
@@ -643,6 +675,35 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_updates_send_only_changed_rows_and_retained_sequence_ids() {
+        let mut state = state();
+        for seq in 0..500 {
+            state.push(TerminalTimelineEntry::Acp {
+                seq,
+                timestamp: None,
+                category: "tool".into(),
+                data: json!({"toolCallId":seq,"rawOutput":"x".repeat(12_000)}),
+            });
+        }
+        let previous = state.snapshot.clone();
+        state.snapshot.entries.remove(0);
+        if let TerminalTimelineEntry::Acp { data, .. } = &mut state.snapshot.entries[10] {
+            data["status"] = json!("completed");
+        }
+        state.changed();
+        let delta = state.snapshot.update_since(Some(&previous));
+        assert_eq!(delta.entries.len(), 1);
+        assert_eq!(delta.entry_seqs.as_ref().unwrap().len(), 499);
+        assert_eq!(delta.base_revision, Some(previous.session.revision));
+        assert!(serde_json::to_vec(&previous).unwrap().len() > 6_000_000);
+        assert!(serde_json::to_vec(&delta).unwrap().len() < 20_000);
+        state.snapshot.session.generation = Some("new-process".into());
+        let full = state.snapshot.update_since(Some(&previous));
+        assert!(full.base_revision.is_none());
+        assert_eq!(full.entries.len(), 499);
+    }
 
     fn state() -> State {
         State::new(TerminalSession {

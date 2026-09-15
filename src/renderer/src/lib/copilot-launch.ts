@@ -21,6 +21,8 @@ export type CopilotLaunchOptions = {
   taskId?: string
   /** Keep the current app view selected when the session is started by background automation. */
   background?: boolean
+  /** Whether a foreground launch should open the Sessions view. */
+  navigateToSession?: boolean
 }
 
 /** `sessionId` is the Copilot CLI session id the app is now mirroring. */
@@ -48,7 +50,8 @@ export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<Co
         branch,
         repository,
         taskId,
-        background
+        background,
+        navigateToSession
       } = opts
       const resolvedLabel = label || basename(folderPath) || 'Copilot'
 
@@ -63,7 +66,10 @@ export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<Co
           repository,
           branch
         },
-        !background
+        {
+          select: !background,
+          navigate: !background && navigateToSession !== false
+        }
       )
       if (!session) return { ok: false, error: 'Could not start Copilot.' }
       return { ok: true, sessionId: session.id }

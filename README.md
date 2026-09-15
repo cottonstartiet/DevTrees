@@ -37,8 +37,25 @@ Session regression checks use `cargo test --manifest-path src-tauri/Cargo.toml -
 and `node --test scripts/auto-reviews.test.mjs scripts/code-review-prompt.test.mjs scripts/session-launch.test.mjs scripts/session-interactions.test.mjs scripts/task-launch.test.mjs`
 (session routing/status contracts and native interaction state; no browser server).
 
+Responsiveness regressions use `node --test scripts/task-state.test.mjs scripts/ui-regressions.test.mjs`.
+The UI check builds the actual renderer components with Vite and runs them in an isolated,
+headless Edge profile, without starting the desktop backend or calling Git/Copilot.
+Set `DEVTREES_TEST_BROWSER` to a Chromium-compatible browser executable if Edge is not
+installed at its default Windows location. It covers popup cleanup, overlapping task
+mutations, repository switching, transcript deltas, and lazy tool-output rendering.
+Radix's dismissable-layer and focus-scope packages are direct dependencies and Vite
+singletons: do not remove their `resolve.dedupe` entries. Independent copies can leave
+the whole document with `pointer-events: none` after a popup closes.
+
 The `*:web` scripts and `dist-web` directory build the embedded desktop renderer,
 not a standalone web application. Use `yarn dev` to run the complete app.
+
+Git, GitHub CLI and Azure CLI invocations have a 120-second deadline, with owned
+child-process-tree cleanup on timeout. A timeout is an error, not a rollback:
+inspect repository/remote state before retrying a write. Repository requests are
+isolated by path; a slow repository does not prevent another from refreshing.
+Blocking repository discovery, history reads and external-session observation run
+on blocking workers, outside the shared session-watch lock during file I/O.
 
 ## Tasks and Copilot sessions
 
@@ -81,6 +98,10 @@ Text files and supported images are stored with queued messages, not reread from
 their original paths. The queue supports editing unsent text, reordering, removal,
 pause/resume and clearing non-running items. Attachment bytes stay in the backend;
 streaming snapshots carry queue summaries rather than repeatedly transferring files.
+Transcript events carry only changed entries and the retained sequence IDs. Missing
+events trigger a full snapshot refresh, not a resend of prompts or approvals.
+Unchanged transcript rows retain identity, and collapsed tool output is rendered
+only when expanded.
 
 **Stop turn** cancels current work and pending requests and pauses the queue.
 Cancellation is not considered complete just because a notification was sent.
@@ -134,6 +155,9 @@ The evaluated native baseline is installed CLI **1.0.84-1** and ACP **v1**, usin
 the pinned Rust `agent-client-protocol` **2.1.0** library (the crate version does
 not mean ACP wire v2). ACP is a public preview. Initialization negotiates compatibility; a
 missing or incompatible runtime produces an error, not an automatic upgrade.
+Initialization is bounded to 45 seconds, and creating/loading a conversation to
+90 seconds. A setup timeout stops the owned runtime and releases its launch
+reservation; it never automatically retries the initial instruction.
 Native mode resolves `copilot.exe` (`copilot` elsewhere) from PATH, or an explicit
 `COPILOT_CLI_PATH`. End users do not install Rust: the client is compiled
 into DevTrees. No Copilot executable is bundled or automatically downloaded.

@@ -65,7 +65,11 @@ function Body({ children }: { children: React.ReactNode }): React.JSX.Element {
   return <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{children}</p>
 }
 
-function Entry({ entry }: { entry: TerminalTimelineEntry }): React.JSX.Element | null {
+const Entry = React.memo(function Entry({
+  entry
+}: {
+  entry: TerminalTimelineEntry
+}): React.JSX.Element | null {
   switch (entry.kind) {
     case 'acp':
       return (
@@ -161,13 +165,13 @@ function Entry({ entry }: { entry: TerminalTimelineEntry }): React.JSX.Element |
     default:
       return null
   }
-}
+})
 
 /**
  * Rendering of a Copilot CLI session's history. Interactive requests are handled by the
  * shared session interaction panel below the timeline.
  */
-export function TerminalTimeline({
+export const TerminalTimeline = React.memo(function TerminalTimeline({
   entries,
   className
 }: {
@@ -203,4 +207,4 @@ export function TerminalTimeline({
       <div ref={endRef} />
     </div>
   )
-}
+})

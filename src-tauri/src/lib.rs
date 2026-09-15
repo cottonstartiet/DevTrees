@@ -1,5 +1,6 @@
 mod ado;
 mod az;
+mod command;
 mod copilot_acp_sessions;
 mod copilot_analytics;
 mod copilot_history;
@@ -10,6 +11,7 @@ mod git;
 mod github;
 mod local_review;
 mod pr_review;
+mod process;
 mod repo;
 mod repositories;
 mod reviews;

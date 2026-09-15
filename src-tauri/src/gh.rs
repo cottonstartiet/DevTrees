@@ -94,7 +94,7 @@ fn run_gh_blocking(args: &[String], cwd: &str) -> Result<GhOutput, GhError> {
     cmd.current_dir(cwd);
     configure_no_window(&mut cmd);
 
-    let output = match cmd.output() {
+    let output = match crate::command::output(&mut cmd) {
         Ok(output) => output,
         Err(err) => {
             #[cfg(not(windows))]

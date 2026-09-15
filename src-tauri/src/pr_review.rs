@@ -357,7 +357,9 @@ fn parse_range(range: &str) -> Option<(i64, i64)> {
 /// Diff two full file blobs into the same hunk model, used for providers (Azure DevOps) that do
 /// not expose a unified patch endpoint.
 pub fn diff_blobs(base: &str, head: &str) -> Vec<PrDiffHunk> {
-    let diff = TextDiff::from_lines(base, head);
+    let normalized_base = base.replace("\r\n", "\n");
+    let normalized_head = head.replace("\r\n", "\n");
+    let diff = TextDiff::from_lines(&normalized_base, &normalized_head);
     let mut hunks = Vec::new();
 
     for group in diff.grouped_ops(DIFF_CONTEXT) {
@@ -489,6 +491,61 @@ mod tests {
         let adds = hunks[0].lines.iter().filter(|l| l.kind == "add").count();
         let dels = hunks[0].lines.iter().filter(|l| l.kind == "del").count();
         assert_eq!((adds, dels), (1, 1));
+    }
+
+    #[test]
+    fn ignores_line_ending_only_changes() {
+        let base = "a\nb\nc\n";
+        let head = "a\r\nb\r\nc\r\n";
+        assert!(diff_blobs(base, head).is_empty());
+    }
+
+    #[test]
+    fn localizes_changes_across_line_endings() {
+        let base = "a\nb\nc\n";
+        let head = "a\r\nB\r\nc\r\n";
+        let hunks = diff_blobs(base, head);
+        assert_eq!(hunks.len(), 1);
+        let lines = &hunks[0].lines;
+        assert_eq!(lines.iter().filter(|line| line.kind == "del").count(), 1);
+        assert_eq!(lines.iter().filter(|line| line.kind == "add").count(), 1);
+        assert_eq!(
+            lines.iter().filter(|line| line.kind == "context").count(),
+            2
+        );
+    }
+
+    #[test]
+    fn preserves_changes_without_trailing_newlines() {
+        let hunks = diff_blobs("before", "after");
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(
+            hunks[0]
+                .lines
+                .iter()
+                .filter(|line| line.kind == "del")
+                .count(),
+            1
+        );
+        assert_eq!(
+            hunks[0]
+                .lines
+                .iter()
+                .filter(|line| line.kind == "add")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn separates_distant_changes_into_hunks() {
+        let base = (1..=20)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        let head = base
+            .replace("line 2\n", "changed 2\n")
+            .replace("line 19\n", "changed 19\n");
+        assert_eq!(diff_blobs(&base, &head).len(), 2);
     }
 
     #[test]

@@ -17,7 +17,10 @@ export interface UseRepoStatusResult {
   pull: () => Promise<void>
 }
 
-export function useRepoStatus(repositoryPath: string | null, enabled: boolean): UseRepoStatusResult {
+export function useRepoStatus(
+  repositoryPath: string | null,
+  enabled: boolean
+): UseRepoStatusResult {
   const [snapshot, setSnapshot] = React.useState<{
     repositoryPath: string | null
     defaultBranch: string | null
@@ -29,12 +32,12 @@ export function useRepoStatus(repositoryPath: string | null, enabled: boolean): 
     repositoryCurrentBranch: null,
     status: null
   })
-  const [isFetching, setIsFetching] = React.useState(false)
-  const [isPulling, setIsPulling] = React.useState(false)
+  const [fetchingPaths, setFetchingPaths] = React.useState<ReadonlySet<string>>(new Set())
+  const [pullingPaths, setPullingPaths] = React.useState<ReadonlySet<string>>(new Set())
   const { startTask, succeedTask, failTask } = useTasks()
 
-  const fetchingRef = React.useRef(false)
-  const pullingRef = React.useRef(false)
+  const fetchingRef = React.useRef(new Map<string, Promise<void>>())
+  const pullingRef = React.useRef(new Set<string>())
   const activePathRef = React.useRef<string | null>(null)
 
   const isCurrent = snapshot.repositoryPath === repositoryPath
@@ -58,36 +61,49 @@ export function useRepoStatus(repositoryPath: string | null, enabled: boolean): 
         repositoryCurrentBranch: cur,
         status: prev.repositoryPath === repositoryPath ? prev.status : null
       }))
-    })()
+    })().catch((error) => {
+      if (!cancelled)
+        toast.error(error instanceof Error ? error.message : 'Could not read repository branches.')
+    })
     return () => {
       cancelled = true
     }
   }, [repositoryPath, enabled])
 
-  const runRefresh = React.useCallback(async (): Promise<void> => {
-    if (!repositoryPath || !defaultBranch) return
-    if (fetchingRef.current) return
-    fetchingRef.current = true
-    setIsFetching(true)
-    try {
-      const fetchResult = await fetchRepo(repositoryPath, defaultBranch)
-      if (!fetchResult.ok) {
-        console.warn('[repo] fetch failed:', fetchResult.error)
+  const runRefresh = React.useCallback((): Promise<void> => {
+    if (!repositoryPath || !defaultBranch) return Promise.resolve()
+    const existing = fetchingRef.current.get(repositoryPath)
+    if (existing) return existing
+    setFetchingPaths((current) => new Set(current).add(repositoryPath))
+    const request = Promise.resolve().then(async () => {
+      try {
+        const fetchResult = await fetchRepo(repositoryPath, defaultBranch)
+        if (!fetchResult.ok) console.warn('[repo] fetch failed:', fetchResult.error)
+        const result = await getRepoStatus(repositoryPath, defaultBranch)
+        if ('error' in result) {
+          console.warn('[repo] status failed:', result.error)
+          return
+        }
+        if (activePathRef.current === repositoryPath) {
+          setSnapshot((prev) =>
+            prev.repositoryPath === repositoryPath ? { ...prev, status: result } : prev
+          )
+        }
+      } catch (error) {
+        console.error('[repo] refresh failed:', error)
+        if (activePathRef.current === repositoryPath)
+          toast.error(error instanceof Error ? error.message : 'Could not refresh repository.')
+      } finally {
+        fetchingRef.current.delete(repositoryPath)
+        setFetchingPaths((current) => {
+          const next = new Set(current)
+          next.delete(repositoryPath)
+          return next
+        })
       }
-      const result = await getRepoStatus(repositoryPath, defaultBranch)
-      if ('error' in result) {
-        console.warn('[repo] status failed:', result.error)
-        return
-      }
-      if (activePathRef.current === repositoryPath) {
-        setSnapshot((prev) =>
-          prev.repositoryPath === repositoryPath ? { ...prev, status: result } : prev
-        )
-      }
-    } finally {
-      fetchingRef.current = false
-      setIsFetching(false)
-    }
+    })
+    fetchingRef.current.set(repositoryPath, request)
+    return request
   }, [repositoryPath, defaultBranch])
 
   React.useEffect(() => {
@@ -127,9 +143,9 @@ export function useRepoStatus(repositoryPath: string | null, enabled: boolean): 
       toast.error('Default branch is not resolved yet.')
       return
     }
-    if (pullingRef.current) return
-    pullingRef.current = true
-    setIsPulling(true)
+    if (pullingRef.current.has(repositoryPath)) return
+    pullingRef.current.add(repositoryPath)
+    setPullingPaths((current) => new Set(current).add(repositoryPath))
     const taskId = startTask(`Pulling origin/${defaultBranch}`)
     try {
       const result = await pullRepo(repositoryPath, defaultBranch)
@@ -157,9 +173,17 @@ export function useRepoStatus(repositoryPath: string | null, enabled: boolean): 
           status: 'error' in nextStatus ? prev.status : nextStatus
         }
       })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Pull failed.'
+      failTask(taskId, message)
+      toast.error(message)
     } finally {
-      pullingRef.current = false
-      setIsPulling(false)
+      pullingRef.current.delete(repositoryPath)
+      setPullingPaths((current) => {
+        const next = new Set(current)
+        next.delete(repositoryPath)
+        return next
+      })
     }
   }, [repositoryPath, defaultBranch, startTask, succeedTask, failTask])
 
@@ -167,8 +191,8 @@ export function useRepoStatus(repositoryPath: string | null, enabled: boolean): 
     defaultBranch,
     repositoryCurrentBranch,
     status,
-    isFetching,
-    isPulling,
+    isFetching: repositoryPath !== null && fetchingPaths.has(repositoryPath),
+    isPulling: repositoryPath !== null && pullingPaths.has(repositoryPath),
     refresh: runRefresh,
     pull
   }

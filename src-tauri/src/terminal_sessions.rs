@@ -251,7 +251,7 @@ pub struct AcpSessionManager {
 /// `seq` is the source line index, which gives entries a stable total order. The renderer
 /// merges the initial history fetch with live updates by `seq`, so an entry delivered by
 /// both paths is never duplicated.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum TerminalTimelineEntry {
     #[serde(rename_all = "camelCase")]
@@ -333,6 +333,7 @@ pub struct TerminalSessionUpdate {
 
 /// Per-session bookkeeping that only matters while tailing; not persisted except for
 /// the cursor, which lets a restart resume mid-log instead of re-reading everything.
+#[derive(Clone)]
 struct Watch {
     session: TerminalSession,
     cursor: u64,
@@ -1441,7 +1442,7 @@ fn has_lock(dir: &PathBuf) -> AppResult<bool> {
     Ok(false)
 }
 
-fn process_is_running(pid: u32) -> AppResult<bool> {
+pub(crate) fn process_is_running(pid: u32) -> AppResult<bool> {
     #[cfg(windows)]
     {
         use winapi::shared::winerror::{ERROR_INVALID_PARAMETER, WAIT_TIMEOUT};
@@ -1614,21 +1615,24 @@ fn poll_once(app: &AppHandle) {
     let result = (|| -> AppResult<()> {
         let monitor = app.state::<TerminalSessionMonitor>();
         let root = session_state_root()?;
-        let mut watches = monitor
+        let watches: Vec<Watch> = monitor
             .watches
             .lock()
-            .map_err(|_| AppError::msg("Session mutex poisoned."))?;
-        for watch in watches
-            .values_mut()
+            .map_err(|_| AppError::msg("Session mutex poisoned."))?
+            .values()
             .filter(|watch| watch.session.transport == "external")
-        {
+            .cloned()
+            .collect();
+        for mut watch in watches {
+            let revision = watch.session.revision;
             let before = (
                 watch.session.status,
                 watch.session.last_activity.clone(),
                 watch.session.pending_prompt.clone(),
                 watch.session.observation_error.clone(),
             );
-            if let Err(error) = observe_external(watch, &root.join(&watch.session.id)) {
+            let dir = root.join(&watch.session.id);
+            if let Err(error) = observe_external(&mut watch, &dir) {
                 watch.session.observation_error =
                     Some(format!("Session status unavailable: {error}"));
             } else {
@@ -1646,16 +1650,44 @@ fn poll_once(app: &AppHandle) {
                 watch.session.updated_at = now_ms();
             }
             watch.session.revision += 1;
-            emit(app, &watch.session, Vec::new());
+            let applied = {
+                let mut current = monitor
+                    .watches
+                    .lock()
+                    .map_err(|_| AppError::msg("Session mutex poisoned."))?;
+                apply_external_observation(&mut current, revision, &watch)
+            };
+            if applied {
+                emit(app, &watch.session, Vec::new());
+            }
         }
-        watches.retain(|_, watch| {
-            watch.session.transport != "external" || !watch.session.status.is_final()
-        });
         Ok(())
     })();
     if let Err(error) = result {
         eprintln!("External session status polling failed: {error}");
     }
+}
+
+fn apply_external_observation(
+    watches: &mut HashMap<String, Watch>,
+    revision: u64,
+    observed: &Watch,
+) -> bool {
+    let Some(current) = watches.get(&observed.session.id) else {
+        return false;
+    };
+    if current.session.generation != observed.session.generation
+        || current.session.revision != revision
+        || current.session.transport != "external"
+    {
+        return false;
+    }
+    if observed.session.status.is_final() {
+        watches.remove(&observed.session.id);
+    } else {
+        watches.insert(observed.session.id.clone(), observed.clone());
+    }
+    true
 }
 
 /// Start the shared polling task once; subsequent calls are no-ops.
@@ -1677,7 +1709,11 @@ fn ensure_polling(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(POLL_INTERVAL).await;
-            poll_once(&handle);
+            let app = handle.clone();
+            if let Err(error) = tauri::async_runtime::spawn_blocking(move || poll_once(&app)).await
+            {
+                eprintln!("External session polling worker failed: {error}");
+            }
         }
     });
 }
@@ -2473,6 +2509,12 @@ pub async fn terminal_sessions_history(
     app: AppHandle,
     id: String,
 ) -> AppResult<Vec<TerminalTimelineEntry>> {
+    tauri::async_runtime::spawn_blocking(move || read_terminal_history(&app, &id))
+        .await
+        .map_err(|error| AppError::msg(format!("Session history worker failed: {error}")))?
+}
+
+fn read_terminal_history(app: &AppHandle, id: &str) -> AppResult<Vec<TerminalTimelineEntry>> {
     let id = id.trim().to_string();
     {
         use rusqlite::OptionalExtension;
@@ -2564,6 +2606,38 @@ pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_poll_cannot_restore_removed_or_replaced_watches() {
+        let old = external_watch();
+        let id = old.session.id.clone();
+        let mut watches = HashMap::from([(id.clone(), old.clone())]);
+        let mut observed = old.clone();
+        observed.session.revision += 1;
+        assert!(apply_external_observation(
+            &mut watches,
+            old.session.revision,
+            &observed
+        ));
+        assert!(!apply_external_observation(
+            &mut watches,
+            old.session.revision,
+            &observed
+        ));
+        watches.get_mut(&id).unwrap().session.generation = Some("replacement".into());
+        assert!(!apply_external_observation(
+            &mut watches,
+            observed.session.revision,
+            &observed
+        ));
+        watches.clear();
+        assert!(!apply_external_observation(
+            &mut watches,
+            old.session.revision,
+            &observed
+        ));
+        assert!(watches.is_empty());
+    }
 
     fn external_watch() -> Watch {
         Watch {

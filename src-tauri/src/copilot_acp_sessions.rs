@@ -39,6 +39,17 @@ fn error(value: impl std::fmt::Display) -> AppError {
     AppError::msg(value.to_string())
 }
 
+const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(90);
+
+async fn setup_request<T>(
+    request: impl std::future::Future<Output = Result<T, acp::Error>>,
+    timeout: Duration,
+) -> Result<T, acp::Error> {
+    tokio::time::timeout(timeout, request)
+        .await
+        .map_err(|_| protocol_error("Copilot timed out creating or loading the conversation. The startup process will be stopped; no instruction was resent."))?
+}
+
 fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -142,7 +153,7 @@ impl Drop for PendingGuard {
 struct Managed {
     app: AppHandle,
     state: Mutex<State>,
-    publication: Mutex<()>,
+    publication: Mutex<Option<Snapshot>>,
     connection: Mutex<Option<ConnectionTo<Agent>>>,
     pending: Mutex<HashMap<String, oneshot::Sender<InteractionAnswer>>>,
     queue_write: Mutex<()>,
@@ -157,16 +168,25 @@ struct Managed {
 
 impl Managed {
     fn publish(&self) -> AppResult<Snapshot> {
-        let _guard = self.publication.lock().map_err(error)?;
+        let mut previous = self.publication.lock().map_err(error)?;
         let snapshot = {
             let mut state = self.state.lock().map_err(error)?;
             state.dirty = false;
             state.snapshot.clone()
         };
+        if previous.as_ref().is_some_and(|old| {
+            old.session.id == snapshot.session.id
+                && old.session.generation == snapshot.session.generation
+                && old.session.revision == snapshot.session.revision
+        }) {
+            return Ok(snapshot);
+        }
         terminal_sessions::publish_native_session(&self.app, &snapshot.session)?;
+        let update = snapshot.update_since(previous.as_ref());
         self.app
-            .emit("native-sessions:update", &snapshot)
+            .emit("native-sessions:update", &update)
             .map_err(error)?;
+        *previous = Some(snapshot.clone());
         Ok(snapshot)
     }
 
@@ -329,6 +349,7 @@ impl Managed {
             let _write = self.queue_write.lock().map_err(error)?;
             let mut state = self.state.lock().map_err(error)?;
             state.snapshot.queue_paused = true;
+            state.changed();
             if state.snapshot.phase == "starting" || state.snapshot.phase == "loading" {
                 drop(state);
                 self.stopping.store(true, Ordering::SeqCst);
@@ -746,6 +767,8 @@ async fn run_inner(
     }
     #[cfg(windows)]
     command.creation_flags(0x08000000);
+    #[cfg(unix)]
+    command.process_group(0);
     let mut child = command.spawn().map_err(error)?;
     owner.process_exited.store(false, Ordering::SeqCst);
     let process_scope = match process::ProcessScope::attach(&child) {
@@ -875,10 +898,10 @@ async fn run_inner(
                     return Err(protocol_error("This Copilot version cannot load saved sessions."));
                 }
                 let request: acp::LoadSessionRequest = serde_json::from_value(params).map_err(protocol_error)?;
-                serde_json::to_value(cx.send_request(request).block_task().await?).map_err(protocol_error)?
+                serde_json::to_value(setup_request(cx.send_request(request).block_task(), SESSION_SETUP_TIMEOUT).await?).map_err(protocol_error)?
             } else {
                 let request: acp::NewSessionRequest = serde_json::from_value(params).map_err(protocol_error)?;
-                serde_json::to_value(cx.send_request(request).block_task().await?).map_err(protocol_error)?
+                serde_json::to_value(setup_request(cx.send_request(request).block_task(), SESSION_SETUP_TIMEOUT).await?).map_err(protocol_error)?
             };
             let actual_id = req.resume_session_id.clone()
                 .or_else(|| setup["sessionId"].as_str().map(str::to_owned))
@@ -1015,7 +1038,7 @@ async fn run_inner(
         Ok(status) => {
             let status = status.map_err(error)?;
             owner.process_exited.store(true, Ordering::SeqCst);
-            if !status.success() && !owner.stopping.load(Ordering::SeqCst) {
+            if !status.success() && !owner.stopping.load(Ordering::SeqCst) && result.is_ok() {
                 return Err(error(format!(
                     "Copilot exited with {status}. Check Copilot CLI sign-in."
                 )));
@@ -1141,14 +1164,28 @@ pub async fn start(
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let generation = uuid::Uuid::new_v4().to_string();
-    let registered = terminal_sessions::watch_managed_session(&app, &req, &id, &generation, "acp")?;
+    let registration_app = app.clone();
+    let registration_req = req.clone();
+    let registration_id = id.clone();
+    let registration_generation = generation.clone();
+    let registered = tauri::async_runtime::spawn_blocking(move || {
+        terminal_sessions::watch_managed_session(
+            &registration_app,
+            &registration_req,
+            &registration_id,
+            &registration_generation,
+            "acp",
+        )
+    })
+    .await
+    .map_err(error)??;
     let session = registered
         .session
         .ok_or_else(|| error("Could not register the session."))?;
     let owner = Arc::new(Managed {
         app: app.clone(),
         state: Mutex::new(State::new(session)),
-        publication: Mutex::new(()),
+        publication: Mutex::new(None),
         connection: Mutex::new(None),
         pending: Mutex::new(HashMap::new()),
         queue_write: Mutex::new(()),
@@ -1183,8 +1220,14 @@ pub async fn start(
 }
 
 #[tauri::command]
-pub fn native_session_snapshot(app: AppHandle, target: Target) -> AppResult<Snapshot> {
-    get(&app, &target)?.publish()
+pub async fn native_session_snapshot(app: AppHandle, target: Target) -> AppResult<Snapshot> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let owner = get(&app, &target)?;
+        let snapshot = owner.state.lock().map_err(error)?.snapshot.clone();
+        Ok(snapshot)
+    })
+    .await
+    .map_err(error)?
 }
 
 #[tauri::command]

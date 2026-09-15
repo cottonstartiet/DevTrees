@@ -51,7 +51,7 @@ pub fn run_git_blocking(args: &[String], cwd: &str) -> Result<GitOutput, GitErro
     cmd.args(args).current_dir(cwd);
     configure_no_window(&mut cmd);
 
-    let output = cmd.output().map_err(|e| GitError {
+    let output = crate::command::output(&mut cmd).map_err(|e| GitError {
         message: format!("failed to run git: {e}"),
         stderr: String::new(),
     })?;

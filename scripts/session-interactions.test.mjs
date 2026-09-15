@@ -12,6 +12,7 @@ const compiled = { exports: {} }
 new Function('module', 'exports', outputText)(compiled, compiled.exports)
 const {
   acceptNativeSnapshot,
+  mergeNativeSnapshot,
   endedNativeHistory,
   nativeKey,
   parsePromptAttachments,
@@ -34,6 +35,48 @@ const snapshot = (generation, revision, interactions = []) => ({
   session: { id: 'same-session', generation, revision, transport: 'acp' },
   interactions,
   entries: []
+})
+
+test('duplicate snapshots are ignored and deltas retain unchanged row identity', () => {
+  const first = {
+    ...snapshot('one', 1),
+    entries: [
+      { kind: 'assistantMessage', seq: 1, text: 'first' },
+      { kind: 'assistantMessage', seq: 2, text: 'second' }
+    ]
+  }
+  assert.equal(acceptNativeSnapshot(first, first), false)
+  const changed = { ...first.entries[1], text: 'updated' }
+  const update = {
+    ...snapshot('one', 2),
+    baseRevision: 1,
+    entrySeqs: [1, 2],
+    entries: [changed]
+  }
+  const merged = mergeNativeSnapshot(update, first)
+  assert.equal(merged.entries[0], first.entries[0])
+  assert.equal(merged.entries[1], changed)
+  assert.equal(merged.baseRevision, undefined)
+  assert.equal(mergeNativeSnapshot({ ...update, baseRevision: 0 }, first), null)
+  assert.equal(mergeNativeSnapshot(update), null)
+  assert.equal(mergeNativeSnapshot(update, snapshot('other', 1)), null)
+  assert.equal(mergeNativeSnapshot({ ...update, entrySeqs: [999] }, first), null)
+  const trimmed = mergeNativeSnapshot({ ...update, entrySeqs: [2] }, first)
+  assert.deepEqual(trimmed.entries, [changed])
+  const full = mergeNativeSnapshot(JSON.parse(JSON.stringify(first)), first)
+  assert.equal(full.entries, first.entries)
+  assert.equal(
+    mergeNativeSnapshot(
+      {
+        ...snapshot('one', 2),
+        baseRevision: 1,
+        entrySeqs: [1, 2],
+        entries: []
+      },
+      first
+    ).entries,
+    first.entries
+  )
 })
 
 test('attachment drafts validate content without throwing from a React updater', () => {

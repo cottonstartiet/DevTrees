@@ -129,7 +129,6 @@ function TaskDetailForm({
   })
   const [submitAttempted, setSubmitAttempted] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
-  const [portalContainer, setPortalContainer] = React.useState<HTMLDivElement | null>(null)
 
   const repository = repositories.find((r) => r.id === repositoryId) ?? null
   const worktrees = repository ? (worktreesByRepositoryId[repository.id] ?? []) : []
@@ -240,10 +239,7 @@ function TaskDetailForm({
   const statusLabel: string | null = task ? TASK_STATUS_LABELS[task.status as TaskStatus] : null
 
   return (
-    <DialogContent
-      ref={setPortalContainer}
-      className="max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] min-w-0 overflow-y-auto sm:max-w-2xl"
-    >
+    <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] min-w-0 overflow-y-auto sm:max-w-2xl">
       <DialogHeader className="min-w-0">
         <DialogTitle>{isEdit ? 'Task details' : 'Add task'}</DialogTitle>
         <DialogDescription className="break-words">
@@ -298,7 +294,7 @@ function TaskDetailForm({
             <SelectTrigger className="w-full min-w-0" aria-labelledby="task-repository-label">
               <SelectValue placeholder="Select a repository" />
             </SelectTrigger>
-            <SelectContent portalContainer={portalContainer}>
+            <SelectContent>
               {repositories.map((repo) => (
                 <SelectItem key={repo.id} value={repo.id}>
                   {repo.name}
@@ -324,7 +320,7 @@ function TaskDetailForm({
             >
               <SelectValue placeholder="Select a worktree" />
             </SelectTrigger>
-            <SelectContent portalContainer={portalContainer}>
+            <SelectContent>
               <SelectItem value={MAIN_BRANCH_VALUE}>Main branch</SelectItem>
               {worktrees.map((wt) => (
                 <SelectItem key={wt.path} value={wt.path}>

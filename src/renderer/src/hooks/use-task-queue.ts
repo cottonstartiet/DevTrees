@@ -58,6 +58,7 @@ export function useTaskQueue({
   const { tasks, moveTask, setTaskLocal, setTaskQueueStatus, updateTask } = useTaskBoard()
   const {
     byId: terminalSessionsById,
+    forget: forgetTerminalSession,
     nativeById,
     nativeBusy,
     observationNow
@@ -67,6 +68,7 @@ export function useTaskQueue({
   const [settingsBusy, setSettingsBusy] = React.useState(true)
   const settingsWriteRef = React.useRef(false)
   const dispatchingRef = React.useRef(new Map<string, string>())
+  const completingRef = React.useRef(new Set<string>())
   const reconcilingRef = React.useRef(new Set<string>())
   const settlingRef = React.useRef(new Set<string>())
 
@@ -284,7 +286,8 @@ export function useTaskQueue({
           branch: claimedTask.worktreeBranch ?? undefined,
           repository: claimedTask.repositoryName,
           taskId: claimedTask.id,
-          background: !foreground
+          background: !foreground,
+          navigateToSession: false
         })
 
         if (!result.ok) {
@@ -380,6 +383,7 @@ export function useTaskQueue({
     for (const task of runningTasks) {
       if (
         dispatchingRef.current.has(task.id) ||
+        completingRef.current.has(task.id) ||
         reconcilingRef.current.has(task.id) ||
         settlingRef.current.has(task.id)
       ) {
@@ -517,16 +521,50 @@ export function useTaskQueue({
         return
       }
 
+      if (task.status !== 'done' && status === 'done') {
+        completingRef.current.add(task.id)
+        try {
+          await moveTask(task.id, status, beforeId, async () => {
+            const persistedSession = task.copilotSessionId
+              ? terminalSessionsById[task.copilotSessionId]
+              : undefined
+            const taskSession = Object.values(terminalSessionsById)
+              .filter(
+                (session): session is NonNullable<typeof session> => session?.taskId === task.id
+              )
+              .sort((a, b) => b.updatedAt - a.updatedAt || b.createdAt - a.createdAt)[0]
+            const session = persistedSession ?? taskSession
+            if (session) {
+              if (!isTerminalSessionFinished(session.status)) {
+                await forgetTerminalSession(session.id)
+              }
+              return
+            }
+            if (
+              task.copilotSessionId &&
+              (await window.api.terminalSessions.isRunning(task.copilotSessionId))
+            ) {
+              await forgetTerminalSession(task.copilotSessionId)
+            }
+          })
+        } finally {
+          completingRef.current.delete(task.id)
+        }
+        return
+      }
+
       await moveTask(task.id, status, beforeId)
     },
     [
       canReviewTask,
       executeTask,
+      forgetTerminalSession,
       hasAvailableSlot,
       hasAvailableTarget,
       moveTask,
       settings.mode,
-      startTask
+      startTask,
+      terminalSessionsById
     ]
   )
 

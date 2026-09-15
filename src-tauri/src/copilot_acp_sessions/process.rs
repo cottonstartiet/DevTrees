@@ -1,3 +1,4 @@
+pub use crate::process::ProcessScope;
 use std::{
     io,
     pin::Pin,
@@ -47,69 +48,6 @@ impl<R: AsyncRead + Unpin> AsyncRead for BoundedRead<R> {
                 Poll::Ready(Ok(()))
             }
             result => result,
-        }
-    }
-}
-
-pub struct ProcessScope {
-    #[cfg(windows)]
-    handle: usize,
-}
-
-impl ProcessScope {
-    pub fn attach(child: &tokio::process::Child) -> io::Result<Self> {
-        #[cfg(windows)]
-        {
-            use winapi::um::{
-                handleapi::CloseHandle,
-                jobapi2::{AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject},
-                winnt::{
-                    JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-                    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                },
-            };
-            let child_handle = child
-                .raw_handle()
-                .ok_or_else(|| io::Error::other("Copilot process handle is unavailable."))?;
-            // The job handle is exclusively owned by this scope. Closing it kills only
-            // the managed child and descendants, never independent external terminals.
-            unsafe {
-                let handle = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
-                if handle.is_null() {
-                    return Err(io::Error::last_os_error());
-                }
-                let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                if SetInformationJobObject(
-                    handle,
-                    JobObjectExtendedLimitInformation,
-                    &mut limits as *mut _ as *mut _,
-                    std::mem::size_of_val(&limits) as u32,
-                ) == 0
-                    || AssignProcessToJobObject(handle, child_handle as *mut _) == 0
-                {
-                    let error = io::Error::last_os_error();
-                    CloseHandle(handle);
-                    return Err(error);
-                }
-                Ok(Self {
-                    handle: handle as usize,
-                })
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = child;
-            Ok(Self {})
-        }
-    }
-}
-
-impl Drop for ProcessScope {
-    fn drop(&mut self) {
-        #[cfg(windows)]
-        unsafe {
-            winapi::um::handleapi::CloseHandle(self.handle as *mut _);
         }
     }
 }
