@@ -96,6 +96,7 @@ test(
         '--disable-gpu',
         '--no-first-run',
         '--no-default-browser-check',
+        '--window-size=1280,800',
         '--remote-debugging-port=0',
         `--user-data-dir=${profile}`,
         pathToFileURL(join(directory, 'index.html')).href

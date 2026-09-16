@@ -1,4 +1,13 @@
 import * as React from 'react'
+import {
+  FileIcon,
+  FileImageIcon,
+  FileSpreadsheetIcon,
+  FileTextIcon,
+  PaperclipIcon,
+  PresentationIcon,
+  XIcon
+} from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -19,8 +28,9 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { TASK_STATUS_LABELS } from '@/contexts/task-board-context'
+import { discardTaskAttachmentStage, pickTaskAttachments } from '@/lib/tasks'
 import type { Repository } from '@shared/repository'
-import type { Task, TaskStatus } from '@shared/task'
+import type { Task, TaskAttachmentSelection, TaskStatus } from '@shared/task'
 import type { Worktree } from '@shared/worktree'
 
 const VALID_WORKTREE_NAME = /^[A-Za-z0-9._-]+$/
@@ -63,6 +73,8 @@ export interface TaskDetailDialogProps {
     worktreePath: string
     worktreeBranch: string | null
     pendingWorktreeName: string | null
+    attachmentStageId: string
+    attachments: TaskAttachmentSelection[]
   }) => Promise<boolean>
   onUpdate: (input: {
     task: Task
@@ -72,7 +84,9 @@ export interface TaskDetailDialogProps {
     worktreePath: string
     worktreeBranch: string | null
     pendingWorktreeName: string | null
-  }) => Promise<void>
+    attachmentStageId: string
+    attachments: TaskAttachmentSelection[]
+  }) => Promise<boolean>
   onDelete: (task: Task) => Promise<void>
 }
 
@@ -122,6 +136,12 @@ function TaskDetailForm({
       : (task?.worktreePath ?? '')
   const [worktreeSelection, setWorktreeSelection] = React.useState<string>(initialSelection)
   const [newWorktreeName, setNewWorktreeName] = React.useState(task?.pendingWorktreeName ?? '')
+  const [attachmentStageId] = React.useState(() => crypto.randomUUID())
+  const [attachments, setAttachments] = React.useState<TaskAttachmentSelection[]>(() =>
+    (task?.attachments ?? []).map((attachment) => ({ ...attachment, staged: false }))
+  )
+  const [attachmentError, setAttachmentError] = React.useState<string | null>(null)
+  const [attaching, setAttaching] = React.useState(false)
   const [editedFields, setEditedFields] = React.useState({
     title: false,
     worktree: false,
@@ -129,6 +149,13 @@ function TaskDetailForm({
   })
   const [submitAttempted, setSubmitAttempted] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
+
+  React.useEffect(
+    () => () => {
+      void discardTaskAttachmentStage({ stageId: attachmentStageId })
+    },
+    [attachmentStageId]
+  )
 
   const repository = repositories.find((r) => r.id === repositoryId) ?? null
   const worktrees = repository ? (worktreesByRepositoryId[repository.id] ?? []) : []
@@ -209,13 +236,24 @@ function TaskDetailForm({
       const target = resolveWorktree()
       if (!target) return
       if (isEdit && task) {
-        await onUpdate({ task, title: title.trim(), description, repository, ...target })
+        const updated = await onUpdate({
+          task,
+          title: title.trim(),
+          description,
+          repository,
+          ...target,
+          attachmentStageId,
+          attachments
+        })
+        if (!updated) return
       } else {
         const created = await onCreate({
           title: title.trim(),
           description,
           repository,
-          ...target
+          ...target,
+          attachmentStageId,
+          attachments
         })
         if (!created) return
       }
@@ -237,6 +275,48 @@ function TaskDetailForm({
   }
 
   const statusLabel: string | null = task ? TASK_STATUS_LABELS[task.status as TaskStatus] : null
+
+  const handleAttach = async (): Promise<void> => {
+    setAttaching(true)
+    setAttachmentError(null)
+    try {
+      const result = await pickTaskAttachments({ stageId: attachmentStageId })
+      if (!result.ok) {
+        setAttachmentError(result.message ?? 'Could not attach the selected files.')
+        return
+      }
+      setAttachments((current) => [
+        ...current,
+        ...result.attachments.map((attachment) => ({ ...attachment, staged: true }))
+      ])
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not attach files.')
+    } finally {
+      setAttaching(false)
+    }
+  }
+
+  const attachmentIcon = (mimeType: string): React.JSX.Element => {
+    if (mimeType.startsWith('image/')) return <FileImageIcon className="size-4" />
+    if (mimeType.includes('spreadsheet') || mimeType === 'text/csv')
+      return <FileSpreadsheetIcon className="size-4" />
+    if (mimeType.includes('presentation') || mimeType === 'application/vnd.ms-powerpoint')
+      return <PresentationIcon className="size-4" />
+    if (
+      mimeType.startsWith('text/') ||
+      mimeType.includes('wordprocessing') ||
+      mimeType === 'application/msword'
+    )
+      return <FileTextIcon className="size-4" />
+    return <FileIcon className="size-4" />
+  }
+
+  const formatSize = (bytes: number): string =>
+    bytes < 1024
+      ? `${bytes} B`
+      : bytes < 1024 * 1024
+        ? `${(bytes / 1024).toFixed(1)} KiB`
+        : `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 
   return (
     <DialogContent className="h-[75vh] max-h-[calc(100vh-2rem)] w-[75vw] max-w-[calc(100vw-2rem)] min-w-0 overflow-y-auto sm:max-w-[75vw]">
@@ -320,7 +400,7 @@ function TaskDetailForm({
             >
               <SelectValue placeholder="Select a worktree" />
             </SelectTrigger>
-            <SelectContent side="top">
+            <SelectContent>
               <SelectItem value={MAIN_BRANCH_VALUE}>Main branch</SelectItem>
               {worktrees.map((wt) => (
                 <SelectItem key={wt.path} value={wt.path}>
@@ -351,6 +431,72 @@ function TaskDetailForm({
               )}
             </div>
           ) : null}
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium">Attachments</p>
+              <p className="text-muted-foreground text-xs">
+                Documents and images are included when Copilot starts.
+              </p>
+            </div>
+            {readOnly ? null : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={busy || attaching}
+                onClick={() => void handleAttach()}
+              >
+                <PaperclipIcon className="size-3.5" />
+                {attaching ? 'Attaching...' : 'Attach files'}
+              </Button>
+            )}
+          </div>
+          {attachmentError ? (
+            <p role="alert" className="text-destructive text-xs">
+              {attachmentError}
+            </p>
+          ) : null}
+          {attachments.length > 0 ? (
+            <div className="divide-border overflow-hidden rounded-md border">
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.id}
+                  className="flex min-w-0 items-center gap-2 px-3 py-2 text-sm"
+                >
+                  <span className="text-muted-foreground shrink-0">
+                    {attachmentIcon(attachment.mimeType)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate" title={attachment.name}>
+                    {attachment.name}
+                  </span>
+                  <span className="text-muted-foreground shrink-0 text-xs">
+                    {formatSize(attachment.sizeBytes)}
+                  </span>
+                  {readOnly ? null : (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-7 shrink-0"
+                      aria-label={`Remove ${attachment.name}`}
+                      onClick={() =>
+                        setAttachments((current) =>
+                          current.filter((item) => item.id !== attachment.id)
+                        )
+                      }
+                    >
+                      <XIcon className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-xs">No files attached.</p>
+          )}
         </div>
 
         <DialogFooter className="gap-2 sm:justify-between">

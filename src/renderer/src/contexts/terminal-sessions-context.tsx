@@ -152,7 +152,7 @@ export function TerminalSessionsProvider({
 
       const message = notify ? notification(session, previous) : null
       if (message?.kind === 'attention' && session.transport === 'external') {
-        notifyUserActionWhenBackground(message.title, message.description)
+        notifyUserActionWhenBackground(message.title, message.description, 'dashboard')
       }
 
       if (
@@ -194,7 +194,7 @@ export function TerminalSessionsProvider({
   const notifyNativeInteraction = React.useCallback(
     (session: TerminalSession, requestId: string, message: string): void => {
       const title = `${session.label} needs your input`
-      notifyUserActionWhenBackground(title, message)
+      notifyUserActionWhenBackground(title, message, 'dashboard')
       if (suppressNotificationsRef.current) return
       toast.warning(title, {
         description: message,

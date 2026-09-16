@@ -1,8 +1,10 @@
 import {
   isPermissionGranted,
-  requestPermission,
-  sendNotification
+  requestPermission
 } from '@tauri-apps/plugin-notification'
+import { invoke } from '@tauri-apps/api/core'
+
+export type DesktopNotificationDestination = 'dashboard'
 
 let permission: Promise<boolean> | null = null
 
@@ -20,7 +22,11 @@ function notificationBody(message: string): string {
   return compact.length > 240 ? `${compact.slice(0, 237)}...` : compact
 }
 
-export function notifyUserActionWhenBackground(title: string, message: string): void {
+export function notifyUserActionWhenBackground(
+  title: string,
+  message: string,
+  destination: DesktopNotificationDestination
+): void {
   if (hasForegroundFocus()) return
 
   permission ??= canNotify().catch((error) => {
@@ -31,7 +37,9 @@ export function notifyUserActionWhenBackground(title: string, message: string): 
   void permission
     .then((granted) => {
       if (!granted) return
-      sendNotification({ title, body: notificationBody(message) })
+      return invoke('desktop_notification_show', {
+        request: { title, body: notificationBody(message), destination }
+      })
     })
     .catch((error) => {
       console.error('[desktop notifications] could not send notification:', error)

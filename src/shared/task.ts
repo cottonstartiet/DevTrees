@@ -2,6 +2,17 @@ export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done'
 export type TaskQueueStatus = 'queued' | 'running' | 'complete' | 'failed'
 export type TaskIntent = 'task' | 'browser-code-review'
 
+export type TaskAttachment = {
+  id: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+}
+
+export type TaskAttachmentSelection = TaskAttachment & {
+  staged: boolean
+}
+
 export function taskLaunchInitialMode(status: TaskStatus): 'plan' | 'autopilot' | undefined {
   if (status === 'todo') return 'plan'
   if (status === 'review') return 'autopilot'
@@ -48,6 +59,7 @@ export type Task = {
   queueOrder: number
   sortOrder: number
   executionTargetKey: string
+  attachments: TaskAttachment[]
   createdAt: number
   updatedAt: number
 }
@@ -62,11 +74,14 @@ export type CreateTaskRequest = {
   worktreePath: string
   worktreeBranch: string | null
   pendingWorktreeName: string | null
+  attachmentStageId: string
+  attachments: TaskAttachmentSelection[]
 }
 
 export type TaskErrorCode =
   | 'invalid-title'
   | 'invalid-intent'
+  | 'invalid-attachment'
   | 'not-found'
   | 'target-busy'
   | 'unknown'
@@ -85,6 +100,20 @@ export type UpdateTaskRequest = {
   worktreePath: string
   worktreeBranch: string | null
   pendingWorktreeName: string | null
+  attachmentStageId: string
+  attachments: TaskAttachmentSelection[]
+}
+
+export type PickTaskAttachmentsRequest = {
+  stageId: string
+}
+
+export type PickTaskAttachmentsResult =
+  | { ok: true; attachments: TaskAttachment[] }
+  | { ok: false; error: TaskErrorCode; message?: string }
+
+export type DiscardTaskAttachmentStageRequest = {
+  stageId: string
 }
 
 export type UpdateTaskResult =

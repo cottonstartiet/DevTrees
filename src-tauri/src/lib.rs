@@ -5,6 +5,7 @@ mod copilot_acp_sessions;
 mod copilot_analytics;
 mod copilot_history;
 mod db;
+mod desktop_notifications;
 mod error;
 mod gh;
 mod git;
@@ -71,6 +72,9 @@ pub fn run() {
             app.manage(TerminalSessionMonitor::default());
             app.manage(terminal_sessions::AcpSessionManager::default());
             app.manage(copilot_acp_sessions::SessionManager::default());
+            if let Err(e) = tasks::cleanup_attachment_storage(app.handle()) {
+                eprintln!("failed to clean task attachment storage: {e}");
+            }
             #[cfg(desktop)]
             tray::setup(app)?;
             // Restore native history; external status watches belong to this app run only.
@@ -98,6 +102,7 @@ pub fn run() {
             system::system_get_app_info,
             system::system_get_keep_awake,
             system::system_set_keep_awake,
+            desktop_notifications::desktop_notification_show,
             settings::settings_session_launch_mode,
             settings::settings_set_session_launch_mode,
             settings::settings_copilot_permission_profile,
@@ -159,6 +164,8 @@ pub fn run() {
             repo::repo_branch_web_url,
             repo::repo_detect_merge_state,
             tasks::tasks_list,
+            tasks::tasks_pick_attachments,
+            tasks::tasks_discard_attachment_stage,
             tasks::tasks_create,
             tasks::tasks_update,
             tasks::tasks_move,

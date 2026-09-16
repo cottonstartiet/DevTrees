@@ -15,6 +15,7 @@ use std::{
 };
 
 use agent_client_protocol::{schema::v1 as acp, Agent, ByteStreams, Client, ConnectionTo};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -40,6 +41,85 @@ fn error(value: impl std::fmt::Display) -> AppError {
 }
 
 const SESSION_SETUP_TIMEOUT: Duration = Duration::from_secs(90);
+const MAX_INLINE_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
+
+fn encode_file_uri(path: &std::path::Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let mut encoded = String::new();
+    for byte in normalized.as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':')
+        {
+            encoded.push(*byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    if encoded.starts_with('/') {
+        format!("file://{encoded}")
+    } else {
+        format!("file:///{encoded}")
+    }
+}
+
+fn initial_prompt_content(
+    req: &StartTerminalSessionRequest,
+    capabilities: &Value,
+) -> AppResult<Vec<Value>> {
+    let mut content = Vec::new();
+    if let Some(prompt) = req
+        .prompt
+        .as_ref()
+        .filter(|prompt| !prompt.trim().is_empty())
+    {
+        content.push(json!({"type":"text","text":prompt}));
+    }
+    let image_supported = capabilities["promptCapabilities"]["image"] == true;
+    let embedded_supported = capabilities["promptCapabilities"]["embeddedContext"] == true;
+    let mut inline_bytes = 0u64;
+    for attachment in &req.prepared_attachments {
+        let uri = encode_file_uri(&attachment.path);
+        let inline_image = image_supported
+            && matches!(
+                attachment.mime_type.as_str(),
+                "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+            )
+            && inline_bytes.saturating_add(attachment.size_bytes) <= MAX_INLINE_ATTACHMENT_BYTES;
+        if inline_image {
+            let bytes = std::fs::read(&attachment.path)?;
+            inline_bytes = inline_bytes.saturating_add(bytes.len() as u64);
+            content.push(json!({
+                "type":"image",
+                "mimeType":attachment.mime_type,
+                "data":BASE64.encode(bytes)
+            }));
+            continue;
+        }
+        if embedded_supported
+            && inline_bytes.saturating_add(attachment.size_bytes) <= MAX_INLINE_ATTACHMENT_BYTES
+            && (attachment.mime_type.starts_with("text/")
+                || matches!(
+                    attachment.mime_type.as_str(),
+                    "application/json" | "application/yaml" | "application/xml"
+                ))
+        {
+            let bytes = std::fs::read(&attachment.path)?;
+            if let Ok(text) = String::from_utf8(bytes) {
+                inline_bytes = inline_bytes.saturating_add(text.len() as u64);
+                content.push(json!({
+                    "type":"resource",
+                    "resource":{
+                        "uri":uri,
+                        "mimeType":attachment.mime_type,
+                        "text":text
+                    }
+                }));
+                continue;
+            }
+        }
+        content.push(json!({"type":"resource_link","uri":uri,"name":attachment.name}));
+    }
+    Ok(content)
+}
 
 async fn setup_request<T>(
     request: impl std::future::Future<Output = Result<T, acp::Error>>,
@@ -971,8 +1051,15 @@ async fn run_inner(
                 state.changed();
             }
             if req.resume_session_id.is_none() {
-                if let Some(prompt) = req.prompt.filter(|p| !p.trim().is_empty()) {
-                    if prompt.trim_start().starts_with('/') {
+                let prompt = initial_prompt_content(&req, &init["agentCapabilities"])
+                    .map_err(protocol_error)?;
+                if !prompt.is_empty() {
+                    if req.prepared_attachments.is_empty()
+                        && req
+                            .prompt
+                            .as_deref()
+                            .is_some_and(|prompt| prompt.trim_start().starts_with('/'))
+                    {
                         let discovery = tokio::time::timeout(Duration::from_secs(15), async {
                             loop {
                                 let wake = connected_owner.wake.notified();
@@ -983,11 +1070,13 @@ async fn run_inner(
                         }).await;
                         if let Ok(result) = discovery { result?; }
                     }
-                    if let Err(e) = enqueue(&connected_owner, uuid::Uuid::new_v4().to_string(), vec![json!({"type":"text","text":prompt})], false) {
-                        let mut state = connected_owner.state.lock().map_err(protocol_error)?;
-                        state.snapshot.error = Some(e.to_string());
-                        state.notice(format!("Initial instruction was not submitted: {e}\n\n{prompt}"), true);
-                    }
+                    enqueue(
+                        &connected_owner,
+                        uuid::Uuid::new_v4().to_string(),
+                        prompt,
+                        !req.prepared_attachments.is_empty(),
+                    )
+                    .map_err(protocol_error)?;
                 }
             }
             {

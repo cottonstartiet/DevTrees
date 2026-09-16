@@ -1,12 +1,15 @@
 import { useCallback } from 'react'
 
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
+import type { TaskAttachment } from '@shared/task'
 import type { CopilotSessionMode } from '@shared/terminal-session'
 
 export type CopilotLaunchOptions = {
   folderPath: string
   /** Initial prompt for a fresh session. Ignored when `resumeSessionId` is set. */
   prompt?: string
+  /** Durable task files to include with a fresh session's initial instruction. */
+  attachments?: TaskAttachment[]
   /** Resume an existing Copilot session by id instead of starting a fresh one. */
   resumeSessionId?: string
   /** Mode for a fresh Copilot conversation. Ignored when resuming. */
@@ -44,6 +47,7 @@ export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<Co
       const {
         folderPath,
         prompt,
+        attachments,
         resumeSessionId,
         initialMode,
         label,
@@ -59,6 +63,7 @@ export function useCopilotLauncher(): (opts: CopilotLaunchOptions) => Promise<Co
         {
           folderPath,
           prompt: prompt ?? '',
+          attachments,
           resumeSessionId,
           initialMode,
           label: resolvedLabel,

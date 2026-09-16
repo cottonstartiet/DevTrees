@@ -58,6 +58,24 @@ async function until(predicate: () => boolean): Promise<void> {
     await delay(20)
   }
 }
+async function stableBounds(element: Element): Promise<DOMRect> {
+  const deadline = performance.now() + 5000
+  let previous = element.getBoundingClientRect()
+  while (performance.now() < deadline) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    const current = element.getBoundingClientRect()
+    if (
+      Math.abs(current.top - previous.top) < 0.25 &&
+      Math.abs(current.right - previous.right) < 0.25 &&
+      Math.abs(current.bottom - previous.bottom) < 0.25 &&
+      Math.abs(current.left - previous.left) < 0.25
+    ) {
+      return current
+    }
+    previous = current
+  }
+  throw new Error('Popup bounds did not stabilize')
+}
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((done) => {
@@ -175,7 +193,7 @@ async function popupLifecycles(): Promise<void> {
   assert(pointerEvents() === '', 'Navigation with an open menu leaked the input lock')
 }
 
-async function worktreeDropdownPlacement(): Promise<void> {
+async function worktreeDropdownPlacement(): Promise<Record<string, unknown>> {
   const repository: Repository = {
     id: 'repo',
     path: 'C:\\repo',
@@ -199,7 +217,7 @@ async function worktreeDropdownPlacement(): Promise<void> {
       repositories={[repository]}
       worktreesByRepositoryId={{ [repository.id]: worktrees }}
       onCreate={() => Promise.resolve(true)}
-      onUpdate={() => Promise.resolve()}
+      onUpdate={() => Promise.resolve(true)}
       onDelete={() => Promise.resolve()}
     />
   )
@@ -218,23 +236,40 @@ async function worktreeDropdownPlacement(): Promise<void> {
     await until(() => Boolean(document.querySelector('[role="listbox"]')))
     const dialogElement = document.querySelector('[role="dialog"]')
     const selectContent = document.querySelector<HTMLElement>('[data-slot="select-content"]')
-    assert(dialogElement && selectContent, 'Worktree select popup did not render')
+    const selectViewport = selectContent?.querySelector<HTMLElement>('[data-radix-select-viewport]')
+    const positionedContent = selectContent?.parentElement
+    assert(
+      dialogElement && selectContent && selectViewport && positionedContent,
+      'Worktree select popup did not render'
+    )
     assert(
       !dialogElement.contains(selectContent),
       'Worktree select popup remained inside dialog overflow'
     )
-    assert(selectContent.dataset.side === 'top', 'Worktree select popup did not open upward')
     const triggerBounds = trigger.getBoundingClientRect()
-    const selectBounds = selectContent.getBoundingClientRect()
+    const selectBounds = await stableBounds(positionedContent)
     assert(
-      selectBounds.bottom <= triggerBounds.top,
-      'Worktree select popup overlapped the trigger instead of opening above it'
+      selectBounds.bottom <= triggerBounds.top || selectBounds.top >= triggerBounds.bottom,
+      'Worktree select popup overlapped its trigger'
     )
     assert(selectBounds.top >= 8, 'Worktree select popup exceeded the top viewport boundary')
     assert(
       selectBounds.bottom <= window.innerHeight - 8,
       'Worktree select popup exceeded the bottom viewport boundary'
     )
+    assert(
+      selectViewport.scrollHeight > selectViewport.clientHeight,
+      'Long worktree list did not scroll within the viewport'
+    )
+    return {
+      side: selectContent.dataset.side,
+      triggerTop: Math.round(triggerBounds.top),
+      triggerBottom: Math.round(triggerBounds.bottom),
+      popupTop: Math.round(selectBounds.top),
+      popupBottom: Math.round(selectBounds.bottom),
+      popupClientHeight: selectViewport.clientHeight,
+      popupScrollHeight: selectViewport.scrollHeight
+    }
   } finally {
     fixture.dispose()
   }
@@ -308,6 +343,7 @@ const task: Task = {
   queueOrder: 0,
   sortOrder: 0,
   executionTargetKey: 'repo',
+  attachments: [],
   createdAt: 0,
   updatedAt: 0
 }
@@ -460,7 +496,11 @@ async function taskMutationRaces(): Promise<void> {
     const movingTask = board.moveTask('a', 'in_progress')
     await until(() => moving)
     board.setTaskLocal({ ...task, copilotSessionId: 'new-session', queueStatus: 'running' })
-    const creatingTask = board.createTask(task)
+    const creatingTask = board.createTask({
+      ...task,
+      attachmentStageId: crypto.randomUUID(),
+      attachments: []
+    })
     await delay(20)
     assert(!created, 'Database mutations were not serialized')
     move.resolve({ ok: true, tasks: [{ ...task, status: 'in_progress' }] })

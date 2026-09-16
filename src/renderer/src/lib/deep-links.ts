@@ -12,6 +12,13 @@ export type BrowserCodeReviewAction = {
   repositoryName: string | null
 }
 
+export type AppNavigationAction = {
+  kind: 'navigate'
+  view: 'dashboard'
+}
+
+export type DevTreesDeepLinkAction = BrowserCodeReviewAction | AppNavigationAction
+
 export type BrowserCodeReviewDraft = BrowserCodeReviewAction & {
   id: string
   title: string
@@ -47,7 +54,7 @@ export function repositoryNameFromSourceUrl(source: URL): string | null {
   return null
 }
 
-export function parseDevTreesDeepLink(rawUrl: string): BrowserCodeReviewAction {
+export function parseDevTreesDeepLink(rawUrl: string): DevTreesDeepLinkAction {
   let deepLink: URL
   try {
     deepLink = new URL(rawUrl)
@@ -55,8 +62,25 @@ export function parseDevTreesDeepLink(rawUrl: string): BrowserCodeReviewAction {
     throw new Error('DevTrees received an invalid link.')
   }
 
+  if (deepLink.protocol !== 'devtrees:') {
+    throw new Error('This DevTrees link is not supported.')
+  }
+
+  if (deepLink.hostname === 'navigate') {
+    if (
+      deepLink.pathname !== '/dashboard' ||
+      deepLink.search !== '' ||
+      deepLink.hash !== '' ||
+      deepLink.username !== '' ||
+      deepLink.password !== '' ||
+      deepLink.port !== ''
+    ) {
+      throw new Error('This DevTrees navigation link is not supported.')
+    }
+    return { kind: 'navigate', view: 'dashboard' }
+  }
+
   if (
-    deepLink.protocol !== 'devtrees:' ||
     deepLink.hostname !== 'tasks' ||
     deepLink.pathname !== '/new' ||
     deepLink.searchParams.get('intent') !== 'code-review'

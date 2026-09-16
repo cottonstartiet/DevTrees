@@ -1,6 +1,16 @@
 use super::*;
 
 #[test]
+fn windows_attachment_paths_become_encoded_file_uris() {
+    assert_eq!(
+        encode_file_uri(std::path::Path::new(
+            r"C:\Users\Jane Doe\repo\.devtrees\attachments\spec file.docx"
+        )),
+        "file:///C:/Users/Jane%20Doe/repo/.devtrees/attachments/spec%20file.docx"
+    );
+}
+
+#[test]
 fn session_setup_deadline_preserves_errors_and_bounds_unanswered_requests() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         assert_eq!(

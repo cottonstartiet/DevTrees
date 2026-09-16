@@ -71,8 +71,16 @@ export type TerminalSessionResult =
 
 export type CopilotSessionMode = 'interactive' | 'plan' | 'autopilot'
 
+export type SessionAttachment = {
+  id: string
+  name: string
+  mimeType: string
+  sizeBytes: number
+}
+
 export type StartTerminalSessionRequest = Omit<WatchTerminalSessionRequest, 'id'> & {
   prompt?: string
+  attachments?: SessionAttachment[]
   resumeSessionId?: string
   /** Mode for a fresh Copilot conversation. Ignored when resuming. */
   initialMode?: CopilotSessionMode

@@ -4,8 +4,11 @@ import type {
   ClaimTaskRunRequest,
   DeleteTaskRequest,
   DeleteTaskResult,
+  DiscardTaskAttachmentStageRequest,
   MoveTaskRequest,
   MoveTaskResult,
+  PickTaskAttachmentsRequest,
+  PickTaskAttachmentsResult,
   SetTaskCopilotSessionRequest,
   SetTaskQueueStatusRequest,
   Task,
@@ -15,6 +18,18 @@ import type {
 
 export function listTasks(): Promise<Task[]> {
   return window.api.tasks.list()
+}
+
+export function pickTaskAttachments(
+  req: PickTaskAttachmentsRequest
+): Promise<PickTaskAttachmentsResult> {
+  return window.api.tasks.pickAttachments(req)
+}
+
+export function discardTaskAttachmentStage(
+  req: DiscardTaskAttachmentStageRequest
+): Promise<void> {
+  return window.api.tasks.discardAttachmentStage(req)
 }
 
 export function createTask(req: CreateTaskRequest): Promise<CreateTaskResult> {

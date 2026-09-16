@@ -255,7 +255,9 @@ export function TasksPage({
           repository,
           worktreePath,
           worktreeBranch,
-          pendingWorktreeName
+          pendingWorktreeName,
+          attachmentStageId,
+          attachments
         }) => {
           const created = await createTask({
             title,
@@ -266,7 +268,9 @@ export function TasksPage({
             repositoryPath: repository.path,
             worktreePath,
             worktreeBranch,
-            pendingWorktreeName
+            pendingWorktreeName,
+            attachmentStageId,
+            attachments
           })
           if (created?.intent === 'browser-code-review') {
             void handleStartTask(created)
@@ -280,9 +284,11 @@ export function TasksPage({
           repository,
           worktreePath,
           worktreeBranch,
-          pendingWorktreeName
+          pendingWorktreeName,
+          attachmentStageId,
+          attachments
         }) => {
-          await updateTask({
+          const updated = await updateTask({
             id: task.id,
             title,
             description,
@@ -291,8 +297,11 @@ export function TasksPage({
             repositoryPath: repository.path,
             worktreePath,
             worktreeBranch,
-            pendingWorktreeName
+            pendingWorktreeName,
+            attachmentStageId,
+            attachments
           })
+          return updated !== null
         }}
         onDelete={async (task) => {
           await deleteTask(task.id)

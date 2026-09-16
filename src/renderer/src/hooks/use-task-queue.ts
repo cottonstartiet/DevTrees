@@ -156,7 +156,9 @@ export function useTaskQueue({
           repositoryPath: task.repositoryPath,
           worktreePath: worktree.path,
           worktreeBranch: worktree.branch,
-          pendingWorktreeName: null
+          pendingWorktreeName: null,
+          attachmentStageId: crypto.randomUUID(),
+          attachments: task.attachments.map((attachment) => ({ ...attachment, staged: false }))
         })
         if (!updated) return null
         await refreshWorktreesFor(repository.id)
@@ -280,6 +282,7 @@ export function useTaskQueue({
         const result = await launchCopilot({
           folderPath: claimedTask.worktreePath,
           prompt,
+          attachments: claimedTask.attachments,
           initialMode: taskLaunchInitialMode(task.status),
           label: isReview
             ? `Review: ${claimedTask.title.trim() || claimedTask.repositoryName}`

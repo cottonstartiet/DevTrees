@@ -300,6 +300,13 @@ function AppShell(): React.JSX.Element {
   const handleDeepLink = useCallback(async (rawUrl: string): Promise<void> => {
     try {
       const action = parseDevTreesDeepLink(rawUrl)
+      if (action.kind === 'navigate') {
+        setTaskDialogOpen(false)
+        setActiveTaskForDialog(null)
+        setTaskDraft(null)
+        setView(action.view)
+        return
+      }
       const savedPrompt = await window.api.settings.browserCodeReviewPrompt()
       const draft = createBrowserCodeReviewDraft(action, savedPrompt.details)
       setView('tasks')

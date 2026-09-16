@@ -221,6 +221,19 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
         )?;
     }
     tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS task_attachments (
+             id          TEXT PRIMARY KEY,
+             task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+             name        TEXT NOT NULL,
+             mime_type   TEXT NOT NULL,
+             size_bytes  INTEGER NOT NULL,
+             stored_name TEXT NOT NULL,
+             created_at  INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_task_attachments_task
+             ON task_attachments(task_id, created_at ASC);",
+    )?;
+    tx.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_tasks_running_target
              ON tasks(execution_target_key)
              WHERE queue_status = 'running';",
@@ -260,7 +273,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              payload TEXT NOT NULL
          );
          DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
-         PRAGMA user_version = 11;",
+         PRAGMA user_version = 12;",
     )?;
     let prompt_seeded: bool = tx.query_row(
         "SELECT EXISTS(
@@ -321,7 +334,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 11);
+        assert_eq!(version, 12);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -340,6 +353,7 @@ mod tests {
                 "auto_review_triggers",
                 "repositories",
                 "saved_prompts",
+                "task_attachments",
                 "tasks",
                 "terminal_sessions"
             ]

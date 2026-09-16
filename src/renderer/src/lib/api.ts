@@ -117,8 +117,11 @@ import type {
   ClaimTaskRunRequest,
   DeleteTaskRequest,
   DeleteTaskResult,
+  DiscardTaskAttachmentStageRequest,
   MoveTaskRequest,
   MoveTaskResult,
+  PickTaskAttachmentsRequest,
+  PickTaskAttachmentsResult,
   SetTaskCopilotSessionRequest,
   SetTaskQueueStatusRequest,
   Task,
@@ -487,6 +490,14 @@ const api = {
   },
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),
+    pickAttachments: (req: PickTaskAttachmentsRequest): Promise<PickTaskAttachmentsResult> =>
+      result('tasks_pick_attachments', { ...req }, (message) => ({
+        ok: false,
+        error: 'invalid-attachment',
+        message
+      })),
+    discardAttachmentStage: (req: DiscardTaskAttachmentStageRequest): Promise<void> =>
+      invoke('tasks_discard_attachment_stage', { ...req }),
     create: (req: CreateTaskRequest): Promise<CreateTaskResult> =>
       result('tasks_create', { ...req }, (message) => ({
         ok: false,

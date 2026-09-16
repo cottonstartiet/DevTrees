@@ -169,6 +169,8 @@ pub struct StartTerminalSessionRequest {
     #[serde(default)]
     pub prompt: Option<String>,
     #[serde(default)]
+    pub attachments: Vec<crate::tasks::TaskAttachment>,
+    #[serde(default)]
     pub resume_session_id: Option<String>,
     #[serde(default)]
     pub initial_mode: Option<CopilotSessionMode>,
@@ -180,6 +182,8 @@ pub struct StartTerminalSessionRequest {
     pub repository: Option<String>,
     #[serde(default)]
     pub branch: Option<String>,
+    #[serde(skip)]
+    pub prepared_attachments: Vec<crate::tasks::PreparedTaskAttachment>,
 }
 
 #[derive(Serialize)]
@@ -1857,6 +1861,24 @@ pub fn terminal_sessions_focus(
     Ok(crate::system::focus_copilot_terminal(&id))
 }
 
+fn external_initial_prompt(req: &StartTerminalSessionRequest, folder_path: &str) -> String {
+    let mut prompt = req.prompt.clone().unwrap_or_default();
+    if req.prepared_attachments.is_empty() {
+        return prompt;
+    }
+    prompt.push_str("\n\nAttached task files (read each file before acting):\n");
+    for attachment in &req.prepared_attachments {
+        let relative = attachment
+            .path
+            .strip_prefix(folder_path)
+            .unwrap_or(&attachment.path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        prompt.push_str(&format!("- @{relative} ({})\n", attachment.name));
+    }
+    prompt
+}
+
 fn start_external(
     app: &AppHandle,
     req: StartTerminalSessionRequest,
@@ -1878,6 +1900,7 @@ fn start_external(
         .get(&id)
         .or(saved.as_ref())
         .map(|watch| &watch.session);
+    let initial_prompt = external_initial_prompt(&req, &req.folder_path);
     let now = now_ms();
     let session = TerminalSession {
         id: id.clone(),
@@ -1914,7 +1937,7 @@ fn start_external(
         if req.resume_session_id.is_some() {
             ""
         } else {
-            req.prompt.as_deref().unwrap_or("")
+            &initial_prompt
         },
         Some(&id),
         if req.resume_session_id.is_some() {
@@ -2460,6 +2483,19 @@ pub async fn terminal_sessions_start(
         req.resume_session_id = Some(id.clone());
         req.prompt = None;
         req.initial_mode = None;
+        req.attachments.clear();
+        req.prepared_attachments.clear();
+    } else if !req.attachments.is_empty() {
+        let task_id = req
+            .task_id
+            .as_deref()
+            .ok_or_else(|| AppError::msg("Task attachments require a task id."))?;
+        req.prepared_attachments = crate::tasks::prepare_task_attachments(
+            &app,
+            task_id,
+            &req.folder_path,
+            &req.attachments,
+        )?;
     }
     let saved_permission_profile = if req.resume_session_id.is_some() {
         let db = app.state::<DbState>();
@@ -2606,6 +2642,34 @@ pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_prompt_uses_worktree_relative_attachment_mentions() {
+        let req = StartTerminalSessionRequest {
+            folder_path: r"C:\repo".into(),
+            label: "Task".into(),
+            prompt: Some("Implement the task".into()),
+            attachments: Vec::new(),
+            resume_session_id: None,
+            initial_mode: Some(CopilotSessionMode::Plan),
+            permission_profile: None,
+            task_id: Some("task".into()),
+            repository: Some("Repo".into()),
+            branch: Some("main".into()),
+            prepared_attachments: vec![crate::tasks::PreparedTaskAttachment {
+                name: "Requirements doc.docx".into(),
+                mime_type:
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into(),
+                size_bytes: 42,
+                path: PathBuf::from(
+                    r"C:\repo\.devtrees\attachments\task\attachment-Requirements_doc.docx",
+                ),
+            }],
+        };
+        let prompt = external_initial_prompt(&req, &req.folder_path);
+        assert!(prompt.contains("@.devtrees/attachments/task/attachment-Requirements_doc.docx"));
+        assert!(prompt.contains("(Requirements doc.docx)"));
+    }
 
     #[test]
     fn external_poll_cannot_restore_removed_or_replaced_watches() {
