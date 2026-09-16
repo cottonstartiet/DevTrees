@@ -29,6 +29,7 @@ yarn dev:web      # internal renderer dev server (used by tauri dev)
 yarn typecheck    # tsc --noEmit (renderer)
 yarn lint         # eslint
 yarn build:web    # vite build (renderer only -> dist-web)
+yarn build:remote # vite build (LAN browser UI -> dist-remote)
 yarn build        # tauri build (signed NSIS installer + updater artifacts)
 ```
 
