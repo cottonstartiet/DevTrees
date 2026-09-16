@@ -10,6 +10,7 @@ mod gh;
 mod git;
 mod github;
 mod local_review;
+mod local_web;
 mod pr_review;
 mod process;
 mod repo;
@@ -71,6 +72,7 @@ pub fn run() {
             app.manage(TerminalSessionMonitor::default());
             app.manage(terminal_sessions::AcpSessionManager::default());
             app.manage(copilot_acp_sessions::SessionManager::default());
+            app.manage(local_web::LocalWebState::default());
             #[cfg(desktop)]
             tray::setup(app)?;
             // Restore native history; external status watches belong to this app run only.
@@ -98,6 +100,9 @@ pub fn run() {
             system::system_get_app_info,
             system::system_get_keep_awake,
             system::system_set_keep_awake,
+            local_web::local_web_start,
+            local_web::local_web_status,
+            local_web::local_web_stop,
             settings::settings_session_launch_mode,
             settings::settings_set_session_launch_mode,
             settings::settings_copilot_permission_profile,
@@ -186,6 +191,7 @@ pub fn run() {
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 app.state::<system::KeepAwakeState>().shutdown();
+                local_web::shutdown(app);
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 let manager = app.state::<copilot_acp_sessions::SessionManager>();
@@ -211,6 +217,7 @@ pub fn run() {
             }
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<system::KeepAwakeState>().shutdown();
+                local_web::shutdown(app);
                 tauri::async_runtime::block_on(copilot_acp_sessions::shutdown(app));
             }
         });

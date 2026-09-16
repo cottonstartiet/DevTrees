@@ -109,6 +109,7 @@ import type {
   RepoPrThreadsResult
 } from '@shared/reviews'
 import type { AppInfo, KeepAwakeResult, LaunchResult } from '@shared/system'
+import type { LocalWebStatus } from '@shared/local-web'
 import type { CopilotHistoryListResult } from '@shared/copilot-history'
 import type { CopilotAnalyticsResult } from '@shared/copilot-analytics'
 import type {
@@ -400,6 +401,11 @@ const api = {
         enabled: !enabled,
         error
       }))
+  },
+  localWeb: {
+    start: (): Promise<LocalWebStatus> => invoke('local_web_start'),
+    status: (): Promise<LocalWebStatus> => invoke('local_web_status'),
+    stop: (): Promise<LocalWebStatus> => invoke('local_web_stop')
   },
   settings: {
     sessionLaunchMode: (): Promise<SessionLaunchMode> => invoke('settings_session_launch_mode'),

@@ -320,7 +320,7 @@ function TaskDetailForm({
             >
               <SelectValue placeholder="Select a worktree" />
             </SelectTrigger>
-            <SelectContent side="top">
+            <SelectContent side="top" className="data-[state=open]:animate-none">
               <SelectItem value={MAIN_BRANCH_VALUE}>Main branch</SelectItem>
               {worktrees.map((wt) => (
                 <SelectItem key={wt.path} value={wt.path}>

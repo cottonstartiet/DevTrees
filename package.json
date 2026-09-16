@@ -12,7 +12,10 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "yarn typecheck:web",
     "dev:web": "vite",
+    "dev:remote": "vite --config vite.remote.config.ts",
     "build:web": "vite build",
+    "build:remote": "vite build --config vite.remote.config.ts",
+    "build:frontends": "yarn build:web && yarn build:remote",
     "tauri": "node scripts/tauri.mjs",
     "dev": "node scripts/tauri.mjs dev",
     "build": "tauri build"

@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/node_modules',
       '**/dist',
       '**/dist-web',
+      '**/dist-remote',
       '**/out',
       'src-tauri/**',
       '.github/scripts/**',
