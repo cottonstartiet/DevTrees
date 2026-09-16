@@ -6,7 +6,7 @@ import {
   isTerminalSessionFinished,
   useTerminalSessions
 } from '@/contexts/terminal-sessions-context'
-import { buildCodeReviewPrompt } from '@/lib/copilot-code-review-prompt'
+import { buildTaskReviewPrompt } from '@/lib/copilot-code-review-prompt'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { saveTaskQueueSettings, TASK_QUEUE_SETTINGS_CHANGED_EVENT } from '@/lib/task-queue-settings'
 import { claimTaskRun, setTaskCopilotSession } from '@/lib/tasks'
@@ -267,8 +267,9 @@ export function useTaskQueue({
 
         const isReview = task.status === 'review'
         const prompt = isReview
-          ? buildCodeReviewPrompt({
+          ? buildTaskReviewPrompt({
               kind: 'task',
+              intent: claimedTask.intent,
               folderPath: claimedTask.worktreePath,
               taskTitle: claimedTask.title,
               taskDescription: claimedTask.description,
@@ -489,12 +490,13 @@ export function useTaskQueue({
 
   const startTask = React.useCallback(
     async (task: Task): Promise<void> => {
-      if (task.status !== 'todo') return
+      if (task.status !== 'todo' && task.status !== 'review') return
+      if (task.status === 'review' && settings.mode === 'automatic') return
       if (!hasAvailableSlot()) return
       if (!hasAvailableTarget(task)) return
       await executeTask(task, true)
     },
-    [executeTask, hasAvailableSlot, hasAvailableTarget]
+    [executeTask, hasAvailableSlot, hasAvailableTarget, settings.mode]
   )
 
   const handleMoveTask = React.useCallback(
@@ -517,7 +519,7 @@ export function useTaskQueue({
         if (!hasAvailableSlot()) return
         if (!hasAvailableTarget(task)) return
         await moveTask(task.id, 'review', beforeId)
-        await executeTask({ ...task, status: 'review' }, true)
+        await startTask({ ...task, status: 'review' })
         return
       }
 
@@ -557,7 +559,6 @@ export function useTaskQueue({
     },
     [
       canReviewTask,
-      executeTask,
       forgetTerminalSession,
       hasAvailableSlot,
       hasAvailableTarget,

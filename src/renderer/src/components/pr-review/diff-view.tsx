@@ -76,7 +76,10 @@ export function DiffView({
     return () => window.removeEventListener('mouseup', finish)
   }, [isDragging])
 
-  const headLines = React.useMemo(() => (headText ? headText.split('\n') : null), [headText])
+  const headLines = React.useMemo(
+    () => (headText ? headText.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/) : null),
+    [headText]
+  )
   const rows = React.useMemo(
     () => buildDiffRows(diff, headLines, expanded),
     [diff, headLines, expanded]

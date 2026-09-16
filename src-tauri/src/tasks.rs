@@ -13,6 +13,8 @@ pub struct Task {
     pub id: String,
     pub title: String,
     pub description: String,
+    /// "task" | "browser-code-review"
+    pub intent: String,
     /// "todo" | "in_progress" | "review" | "done"
     pub status: String,
     pub repository_id: String,
@@ -130,6 +132,18 @@ fn is_valid_status(status: &str) -> bool {
     matches!(status, "todo" | "in_progress" | "review" | "done")
 }
 
+fn is_valid_intent(intent: &str) -> bool {
+    matches!(intent, "task" | "browser-code-review")
+}
+
+fn initial_status_for_intent(intent: &str) -> &'static str {
+    if intent == "browser-code-review" {
+        "review"
+    } else {
+        "todo"
+    }
+}
+
 fn normalize_target_part(value: &str, path: bool) -> String {
     let mut normalized = value.trim().replace('/', "\\").to_lowercase();
     if path {
@@ -168,24 +182,26 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         id: row.get(0)?,
         title: row.get(1)?,
         description: row.get(2)?,
-        status: row.get(3)?,
-        repository_id: row.get(4)?,
-        repository_name: row.get(5)?,
-        repository_path: row.get(6)?,
-        worktree_path: row.get(7)?,
-        worktree_branch: row.get(8)?,
-        pending_worktree_name: row.get(9)?,
-        copilot_session_id: row.get(10)?,
-        queue_status: row.get(11)?,
-        queue_order: row.get(12)?,
-        sort_order: row.get(13)?,
-        execution_target_key: row.get(14)?,
-        created_at: row.get(15)?,
-        updated_at: row.get(16)?,
+        intent: row.get(3)?,
+        status: row.get(4)?,
+        repository_id: row.get(5)?,
+        repository_name: row.get(6)?,
+        repository_path: row.get(7)?,
+        worktree_path: row.get(8)?,
+        worktree_branch: row.get(9)?,
+        pending_worktree_name: row.get(10)?,
+        copilot_session_id: row.get(11)?,
+        queue_status: row.get(12)?,
+        queue_order: row.get(13)?,
+        sort_order: row.get(14)?,
+        execution_target_key: row.get(15)?,
+        created_at: row.get(16)?,
+        updated_at: row.get(17)?,
     })
 }
 
-const SELECT_COLUMNS: &str = "id, title, description, status, repository_id, repository_name,
+const SELECT_COLUMNS: &str =
+    "id, title, description, intent, status, repository_id, repository_name,
      repository_path, worktree_path, worktree_branch, pending_worktree_name,
      copilot_session_id, queue_status, queue_order, sort_order,
      execution_target_key, created_at, updated_at";
@@ -241,6 +257,7 @@ pub async fn tasks_create(
     state: State<'_, DbState>,
     title: String,
     description: String,
+    intent: Option<String>,
     repository_id: String,
     repository_name: String,
     repository_path: String,
@@ -255,6 +272,14 @@ pub async fn tasks_create(
             Some("Title is required.".into()),
         ));
     }
+    let intent = intent.unwrap_or_else(|| "task".into());
+    if !is_valid_intent(&intent) {
+        return Ok(TaskResult::err(
+            "invalid-intent",
+            Some("Task intent is not supported.".into()),
+        ));
+    }
+    let status = initial_status_for_intent(&intent);
 
     let conn = state
         .0
@@ -262,7 +287,7 @@ pub async fn tasks_create(
         .map_err(|_| AppError::msg("db mutex poisoned"))?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_ms();
-    let sort_order = next_sort_order(&conn, "todo");
+    let sort_order = next_sort_order(&conn, status);
     let queue_order = next_queue_order(&conn);
     let execution_target_key = execution_target_key(
         &repository_id,
@@ -271,15 +296,17 @@ pub async fn tasks_create(
     );
     conn.execute(
         "INSERT INTO tasks (
-            id, title, description, status, repository_id, repository_name, repository_path,
+            id, title, description, intent, status, repository_id, repository_name, repository_path,
             worktree_path, worktree_branch, pending_worktree_name, copilot_session_id,
             queue_status, queue_order, sort_order, execution_target_key, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, 'todo', ?4, ?5, ?6, ?7, ?8, ?9, NULL,
-                   'queued', ?10, ?11, ?12, ?13, ?13)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, NULL,
+                   'queued', ?12, ?13, ?14, ?15, ?15)",
         rusqlite::params![
             id,
             trimmed_title,
             description,
+            intent,
+            status,
             repository_id,
             repository_name,
             repository_path,
@@ -583,6 +610,7 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE tasks (
                 id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                intent TEXT NOT NULL DEFAULT 'task',
                 status TEXT NOT NULL, repository_id TEXT NOT NULL, repository_name TEXT NOT NULL,
                 repository_path TEXT NOT NULL, worktree_path TEXT NOT NULL, worktree_branch TEXT,
                 pending_worktree_name TEXT, copilot_session_id TEXT, queue_status TEXT NOT NULL,
@@ -621,6 +649,12 @@ mod tests {
             execution_target_key("Repo-ID", "C:\\Repo", Some(" Feature-One ")),
             execution_target_key("repo-id", "ignored", Some("feature-one"))
         );
+    }
+
+    #[test]
+    fn browser_reviews_start_in_review_status() {
+        assert_eq!(initial_status_for_intent("task"), "todo");
+        assert_eq!(initial_status_for_intent("browser-code-review"), "review");
     }
 
     #[test]

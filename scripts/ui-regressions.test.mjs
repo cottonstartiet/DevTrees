@@ -37,6 +37,29 @@ test(
       root: process.cwd(),
       logLevel: 'error',
       define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+      plugins: [
+        {
+          name: 'review-renderer-stubs',
+          enforce: 'pre',
+          config() {
+            const replacement = resolve('scripts', 'ui-regression-review-stubs.tsx')
+            return {
+              resolve: {
+                alias: [
+                  {
+                    find: '@/components/pr-review/markdown-preview',
+                    replacement
+                  },
+                  {
+                    find: '@/components/pr-review/mermaid-viewer',
+                    replacement
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
       build: {
         outDir: directory,
         emptyOutDir: false,
@@ -138,6 +161,6 @@ test(
       if (report.metrics) t.diagnostic(`${report.name}: ${JSON.stringify(report.metrics)}`)
       assert.equal(report.error, undefined, `${report.name}: ${report.error}`)
     }
-    assert.equal(reports.length, 8)
+    assert.equal(reports.length, 10)
   }
 )

@@ -1,5 +1,6 @@
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done'
 export type TaskQueueStatus = 'queued' | 'running' | 'complete' | 'failed'
+export type TaskIntent = 'task' | 'browser-code-review'
 
 export function taskLaunchInitialMode(status: TaskStatus): 'plan' | 'autopilot' | undefined {
   if (status === 'todo') return 'plan'
@@ -34,6 +35,7 @@ export type Task = {
   id: string
   title: string
   description: string
+  intent: TaskIntent
   status: TaskStatus
   repositoryId: string
   repositoryName: string
@@ -53,6 +55,7 @@ export type Task = {
 export type CreateTaskRequest = {
   title: string
   description: string
+  intent?: TaskIntent
   repositoryId: string
   repositoryName: string
   repositoryPath: string
@@ -61,7 +64,12 @@ export type CreateTaskRequest = {
   pendingWorktreeName: string | null
 }
 
-export type TaskErrorCode = 'invalid-title' | 'not-found' | 'target-busy' | 'unknown'
+export type TaskErrorCode =
+  | 'invalid-title'
+  | 'invalid-intent'
+  | 'not-found'
+  | 'target-busy'
+  | 'unknown'
 
 export type CreateTaskResult =
   | { ok: true; task: Task }

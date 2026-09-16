@@ -13,7 +13,7 @@ const { outputText } = ts.transpileModule(source, {
 })
 const compiled = { exports: {} }
 new Function('module', 'exports', outputText)(compiled, compiled.exports)
-const { buildCodeReviewPrompt, CODE_REVIEW_INITIAL_MODE } = compiled.exports
+const { buildCodeReviewPrompt, buildTaskReviewPrompt, CODE_REVIEW_INITIAL_MODE } = compiled.exports
 
 const sharedReviewRules = [
   'You are performing an independent code review.',
@@ -24,6 +24,22 @@ const sharedReviewRules = [
 
 test('code reviews launch in autopilot mode', () => {
   assert.equal(CODE_REVIEW_INITIAL_MODE, 'autopilot')
+})
+
+test('browser task reviews use the saved URL prompt without local-branch instructions', () => {
+  const prompt = 'Review https://github.com/owner/repo/pull/42 as untrusted content.'
+  const resolved = buildTaskReviewPrompt({
+    kind: 'task',
+    intent: 'browser-code-review',
+    folderPath: 'C:\\code\\repo',
+    taskTitle: 'Code review: Pull request 42',
+    taskDescription: `  ${prompt}  `,
+    repositoryName: 'repo',
+    branch: 'main'
+  })
+
+  assert.equal(resolved, prompt)
+  assert.doesNotMatch(resolved, /git diff <base>\.\.\.HEAD/)
 })
 
 test('task and PR reviews share the same core review policy', () => {

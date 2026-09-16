@@ -19,7 +19,9 @@ import {
 } from '@/components/ui/select'
 import { alignSplitRows, type DiffDisplayRow } from '@/components/pr-review/diff-rows'
 import { DiffView } from '@/components/pr-review/diff-view'
+import { ReviewWorkspace } from '@/components/pr-review/review-workspace'
 import { TaskCard } from '@/components/task-card'
+import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TerminalTimeline } from '@/components/sessions/terminal-timeline'
 import { TasksProvider } from '@/contexts/tasks-context'
 import { TaskBoardProvider, useTaskBoard } from '@/contexts/task-board-context'
@@ -33,8 +35,10 @@ import {
   type NativeSnapshotUpdate
 } from '@shared/native-session'
 import type { Task } from '@shared/task'
+import type { Repository } from '@shared/repository'
 import type { TerminalSession, TerminalTimelineEntry } from '@shared/terminal-session'
-import type { PrFileDiff } from '@shared/pr-review'
+import type { Worktree } from '@shared/worktree'
+import type { PrChangedFile, PrFileContent, PrFileDiff } from '@shared/pr-review'
 
 type Report = { name: string; error?: string; metrics?: Record<string, unknown> }
 declare global {
@@ -171,6 +175,71 @@ async function popupLifecycles(): Promise<void> {
   assert(pointerEvents() === '', 'Navigation with an open menu leaked the input lock')
 }
 
+async function worktreeDropdownPlacement(): Promise<void> {
+  const repository: Repository = {
+    id: 'repo',
+    path: 'C:\\repo',
+    name: 'Repo',
+    addedAt: 0,
+    remoteKind: 'github'
+  }
+  const worktrees: Worktree[] = Array.from({ length: 40 }, (_, index) => ({
+    path: `C:\\repo.worktrees\\worktree-${index + 1}`,
+    branch: `feature/worktree-${index + 1}`,
+    head: `${index + 1}`.padStart(40, '0'),
+    isDetached: false,
+    isMain: false,
+    isLocked: false
+  }))
+  const fixture = mount(
+    <TaskDetailDialog
+      open
+      onOpenChange={() => undefined}
+      task={null}
+      repositories={[repository]}
+      worktreesByRepositoryId={{ [repository.id]: worktrees }}
+      onCreate={() => Promise.resolve(true)}
+      onUpdate={() => Promise.resolve()}
+      onDelete={() => Promise.resolve()}
+    />
+  )
+  try {
+    const triggerSelector = '[aria-labelledby="task-worktree-label"]'
+    await until(() => Boolean(document.querySelector(triggerSelector)))
+    const trigger = document.querySelector<HTMLElement>(triggerSelector)
+    assert(trigger, 'Worktree select trigger did not render')
+    trigger.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        pointerType: 'mouse'
+      })
+    )
+    await until(() => Boolean(document.querySelector('[role="listbox"]')))
+    const dialogElement = document.querySelector('[role="dialog"]')
+    const selectContent = document.querySelector<HTMLElement>('[data-slot="select-content"]')
+    assert(dialogElement && selectContent, 'Worktree select popup did not render')
+    assert(
+      !dialogElement.contains(selectContent),
+      'Worktree select popup remained inside dialog overflow'
+    )
+    assert(selectContent.dataset.side === 'top', 'Worktree select popup did not open upward')
+    const triggerBounds = trigger.getBoundingClientRect()
+    const selectBounds = selectContent.getBoundingClientRect()
+    assert(
+      selectBounds.bottom <= triggerBounds.top,
+      'Worktree select popup overlapped the trigger instead of opening above it'
+    )
+    assert(selectBounds.top >= 8, 'Worktree select popup exceeded the top viewport boundary')
+    assert(
+      selectBounds.bottom <= window.innerHeight - 8,
+      'Worktree select popup exceeded the bottom viewport boundary'
+    )
+  } finally {
+    fixture.dispose()
+  }
+}
+
 async function repositoryIsolation(): Promise<void> {
   const stalled = deferred<{ ok: true }>()
   const fetches: string[] = []
@@ -226,6 +295,7 @@ const task: Task = {
   id: 'a',
   title: 'Task A',
   description: '',
+  intent: 'task',
   status: 'todo',
   repositoryId: 'repo',
   repositoryName: 'Repo',
@@ -713,17 +783,158 @@ async function diffViewerLayouts(): Promise<void> {
   }
 }
 
+async function reviewWorkspaceModes(): Promise<void> {
+  const files: PrChangedFile[] = [
+    {
+      path: 'README.md',
+      changeType: 'edit',
+      additions: 1,
+      deletions: 1,
+      isBinary: false,
+      isMarkdown: true
+    },
+    {
+      path: 'src/app.ts',
+      changeType: 'edit',
+      additions: 1,
+      deletions: 1,
+      isBinary: false,
+      isMarkdown: false
+    }
+  ]
+  const diffs = new Map<string, PrFileDiff>(
+    files.map((file) => [
+      file.path,
+      {
+        path: file.path,
+        isBinary: false,
+        truncated: false,
+        hunks: [
+          {
+            header: '@@ -1,3 +1,3 @@',
+            baseStart: 1,
+            baseLines: 3,
+            headStart: 1,
+            headLines: 3,
+            lines: [
+              { kind: 'context', baseLine: 1, headLine: 1, text: 'title' },
+              { kind: 'del', baseLine: 2, headLine: null, text: 'old value' },
+              { kind: 'add', baseLine: null, headLine: 2, text: 'new value' },
+              { kind: 'context', baseLine: 3, headLine: 3, text: 'end' }
+            ]
+          }
+        ]
+      }
+    ])
+  )
+  const contents = new Map<string, PrFileContent>([
+    [
+      'README.md',
+      {
+        path: 'README.md',
+        side: 'head',
+        text: '# title\nnew value\nend',
+        isBinary: false,
+        truncated: false
+      }
+    ],
+    [
+      'src/app.ts',
+      {
+        path: 'src/app.ts',
+        side: 'head',
+        text: 'const title = true\rconst value = "new"\rend()',
+        isBinary: false,
+        truncated: false
+      }
+    ]
+  ])
+  const contentRequests: string[] = []
+  const fileDiffFor = (path: string | null) => ({
+    data: path ? (diffs.get(path) ?? null) : null,
+    error: null,
+    isLoading: false
+  })
+  const fileContentFor = (path: string | null) => ({
+    data: path ? (contents.get(path) ?? null) : null,
+    error: null,
+    isLoading: false
+  })
+  const ensureFileDiff = (): void => undefined
+  const ensureFileContent = (path: string): void => {
+    contentRequests.push(path)
+  }
+  const fixture = mount(
+    <ThemeProvider>
+      <ReviewWorkspace
+        header={<div>Review changes</div>}
+        files={files}
+        diffStats={new Map()}
+        error={null}
+        isLoading={false}
+        fileDiffFor={fileDiffFor}
+        ensureFileDiff={ensureFileDiff}
+        fileContentFor={fileContentFor}
+        ensureFileContent={ensureFileContent}
+        onClose={() => undefined}
+      />
+    </ThemeProvider>
+  )
+  try {
+    await until(() => contentRequests.includes('README.md'))
+    const button = (label: string): HTMLButtonElement | undefined =>
+      Array.from(fixture.container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === label
+      )
+    assert(button('Diff')?.getAttribute('aria-pressed') === 'true', 'Markdown did not open in Diff')
+    assert(
+      fixture.container.querySelector('[aria-label="Diff layout"]'),
+      'Diff layout controls were not shown'
+    )
+    assert(
+      !fixture.container.querySelector('.markdown-preview'),
+      'Markdown preview opened by default'
+    )
+
+    button('Preview')?.click()
+    await until(() => Boolean(fixture.container.querySelector('.markdown-preview')))
+    assert(
+      !fixture.container.querySelector('[aria-label="Diff layout"]'),
+      'Preview retained irrelevant diff layout controls'
+    )
+
+    const sourceFile = Array.from(fixture.container.querySelectorAll('button')).find(
+      (candidate) => candidate.getAttribute('title') === 'src/app.ts'
+    )
+    assert(sourceFile, 'Source file was not listed')
+    sourceFile.click()
+    await until(() => contentRequests.includes('src/app.ts'))
+    assert(
+      fixture.container.querySelector('[aria-label="Diff layout"]'),
+      'Source diff did not expose layout controls'
+    )
+    assert(
+      !fixture.container.querySelector('[aria-label="View mode"]'),
+      'Source file exposed Markdown view modes'
+    )
+  } finally {
+    fixture.dispose()
+  }
+}
+
 window.uiRegressions = (async () => {
   const reports: Report[] = []
   for (const [name, run] of [
     ['popup input lock recovery', popupLifecycles],
+    ['worktree dropdown placement', worktreeDropdownPlacement],
     ['repository request isolation', repositoryIsolation],
     ['task card session routing', taskCardSessionRouting],
     ['task session transport routing', taskSessionTransportRouting],
     ['task mutation ordering', taskMutationRaces],
     ['native event gap recovery', nativeEventRecovery],
     ['bounded transcript rendering', transcriptWork],
-    ['diff viewer layouts', diffViewerLayouts]
+    ['diff viewer layouts', diffViewerLayouts],
+    ['review workspace modes', reviewWorkspaceModes]
   ] as const) {
     try {
       const metrics = await run()

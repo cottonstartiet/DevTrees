@@ -33,6 +33,8 @@ const SCHEMA: &str = "
         id                    TEXT PRIMARY KEY,
         title                 TEXT NOT NULL,
         description           TEXT NOT NULL DEFAULT '',
+        intent                TEXT NOT NULL DEFAULT 'task'
+            CHECK (intent IN ('task', 'browser-code-review')),
         status                TEXT NOT NULL
             CHECK (status IN ('todo', 'in_progress', 'review', 'done')),
         repository_id         TEXT NOT NULL,
@@ -125,6 +127,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
         ("queue_status", "TEXT NOT NULL DEFAULT 'queued'"),
         ("queue_order", "INTEGER NOT NULL DEFAULT 0"),
         ("execution_target_key", "TEXT NOT NULL DEFAULT ''"),
+        ("intent", "TEXT NOT NULL DEFAULT 'task'"),
     ] {
         if !task_columns.iter().any(|column| column == name) {
             tx.execute_batch(&format!(
@@ -182,6 +185,8 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
                  id                    TEXT PRIMARY KEY,
                  title                 TEXT NOT NULL,
                  description           TEXT NOT NULL DEFAULT '',
+                 intent                TEXT NOT NULL DEFAULT 'task'
+                     CHECK (intent IN ('task', 'browser-code-review')),
                  status                TEXT NOT NULL
                      CHECK (status IN ('todo', 'in_progress', 'review', 'done')),
                  repository_id         TEXT NOT NULL,
@@ -200,13 +205,13 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
                  updated_at            INTEGER NOT NULL
              );
              INSERT INTO tasks (
-                 id, title, description, status, repository_id, repository_name,
+                 id, title, description, intent, status, repository_id, repository_name,
                  repository_path, worktree_path, worktree_branch, pending_worktree_name,
                  copilot_session_id, queue_status, queue_order, sort_order,
                  execution_target_key, created_at, updated_at
              )
              SELECT
-                 id, title, description, status, repository_id, repository_name,
+                 id, title, description, intent, status, repository_id, repository_name,
                  repository_path, worktree_path, worktree_branch, pending_worktree_name,
                  copilot_session_id, queue_status, queue_order, sort_order,
                  execution_target_key, created_at, updated_at
@@ -255,7 +260,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              payload TEXT NOT NULL
          );
          DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
-         PRAGMA user_version = 10;",
+         PRAGMA user_version = 11;",
     )?;
     let prompt_seeded: bool = tx.query_row(
         "SELECT EXISTS(
@@ -316,7 +321,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -651,5 +656,37 @@ mod tests {
             key,
             crate::tasks::execution_target_key("Repo-ID", "C:\\Repo", Some("Feature-One"))
         );
+    }
+
+    #[test]
+    fn existing_tasks_receive_default_intent() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE tasks (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL, repository_id TEXT NOT NULL, repository_name TEXT NOT NULL,
+                repository_path TEXT NOT NULL, worktree_path TEXT NOT NULL, worktree_branch TEXT,
+                pending_worktree_name TEXT, copilot_session_id TEXT, queue_status TEXT NOT NULL,
+                queue_order INTEGER NOT NULL, sort_order INTEGER NOT NULL,
+                execution_target_key TEXT NOT NULL, created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            INSERT INTO tasks
+                (id, title, status, repository_id, repository_name, repository_path,
+                 worktree_path, queue_status, queue_order, sort_order, execution_target_key,
+                 created_at, updated_at)
+            VALUES ('task', 'Task', 'todo', 'repo', 'Repo', 'C:\\Repo', 'C:\\Repo',
+                    'queued', 0, 0, 'target', 1, 1);",
+        )
+        .unwrap();
+
+        initialize_schema(&conn).unwrap();
+
+        let intent: String = conn
+            .query_row("SELECT intent FROM tasks WHERE id = 'task'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(intent, "task");
     }
 }

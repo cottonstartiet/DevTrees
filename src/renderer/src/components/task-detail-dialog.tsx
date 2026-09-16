@@ -239,7 +239,7 @@ function TaskDetailForm({
   const statusLabel: string | null = task ? TASK_STATUS_LABELS[task.status as TaskStatus] : null
 
   return (
-    <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100%-2rem)] min-w-0 overflow-y-auto sm:max-w-2xl">
+    <DialogContent className="h-[75vh] max-h-[calc(100vh-2rem)] w-[75vw] max-w-[calc(100vw-2rem)] min-w-0 overflow-y-auto sm:max-w-[75vw]">
       <DialogHeader className="min-w-0">
         <DialogTitle>{isEdit ? 'Task details' : 'Add task'}</DialogTitle>
         <DialogDescription className="break-words">
@@ -320,7 +320,7 @@ function TaskDetailForm({
             >
               <SelectValue placeholder="Select a worktree" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent side="top">
               <SelectItem value={MAIN_BRANCH_VALUE}>Main branch</SelectItem>
               {worktrees.map((wt) => (
                 <SelectItem key={wt.path} value={wt.path}>

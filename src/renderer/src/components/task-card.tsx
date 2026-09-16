@@ -46,6 +46,9 @@ export function TaskCard({
     transition
   }
   const isQueuedStage = task.status === 'todo' || task.status === 'review'
+  const canStart =
+    task.status === 'todo' ||
+    (task.status === 'review' && (task.queueStatus === 'queued' || task.queueStatus === 'failed'))
   const queueLabel =
     task.queueStatus === 'running'
       ? 'Running'
@@ -109,7 +112,7 @@ export function TaskCard({
               : (task.worktreeBranch ?? worktreeLabel(task.worktreePath))}
         </span>
       </div>
-      {task.status === 'todo' ? (
+      {canStart ? (
         <div className="mt-1 flex">
           <Button
             type="button"
@@ -125,7 +128,13 @@ export function TaskCard({
             ) : (
               <PlayIcon />
             )}
-            {isStarting ? 'Starting…' : 'Start'}
+            {isStarting
+              ? 'Starting…'
+              : task.status === 'review'
+                ? task.queueStatus === 'failed'
+                  ? 'Retry review'
+                  : 'Start review'
+                : 'Start'}
           </Button>
         </div>
       ) : task.status === 'in_progress' || task.status === 'review' ? (

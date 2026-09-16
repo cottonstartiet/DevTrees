@@ -71,7 +71,10 @@ function ReviewWorkspaceContent({
   truncatedMessage
 }: ReviewWorkspaceProps): React.JSX.Element {
   const [explicitPath, setExplicitPath] = React.useState<string | null>(null)
-  const [viewMode, setViewMode] = React.useState<ViewMode>('diff')
+  const [viewSelection, setViewSelection] = React.useState<{
+    path: string
+    mode: ViewMode
+  } | null>(null)
   const [diffLayout, setDiffLayout] = React.useState<DiffLayout>('inline')
   const { isOpen: isDiagramOpen } = useMermaidZoom()
 
@@ -85,6 +88,7 @@ function ReviewWorkspaceContent({
     isMarkdownPath(selectedPath) &&
     selectedFile?.changeType !== 'delete' &&
     selectedFile?.isBinary !== true
+  const viewMode = viewSelection?.path === selectedPath && isMarkdown ? viewSelection.mode : 'diff'
   const effectiveMode: ViewMode = isMarkdown ? viewMode : 'diff'
 
   React.useEffect(() => {
@@ -94,8 +98,10 @@ function ReviewWorkspaceContent({
   }, [selectedPath, effectiveMode, ensureFileDiff, ensureFileContent, reloadToken])
 
   React.useEffect(() => {
-    if (selectedPath && isMarkdown) ensureFileContent(selectedPath)
-  }, [selectedPath, isMarkdown, ensureFileContent, reloadToken])
+    if (selectedPath && selectedFile?.changeType !== 'delete' && selectedFile?.isBinary !== true) {
+      ensureFileContent(selectedPath)
+    }
+  }, [selectedPath, selectedFile, ensureFileContent, reloadToken])
 
   const diffEntry = fileDiffFor(selectedPath)
   const contentEntry = fileContentFor(selectedPath)
@@ -158,13 +164,16 @@ function ReviewWorkspaceContent({
         moveSelection(-1)
       } else if (event.key === 'p' && isMarkdown) {
         event.preventDefault()
-        setViewMode((current) => (current === 'preview' ? 'diff' : 'preview'))
+        setViewSelection({
+          path: selectedPath,
+          mode: viewMode === 'preview' ? 'diff' : 'preview'
+        })
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [moveSelection, onClose, isMarkdown, isDiagramOpen])
+  }, [moveSelection, onClose, isMarkdown, isDiagramOpen, selectedPath, viewMode])
 
   return (
     <div className="bg-background fixed inset-0 z-50 flex flex-col">
@@ -196,7 +205,31 @@ function ReviewWorkspaceContent({
             >
               {selectedPath ?? 'No file selected'}
             </span>
-            {selectedFile?.isBinary !== true && selectedPath ? (
+            {isMarkdown ? (
+              <div
+                className="flex items-center rounded-md border p-0.5"
+                role="group"
+                aria-label="View mode"
+              >
+                {VIEW_MODES.map((mode) => (
+                  <button
+                    key={mode.key}
+                    type="button"
+                    onClick={() => setViewSelection({ path: selectedPath, mode: mode.key })}
+                    aria-pressed={viewMode === mode.key}
+                    className={cn(
+                      'rounded px-2 py-0.5 text-[11px] transition-colors',
+                      viewMode === mode.key
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                    )}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {selectedFile?.isBinary !== true && selectedPath && effectiveMode === 'diff' ? (
               <div
                 className="flex items-center rounded-md border p-0.5"
                 role="group"
@@ -208,39 +241,14 @@ function ReviewWorkspaceContent({
                     type="button"
                     onClick={() => setDiffLayout(layout.key)}
                     aria-pressed={diffLayout === layout.key}
-                    disabled={effectiveMode !== 'diff'}
                     className={cn(
-                      'rounded px-2 py-0.5 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+                      'rounded px-2 py-0.5 text-[11px] transition-colors',
                       diffLayout === layout.key
                         ? 'bg-primary text-primary-foreground'
                         : 'text-muted-foreground hover:text-foreground hover:bg-accent'
                     )}
                   >
                     {layout.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {isMarkdown ? (
-              <div
-                className="flex items-center rounded-md border p-0.5"
-                role="group"
-                aria-label="View mode"
-              >
-                {VIEW_MODES.map((mode) => (
-                  <button
-                    key={mode.key}
-                    type="button"
-                    onClick={() => setViewMode(mode.key)}
-                    aria-pressed={viewMode === mode.key}
-                    className={cn(
-                      'rounded px-2 py-0.5 text-[11px] transition-colors',
-                      viewMode === mode.key
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-                    )}
-                  >
-                    {mode.label}
                   </button>
                 ))}
               </div>

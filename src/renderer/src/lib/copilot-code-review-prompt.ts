@@ -1,4 +1,5 @@
 import type { PrProvider } from '@shared/reviews'
+import type { TaskIntent } from '@shared/task'
 
 export const CODE_REVIEW_INITIAL_MODE = 'autopilot' as const
 
@@ -9,6 +10,10 @@ type TaskCodeReviewSubject = {
   taskDescription?: string
   repositoryName?: string
   branch?: string | null
+}
+
+type TaskReviewLaunchSubject = TaskCodeReviewSubject & {
+  intent: TaskIntent
 }
 
 type PrCodeReviewSubject = {
@@ -115,4 +120,11 @@ export function buildCodeReviewPrompt(subject: BuildCodeReviewPromptArgs): strin
     '- If the change set cannot be determined or fetched, stop and explain exactly what failed rather',
     '  than guessing.'
   ].join('\n')
+}
+
+export function buildTaskReviewPrompt(subject: TaskReviewLaunchSubject): string {
+  if (subject.intent === 'browser-code-review') {
+    return subject.taskDescription?.trim() ?? ''
+  }
+  return buildCodeReviewPrompt(subject)
 }

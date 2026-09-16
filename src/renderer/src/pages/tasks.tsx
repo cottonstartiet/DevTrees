@@ -260,6 +260,7 @@ export function TasksPage({
           const created = await createTask({
             title,
             description,
+            intent: taskDraft?.kind ?? 'task',
             repositoryId: repository.id,
             repositoryName: repository.name,
             repositoryPath: repository.path,
@@ -267,6 +268,9 @@ export function TasksPage({
             worktreeBranch,
             pendingWorktreeName
           })
+          if (created?.intent === 'browser-code-review') {
+            void handleStartTask(created)
+          }
           return created !== null
         }}
         onUpdate={async ({

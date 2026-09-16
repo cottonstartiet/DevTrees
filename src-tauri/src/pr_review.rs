@@ -357,8 +357,8 @@ fn parse_range(range: &str) -> Option<(i64, i64)> {
 /// Diff two full file blobs into the same hunk model, used for providers (Azure DevOps) that do
 /// not expose a unified patch endpoint.
 pub fn diff_blobs(base: &str, head: &str) -> Vec<PrDiffHunk> {
-    let normalized_base = base.replace("\r\n", "\n");
-    let normalized_head = head.replace("\r\n", "\n");
+    let normalized_base = normalize_diff_text(base);
+    let normalized_head = normalize_diff_text(head);
     let diff = TextDiff::from_lines(&normalized_base, &normalized_head);
     let mut hunks = Vec::new();
 
@@ -424,6 +424,13 @@ pub fn diff_blobs(base: &str, head: &str) -> Vec<PrDiffHunk> {
     }
 
     hunks
+}
+
+fn normalize_diff_text(text: &str) -> String {
+    text.strip_prefix('\u{feff}')
+        .unwrap_or(text)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
 }
 
 /// The head-side lines a comment may anchor to, i.e. every line present in the diff.
@@ -504,6 +511,21 @@ mod tests {
     fn localizes_changes_across_line_endings() {
         let base = "a\nb\nc\n";
         let head = "a\r\nB\r\nc\r\n";
+        let hunks = diff_blobs(base, head);
+        assert_eq!(hunks.len(), 1);
+        let lines = &hunks[0].lines;
+        assert_eq!(lines.iter().filter(|line| line.kind == "del").count(), 1);
+        assert_eq!(lines.iter().filter(|line| line.kind == "add").count(), 1);
+        assert_eq!(
+            lines.iter().filter(|line| line.kind == "context").count(),
+            2
+        );
+    }
+
+    #[test]
+    fn localizes_changes_across_bom_and_cr_line_endings() {
+        let base = "\u{feff}a\nb\nc\n";
+        let head = "a\rB\rc\r";
         let hunks = diff_blobs(base, head);
         assert_eq!(hunks.len(), 1);
         let lines = &hunks[0].lines;

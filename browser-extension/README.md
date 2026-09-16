@@ -18,9 +18,10 @@ The extension works with normal HTTP and HTTPS pages. Chrome-protected pages, in
 2. Open the DevTrees extension and choose **Start code review**.
 3. Confirm Chrome's external-app prompt if it appears.
 4. DevTrees opens Tasks and displays an Add task dialog containing the page context and the prompt assigned to browser code reviews.
-5. Confirm the repository and worktree before creating the task.
+5. Confirm the repository and worktree to create the task and start the code review.
 
-No task or Copilot session starts until the task dialog is submitted.
+No task or Copilot session starts until the task dialog is submitted. After submission, DevTrees
+starts the review directly in autopilot mode instead of opening a plan-mode task.
 
 ## Saved prompt
 
