@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { TerminalSessionStatusBadge } from '@/components/sessions/terminal-session-status-badge'
 import { TerminalTimeline } from '@/components/sessions/terminal-timeline'
 import { NativeSessionControls } from '@/components/sessions/session-interaction'
+import { MarkdownBody } from '@/components/pr-review/markdown-body'
 import { endedNativeHistory, nativeKey } from '@shared/native-session'
 import { Button } from '@/components/ui/button'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
@@ -207,9 +208,12 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
         </>
       ) : session.transport === 'external' ? (
         <div className="space-y-3 p-4">
-          <p className="text-sm" role="status">
-            {session.pendingPrompt || session.lastActivity}
-          </p>
+          <div role="status">
+            <MarkdownBody
+              text={session.pendingPrompt || session.lastActivity}
+              className="session-detail-markdown"
+            />
+          </div>
           <p className="text-muted-foreground text-sm">Respond in the external Copilot terminal.</p>
           <p className="text-muted-foreground max-w-prose text-xs">
             This view shows live status only. It disappears when Copilot ends and is not restored

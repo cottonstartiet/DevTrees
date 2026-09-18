@@ -20,7 +20,9 @@ import {
 import { alignSplitRows, type DiffDisplayRow } from '@/components/pr-review/diff-rows'
 import { DiffView } from '@/components/pr-review/diff-view'
 import { ReviewWorkspace } from '@/components/pr-review/review-workspace'
+import { GlobalTaskShortcut } from '@/components/global-task-shortcut'
 import { TaskCard } from '@/components/task-card'
+import { TaskColumn } from '@/components/task-column'
 import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TerminalTimeline } from '@/components/sessions/terminal-timeline'
 import { TasksProvider } from '@/contexts/tasks-context'
@@ -29,14 +31,20 @@ import { ThemeProvider } from '@/contexts/theme-context'
 import { useNativeSessions } from '@/contexts/use-native-sessions'
 import { useRepoStatus } from '@/hooks/use-repo-status'
 import { openTaskSession } from '@/lib/task-session-routing'
+import { TasksBoardLayout } from '@/pages/tasks'
+import { RemoteTimelineEntry } from '../src/remote/src/session-timeline-entry'
 import {
   mergeNativeSnapshot,
   type NativeSnapshot,
   type NativeSnapshotUpdate
 } from '@shared/native-session'
-import type { Task } from '@shared/task'
+import type { MoveTaskResult, Task } from '@shared/task'
 import type { Repository } from '@shared/repository'
-import type { TerminalSession, TerminalTimelineEntry } from '@shared/terminal-session'
+import type {
+  TerminalSession,
+  TerminalSessionStatus,
+  TerminalTimelineEntry
+} from '@shared/terminal-session'
 import type { Worktree } from '@shared/worktree'
 import type { PrChangedFile, PrFileContent, PrFileDiff } from '@shared/pr-review'
 
@@ -193,6 +201,183 @@ async function popupLifecycles(): Promise<void> {
   assert(pointerEvents() === '', 'Navigation with an open menu leaked the input lock')
 }
 
+async function globalNewTaskShortcut(): Promise<void> {
+  const repository: Repository = {
+    id: 'repo',
+    path: 'C:\\repo',
+    name: 'Repo',
+    addedAt: 0,
+    remoteKind: 'github'
+  }
+  let openCount = 0
+  mockApi({
+    tasks: {
+      discardAttachmentStage: () => Promise.resolve()
+    }
+  })
+
+  function Harness(): React.JSX.Element {
+    const [open, setOpen] = React.useState(false)
+    return (
+      <>
+        <span data-current-view="dashboard">Dashboard</span>
+        <GlobalTaskShortcut
+          onNewTask={() => {
+            openCount += 1
+            setOpen(true)
+          }}
+        />
+        <TaskDetailDialog
+          open={open}
+          onOpenChange={setOpen}
+          task={null}
+          repositories={[repository]}
+          worktreesByRepositoryId={{ [repository.id]: [] }}
+          onCreate={() => Promise.resolve(true)}
+          onUpdate={() => Promise.resolve(true)}
+          onDelete={() => Promise.resolve()}
+        />
+      </>
+    )
+  }
+
+  const fixture = mount(<Harness />)
+  try {
+    await delay()
+    const modifiedAccepted = window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'N',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    assert(modifiedAccepted, 'Ctrl+Shift+N was incorrectly intercepted')
+    assert(!document.querySelector('[role="dialog"]'), 'Modified shortcut opened the task dialog')
+
+    const shortcutAccepted = window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'n',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    assert(!shortcutAccepted, 'Ctrl+N did not prevent the WebView default')
+    await until(() => Boolean(document.querySelector('[role="dialog"]')))
+    await until(() => document.activeElement?.id === 'task-title')
+    assert(
+      fixture.container.querySelector('[data-current-view="dashboard"]'),
+      'Opening a task changed the current view'
+    )
+
+    const title = document.querySelector<HTMLInputElement>('#task-title')
+    assert(title, 'Task title did not render')
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'n',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    await delay()
+    assert(openCount === 1, 'Ctrl+N replaced an already-open task draft')
+    assert(document.querySelector<HTMLInputElement>('#task-title') === title, 'Task form remounted')
+  } finally {
+    fixture.dispose()
+  }
+}
+
+async function taskMainBranchDefault(): Promise<void> {
+  const repositories: Repository[] = [
+    {
+      id: 'repo-a',
+      path: 'C:\\repo-a',
+      name: 'Repo A',
+      addedAt: 0,
+      remoteKind: 'github'
+    },
+    {
+      id: 'repo-b',
+      path: 'C:\\repo-b',
+      name: 'Repo B',
+      addedAt: 1,
+      remoteKind: 'github'
+    }
+  ]
+  mockApi({
+    tasks: {
+      discardAttachmentStage: () => Promise.resolve()
+    }
+  })
+
+  const renderDialog = (availableRepositories: Repository[]): React.JSX.Element => (
+    <TaskDetailDialog
+      open
+      onOpenChange={() => undefined}
+      task={null}
+      repositories={availableRepositories}
+      worktreesByRepositoryId={{}}
+      onCreate={() => Promise.resolve(true)}
+      onUpdate={() => Promise.resolve(true)}
+      onDelete={() => Promise.resolve()}
+    />
+  )
+
+  const fixture = mount(renderDialog([]))
+  try {
+    fixture.root.render(renderDialog(repositories))
+    const repositoryTriggerSelector = '[aria-labelledby="task-repository-label"]'
+    const worktreeTriggerSelector = '[aria-labelledby="task-worktree-label"]'
+    await until(
+      () =>
+        document.querySelector(repositoryTriggerSelector)?.textContent?.includes('Repo A') === true
+    )
+    await until(
+      () =>
+        document.querySelector(worktreeTriggerSelector)?.textContent?.includes('Main branch') ===
+        true
+    )
+
+    const repositoryTrigger = document.querySelector<HTMLElement>(repositoryTriggerSelector)
+    assert(repositoryTrigger, 'Repository select trigger did not render')
+    repositoryTrigger.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        pointerType: 'mouse'
+      })
+    )
+    await until(() => Boolean(document.querySelector('[role="listbox"]')))
+    const repoBOption = Array.from(document.querySelectorAll<HTMLElement>('[role="option"]')).find(
+      (option) => option.textContent?.includes('Repo B')
+    )
+    assert(repoBOption, 'Second repository option did not render')
+    repoBOption.dispatchEvent(
+      new PointerEvent('pointermove', {
+        bubbles: true,
+        pointerType: 'mouse'
+      })
+    )
+    repoBOption.dispatchEvent(
+      new PointerEvent('pointerup', {
+        bubbles: true,
+        button: 0,
+        pointerType: 'mouse'
+      })
+    )
+    await until(() => repositoryTrigger.textContent?.includes('Repo B') === true)
+    assert(
+      document.querySelector(worktreeTriggerSelector)?.textContent?.includes('Main branch'),
+      'Changing repositories did not keep Main branch selected'
+    )
+  } finally {
+    fixture.dispose()
+  }
+}
+
 async function worktreeDropdownPlacement(): Promise<Record<string, unknown>> {
   const repository: Repository = {
     id: 'repo',
@@ -225,7 +410,50 @@ async function worktreeDropdownPlacement(): Promise<Record<string, unknown>> {
     const triggerSelector = '[aria-labelledby="task-worktree-label"]'
     await until(() => Boolean(document.querySelector(triggerSelector)))
     const trigger = document.querySelector<HTMLElement>(triggerSelector)
-    assert(trigger, 'Worktree select trigger did not render')
+    const repositoryTrigger = document.querySelector<HTMLElement>(
+      '[aria-labelledby="task-repository-label"]'
+    )
+    const titleLabel = document.querySelector<HTMLElement>('label[for="task-title"]')
+    const dialogDescription = document.querySelector<HTMLElement>(
+      '[data-slot="dialog-description"]'
+    )
+    const description = document.querySelector<HTMLTextAreaElement>('#task-description')
+    const dialogElement = document.querySelector<HTMLElement>('[role="dialog"]')
+    assert(
+      trigger &&
+        repositoryTrigger &&
+        titleLabel &&
+        dialogDescription &&
+        description &&
+        dialogElement,
+      'Task dialog layout controls did not render'
+    )
+    const triggerBounds = trigger.getBoundingClientRect()
+    const repositoryBounds = repositoryTrigger.getBoundingClientRect()
+    const titleLabelBounds = titleLabel.getBoundingClientRect()
+    const dialogDescriptionBounds = dialogDescription.getBoundingClientRect()
+    const descriptionBounds = description.getBoundingClientRect()
+    const viewportProbe = document.createElement('div')
+    viewportProbe.style.cssText = 'position:fixed;width:60vw;visibility:hidden'
+    document.body.append(viewportProbe)
+    const expectedDialogWidth = viewportProbe.clientWidth
+    viewportProbe.remove()
+    assert(
+      Math.abs(dialogElement.clientWidth - expectedDialogWidth) <= 2,
+      `Task dialog width did not match 60vw (${dialogElement.clientWidth}px vs ${expectedDialogWidth}px)`
+    )
+    assert(
+      Math.abs(repositoryBounds.top - triggerBounds.top) <= 1,
+      'Repository and worktree controls did not share a row in the wide dialog'
+    )
+    assert(
+      titleLabelBounds.top - dialogDescriptionBounds.bottom <= 12,
+      'Task dialog left too much space between its subtitle and Title field'
+    )
+    assert(
+      descriptionBounds.height >= 100,
+      `Task description did not expand into the available dialog height (${descriptionBounds.height}px)`
+    )
     trigger.dispatchEvent(
       new PointerEvent('pointerdown', {
         bubbles: true,
@@ -234,7 +462,6 @@ async function worktreeDropdownPlacement(): Promise<Record<string, unknown>> {
       })
     )
     await until(() => Boolean(document.querySelector('[role="listbox"]')))
-    const dialogElement = document.querySelector('[role="dialog"]')
     const selectContent = document.querySelector<HTMLElement>('[data-slot="select-content"]')
     const selectViewport = selectContent?.querySelector<HTMLElement>('[data-radix-select-viewport]')
     const positionedContent = selectContent?.parentElement
@@ -246,7 +473,6 @@ async function worktreeDropdownPlacement(): Promise<Record<string, unknown>> {
       !dialogElement.contains(selectContent),
       'Worktree select popup remained inside dialog overflow'
     )
-    const triggerBounds = trigger.getBoundingClientRect()
     const selectBounds = await stableBounds(positionedContent)
     assert(
       selectBounds.bottom <= triggerBounds.top || selectBounds.top >= triggerBounds.bottom,
@@ -263,8 +489,11 @@ async function worktreeDropdownPlacement(): Promise<Record<string, unknown>> {
     )
     return {
       side: selectContent.dataset.side,
+      dialogWidth: dialogElement.clientWidth,
+      expectedDialogWidth: Math.round(expectedDialogWidth),
       triggerTop: Math.round(triggerBounds.top),
       triggerBottom: Math.round(triggerBounds.bottom),
+      descriptionHeight: Math.round(descriptionBounds.height),
       popupTop: Math.round(selectBounds.top),
       popupBottom: Math.round(selectBounds.bottom),
       popupClientHeight: selectViewport.clientHeight,
@@ -430,6 +659,169 @@ async function taskCardSessionRouting(): Promise<void> {
   }
 }
 
+async function taskColumnContentHeight(): Promise<Record<string, unknown>> {
+  const noop = (): void => {}
+  const tasks = Array.from(
+    { length: 12 },
+    (_, index): Task => ({
+      ...task,
+      id: `overflow-task-${index}`,
+      title: `Overflow task ${index + 1}`,
+      status: 'todo'
+    })
+  )
+  const fixture = mount(
+    <div className="flex h-80 min-h-0 flex-col overflow-auto p-4">
+      <DndContext>
+        <TasksBoardLayout>
+          <TaskColumn
+            status="todo"
+            label="To do"
+            tasks={tasks}
+            sessionByTaskId={{}}
+            onOpenTask={noop}
+            onOpenSession={noop}
+            onStartTask={noop}
+            onReviewTask={noop}
+            onDoneTask={noop}
+            onDeleteTask={noop}
+            startingTaskIds={new Set()}
+            canReviewTask={() => false}
+          />
+          <TaskColumn
+            status="in_progress"
+            label="In progress"
+            tasks={[]}
+            sessionByTaskId={{}}
+            onOpenTask={noop}
+            onOpenSession={noop}
+            onStartTask={noop}
+            onReviewTask={noop}
+            onDoneTask={noop}
+            onDeleteTask={noop}
+            startingTaskIds={new Set()}
+            canReviewTask={() => false}
+          />
+        </TasksBoardLayout>
+      </DndContext>
+    </div>
+  )
+  try {
+    await until(() => fixture.container.querySelectorAll('[role="button"]').length === tasks.length)
+    const viewport = fixture.container.firstElementChild as HTMLElement
+    const board = viewport.firstElementChild as HTMLElement
+    const populatedColumn = board.children[0] as HTMLElement
+    const emptyColumn = board.children[1] as HTMLElement
+    const populatedDropzone = populatedColumn.lastElementChild as HTMLElement
+    const emptyDropzone = emptyColumn.lastElementChild as HTMLElement
+    const finalCard = populatedDropzone.querySelector('[role="button"]:last-of-type')
+    assert(finalCard, 'Overflowing task column did not render its final card')
+    const finalCardBounds = finalCard.getBoundingClientRect()
+    const populatedBounds = populatedDropzone.getBoundingClientRect()
+    const emptyBounds = emptyDropzone.getBoundingClientRect()
+    assert(
+      viewport.scrollHeight > viewport.clientHeight,
+      'Overflowing task board did not make its page viewport scrollable'
+    )
+    assert(
+      populatedBounds.bottom >= finalCardBounds.bottom,
+      'Task cards extended beyond the populated column background'
+    )
+    assert(
+      Math.abs(populatedBounds.bottom - emptyBounds.bottom) <= 1,
+      'Task column backgrounds did not stretch to the same board height'
+    )
+    return {
+      viewportHeight: viewport.clientHeight,
+      scrollHeight: viewport.scrollHeight,
+      columnBottom: Math.round(populatedBounds.bottom),
+      finalCardBottom: Math.round(finalCardBounds.bottom)
+    }
+  } finally {
+    fixture.dispose()
+  }
+}
+
+async function taskColumnSessionOrdering(): Promise<void> {
+  const noop = (): void => {}
+  const statuses: Array<[string, TerminalSessionStatus | undefined]> = [
+    ['Ended first', 'done'],
+    ['Working first', 'working'],
+    ['Idle', 'idle'],
+    ['Needs input', 'waiting-input'],
+    ['Starting', 'starting'],
+    ['Working second', 'working'],
+    ['No session', undefined],
+    ['Failed', 'error']
+  ]
+  const tasks = statuses.map(
+    ([title], index): Task => ({
+      ...task,
+      id: `status-task-${index}`,
+      title,
+      status: 'in_progress',
+      sortOrder: index
+    })
+  )
+  const sessionByTaskId = Object.fromEntries(
+    statuses.flatMap(([, status], index) =>
+      status
+        ? [
+            [
+              `status-task-${index}`,
+              {
+                ...taskSession,
+                id: `status-session-${index}`,
+                taskId: `status-task-${index}`,
+                status
+              }
+            ]
+          ]
+        : []
+    )
+  ) as Record<string, TerminalSession>
+  const fixture = mount(
+    <DndContext>
+      <TaskColumn
+        status="in_progress"
+        label="In progress"
+        tasks={tasks}
+        sessionByTaskId={sessionByTaskId}
+        onOpenTask={noop}
+        onOpenSession={noop}
+        onStartTask={noop}
+        onReviewTask={noop}
+        onDoneTask={noop}
+        onDeleteTask={noop}
+        startingTaskIds={new Set()}
+        canReviewTask={() => false}
+      />
+    </DndContext>
+  )
+  try {
+    await until(() => fixture.container.querySelectorAll('[role="button"]').length === tasks.length)
+    const titles = Array.from(fixture.container.querySelectorAll<HTMLElement>('[role="button"]'))
+      .map((card) => card.querySelector('p')?.textContent?.trim())
+      .filter((title): title is string => Boolean(title))
+    assert(
+      titles.join(',') ===
+        [
+          'Working first',
+          'Needs input',
+          'Starting',
+          'Working second',
+          'Idle',
+          'Ended first',
+          'No session',
+          'Failed'
+        ].join(','),
+      `In-progress cards were not grouped by session status: ${titles.join(', ')}`
+    )
+  } finally {
+    fixture.dispose()
+  }
+}
+
 async function taskSessionTransportRouting(): Promise<void> {
   const selected: string[] = []
   let navigations = 0
@@ -465,13 +857,27 @@ async function taskMutationRaces(): Promise<void> {
   const move = deferred<{ ok: true; tasks: Task[] }>()
   let moving = false
   let created = false
+  let taskUpdate: (() => void) | undefined
+  let unsubscribed = false
+  let listedTasks = [task]
+  let listRequests = 0
+  let moveTask: () => Promise<MoveTaskResult> = () => {
+    moving = true
+    return move.promise
+  }
   mockApi({
     tasks: {
-      list: async () => [task],
-      move: () => {
-        moving = true
-        return move.promise
+      list: async () => {
+        listRequests++
+        return listedTasks
       },
+      onUpdate: async (callback: () => void) => {
+        taskUpdate = callback
+        return () => {
+          unsubscribed = true
+        }
+      },
+      move: () => moveTask(),
       create: async () => {
         created = true
         return { ok: true, task: { ...task, id: 'b' } }
@@ -519,15 +925,60 @@ async function taskMutationRaces(): Promise<void> {
       'Concurrent creation disappeared'
     )
 
-    const first = deferred<{ ok: false; message: string }>()
+    const externalMove = deferred<{ ok: true; tasks: Task[] }>()
+    moveTask = () => externalMove.promise
+    const localMove = board.moveTask('b', 'review')
+    const remoteTask: Task = {
+      ...task,
+      id: 'remote',
+      title: 'Remote task',
+      status: 'in_progress',
+      copilotSessionId: 'remote-session',
+      queueStatus: 'running'
+    }
+    listedTasks = [
+      ...board.tasks.map((item) =>
+        item.id === 'b' ? { ...item, status: 'review' as const } : item
+      ),
+      remoteTask
+    ]
+    const requestsBeforeUpdate = listRequests
+    taskUpdate?.()
+    await delay(150)
+    assert(
+      listRequests === requestsBeforeUpdate,
+      'External refresh was not serialized behind a local mutation'
+    )
+    externalMove.resolve({
+      ok: true,
+      tasks: board.tasks.map((item) =>
+        item.id === 'b' ? { ...item, status: 'review' as const } : item
+      )
+    })
+    await localMove
+    await until(() => board.tasks.some((item) => item.id === remoteTask.id))
+    assert(
+      board.tasks.find((item) => item.id === remoteTask.id)?.copilotSessionId === 'remote-session',
+      'External task refresh did not include the started session linkage'
+    )
+    assert(
+      board.tasks.find((item) => item.id === 'b')?.status === 'review',
+      'External task refresh clobbered a newer local move'
+    )
+
+    const first = deferred<{ ok: false; error: 'unknown'; message: string }>()
     const second = deferred<{ ok: true; tasks: Task[] }>()
     let requests = 0
-    mockApi({ tasks: { move: () => (++requests === 1 ? first.promise : second.promise) } })
+    moveTask = () => (++requests === 1 ? first.promise : second.promise)
     const before = board.tasks
     const failedMove = board.moveTask('a', 'review')
     const laterMove = board.moveTask('b', 'done')
     await until(() => board.tasks.find((t) => t.id === 'b')?.status === 'done' && requests === 1)
-    first.resolve({ ok: false, message: 'Expected regression-test failure' })
+    first.resolve({
+      ok: false,
+      error: 'unknown',
+      message: 'Expected regression-test failure'
+    })
     await failedMove
     await until(
       () => requests === 2 && board.tasks.find((t) => t.id === 'a')?.status === 'in_progress'
@@ -543,6 +994,8 @@ async function taskMutationRaces(): Promise<void> {
     await laterMove
   } finally {
     fixture.dispose()
+    await delay()
+    assert(unsubscribed, 'Task update listener was not removed on provider cleanup')
   }
 }
 
@@ -707,6 +1160,78 @@ async function transcriptWork(): Promise<Record<string, unknown>> {
   } finally {
     root.unmount()
     container.remove()
+  }
+}
+
+async function remoteSessionTimelineCompaction(): Promise<void> {
+  const outputReads = { count: 0 }
+  const entries: TerminalTimelineEntry[] = [
+    {
+      kind: 'toolCall',
+      seq: 1,
+      timestamp: null,
+      toolCallId: 'running',
+      name: 'Running tool',
+      detail: 'still working',
+      success: null,
+      result: null
+    },
+    {
+      kind: 'acp',
+      seq: 2,
+      timestamp: null,
+      category: 'tool',
+      data: {
+        title: 'Completed tool',
+        status: 'completed',
+        get rawOutput() {
+          outputReads.count++
+          return { text: 'x'.repeat(12_000) }
+        }
+      }
+    },
+    {
+      kind: 'permission',
+      seq: 3,
+      timestamp: null,
+      description: 'Allow the next operation?',
+      resolution: null,
+      selectionKind: null
+    }
+  ]
+  const fixture = mount(
+    <div className="w-[320px] max-w-full overflow-hidden">
+      {entries.map((entry) => (
+        <RemoteTimelineEntry
+          key={`${entry.kind}-${entry.seq}`}
+          entry={entry}
+          context={{ sessionFinished: false, hasLiveInteraction: false }}
+        />
+      ))}
+    </div>
+  )
+  try {
+    await until(() => Boolean(fixture.container.querySelector('details')))
+    assert(!fixture.container.textContent?.includes('Running tool'), 'Running tool was not omitted')
+    assert(
+      fixture.container.textContent?.includes('Allow the next operation?'),
+      'Pending permission was hidden'
+    )
+    assert(outputReads.count === 0, 'Collapsed remote tool eagerly serialized its output')
+    assert(fixture.container.querySelectorAll('pre').length === 0, 'Collapsed detail was mounted')
+    const disclosure = fixture.container.querySelector('details')!
+    disclosure.open = true
+    disclosure.dispatchEvent(new Event('toggle'))
+    await until(() => Boolean(disclosure.querySelector('pre')))
+    assert(outputReads.count > 0, 'Expanded remote tool did not read its output')
+    const viewport = fixture.container.firstElementChild
+    assert(viewport, 'Remote timeline viewport did not render')
+    assert(
+      viewport.scrollWidth <= viewport.clientWidth,
+      'Remote timeline detail caused horizontal page overflow'
+    )
+  } finally {
+    fixture.dispose()
   }
 }
 
@@ -966,13 +1491,18 @@ window.uiRegressions = (async () => {
   const reports: Report[] = []
   for (const [name, run] of [
     ['popup input lock recovery', popupLifecycles],
+    ['global new task shortcut', globalNewTaskShortcut],
+    ['task main branch default', taskMainBranchDefault],
     ['worktree dropdown placement', worktreeDropdownPlacement],
     ['repository request isolation', repositoryIsolation],
     ['task card session routing', taskCardSessionRouting],
+    ['task column content height', taskColumnContentHeight],
+    ['task column session ordering', taskColumnSessionOrdering],
     ['task session transport routing', taskSessionTransportRouting],
     ['task mutation ordering', taskMutationRaces],
     ['native event gap recovery', nativeEventRecovery],
     ['bounded transcript rendering', transcriptWork],
+    ['remote session timeline compaction', remoteSessionTimelineCompaction],
     ['diff viewer layouts', diffViewerLayouts],
     ['review workspace modes', reviewWorkspaceModes]
   ] as const) {

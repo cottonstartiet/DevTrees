@@ -5,13 +5,20 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { TaskCard } from '@/components/task-card'
 import { cn } from '@/lib/utils'
 import type { Task, TaskStatus } from '@shared/task'
-import type { TerminalSession } from '@shared/terminal-session'
+import type { TerminalSession, TerminalSessionStatus } from '@shared/terminal-session'
+
+function inProgressSessionRank(status?: TerminalSessionStatus): number {
+  if (status === 'idle') return 1
+  if (status === 'done' || status === 'error' || status === undefined) return 2
+  return 0
+}
 
 export function TaskColumn({
   status,
   label,
   tasks,
   sessionByTaskId,
+  targetOwnerByKey = {},
   onOpenTask,
   onOpenSession,
   onStartTask,
@@ -25,6 +32,7 @@ export function TaskColumn({
   label: string
   tasks: Task[]
   sessionByTaskId: Partial<Record<string, TerminalSession>>
+  targetOwnerByKey?: Record<string, Task | undefined>
   onOpenTask: (task: Task) => void
   onOpenSession: (session: TerminalSession) => void
   onStartTask: (task: Task) => void
@@ -35,6 +43,17 @@ export function TaskColumn({
   canReviewTask: (task: Task) => boolean
 }): React.JSX.Element {
   const { setNodeRef, isOver } = useDroppable({ id: status })
+  const displayedTasks = React.useMemo(
+    () =>
+      status === 'in_progress'
+        ? [...tasks].sort(
+            (a, b) =>
+              inProgressSessionRank(sessionByTaskId[a.id]?.status) -
+              inProgressSessionRank(sessionByTaskId[b.id]?.status)
+          )
+        : tasks,
+    [sessionByTaskId, status, tasks]
+  )
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -49,12 +68,20 @@ export function TaskColumn({
           isOver && 'border-primary bg-primary/5'
         )}
       >
-        <SortableContext items={tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-          {tasks.map((task) => (
+        <SortableContext
+          items={displayedTasks.map((task) => task.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          {displayedTasks.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
               session={sessionByTaskId[task.id]}
+              blockedByTask={
+                targetOwnerByKey[task.executionTargetKey]?.id === task.id
+                  ? undefined
+                  : targetOwnerByKey[task.executionTargetKey]
+              }
               onOpen={onOpenTask}
               onOpenSession={onOpenSession}
               onStart={onStartTask}

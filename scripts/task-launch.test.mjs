@@ -10,7 +10,13 @@ const { outputText } = ts.transpileModule(source, {
 })
 const compiled = { exports: {} }
 new Function('module', 'exports', outputText)(compiled, compiled.exports)
-const { selectTaskQueueCandidates, taskLaunchInitialMode } = compiled.exports
+const {
+  groupTaskQueueByTarget,
+  selectTaskQueueCandidates,
+  taskConsumesQueueCapacity,
+  taskLaunchInitialMode,
+  taskTargetIsOwned
+} = compiled.exports
 
 test('a new task triggered into in progress starts in plan mode', () => {
   assert.equal(taskLaunchInitialMode('todo'), 'plan')
@@ -51,4 +57,30 @@ test('queue selection skips running and dispatching targets without head-of-line
     ),
     ['c1']
   )
+})
+
+test('queue grouping preserves target and FIFO order', () => {
+  const queued = [
+    { id: 'a1', executionTargetKey: 'a' },
+    { id: 'b1', executionTargetKey: 'b' },
+    { id: 'a2', executionTargetKey: 'a' }
+  ]
+  assert.deepEqual(
+    groupTaskQueueByTarget(queued).map((group) => ({
+      target: group.executionTargetKey,
+      tasks: group.tasks.map((task) => task.id)
+    })),
+    [
+      { target: 'a', tasks: ['a1', 'a2'] },
+      { target: 'b', tasks: ['b1'] }
+    ]
+  )
+})
+
+test('idle sessions retain target ownership without consuming queue capacity', () => {
+  assert.equal(taskTargetIsOwned('complete', 'idle'), true)
+  assert.equal(taskConsumesQueueCapacity('running', 'idle'), false)
+  assert.equal(taskTargetIsOwned('complete', 'done'), false)
+  assert.equal(taskConsumesQueueCapacity('running', 'working'), true)
+  assert.equal(taskConsumesQueueCapacity('running'), true)
 })

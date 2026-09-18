@@ -20,6 +20,7 @@ import {
 } from '@/components/sessions/terminal-session-status'
 import { Button } from '@/components/ui/button'
 import { useDashboard } from '@/contexts/dashboard-context'
+import { useTaskBoard } from '@/contexts/task-board-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import type { AutoReviewStatus } from '@/lib/auto-reviews'
 import { cn } from '@/lib/utils'
@@ -32,9 +33,11 @@ import {
   nativeSessionNeedsUserAction,
   nativeSessionPresentationStatus,
   terminalSessionActivityPreview,
-  type NativeInteraction
+  type NativeInteraction,
+  type NativeSnapshot
 } from '@shared/native-session'
 import type { Repository } from '@shared/repository'
+import type { Task } from '@shared/task'
 
 function compareActiveSessions(a: TerminalSession, b: TerminalSession): number {
   return b.createdAt - a.createdAt
@@ -72,16 +75,55 @@ function autoReviewLabel(status: AutoReviewStatus): string {
   }
 }
 
+function nativeSessionCompletedTask(
+  session: TerminalSession,
+  snapshot: NativeSnapshot | undefined
+): boolean {
+  return Boolean(
+    snapshot &&
+    snapshot.session.generation === session.generation &&
+    snapshot.lastStopReason === 'task_completed' &&
+    snapshot.phase === 'idle' &&
+    snapshot.interactions.length === 0 &&
+    !snapshot.error &&
+    !snapshot.queue?.some((item) =>
+      ['queued', 'dispatching', 'active', 'delivery-unknown'].includes(item.status)
+    )
+  )
+}
+
 export function DashboardPage({
   repositories,
   onNavigateToSessions,
-  onNavigateToReviews
+  onNavigateToReviews,
+  onDoneTask
 }: {
   repositories: Repository[]
   onNavigateToSessions: () => void
   onNavigateToReviews: (repositoryId?: string) => void
+  onDoneTask: (task: Task) => Promise<void>
 }): React.JSX.Element {
   const { sessions, nativeById, select, focusExternal, observationNow } = useTerminalSessions()
+  const { tasks } = useTaskBoard()
+  const completingTaskIdsRef = React.useRef(new Set<string>())
+  const [completingTaskIds, setCompletingTaskIds] = React.useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  const tasksById = React.useMemo(
+    () => new Map(tasks.map((task) => [task.id, task] as const)),
+    [tasks]
+  )
+  const taskBySessionId = React.useMemo(() => {
+    const linkedBySessionId = new Map<string, Task | null>()
+    for (const task of tasks) {
+      if (!task.copilotSessionId) continue
+      linkedBySessionId.set(
+        task.copilotSessionId,
+        linkedBySessionId.has(task.copilotSessionId) ? null : task
+      )
+    }
+    return linkedBySessionId
+  }, [tasks])
   const interactionById = React.useMemo(
     () =>
       Object.fromEntries(
@@ -114,6 +156,20 @@ export function DashboardPage({
       onNavigateToSessions()
     },
     [onNavigateToSessions, select]
+  )
+  const completeTask = React.useCallback(
+    async (task: Task): Promise<void> => {
+      if (completingTaskIdsRef.current.has(task.id)) return
+      completingTaskIdsRef.current.add(task.id)
+      setCompletingTaskIds(new Set(completingTaskIdsRef.current))
+      try {
+        await onDoneTask(task)
+      } finally {
+        completingTaskIdsRef.current.delete(task.id)
+        setCompletingTaskIds(new Set(completingTaskIdsRef.current))
+      }
+    },
+    [onDoneTask]
   )
 
   return (
@@ -156,6 +212,11 @@ export function DashboardPage({
               {liveSessions.map((session) => {
                 const interaction = interactionById[session.id]
                 const snapshot = nativeById[session.id]
+                const linkedTask =
+                  (session.taskId ? tasksById.get(session.taskId) : undefined) ??
+                  taskBySessionId.get(session.id)
+                const canCompleteTask =
+                  linkedTask?.status !== 'done' && nativeSessionCompletedTask(session, snapshot)
                 const planTransitionAvailable = Boolean(
                   snapshot?.session.generation === session.generation &&
                   snapshot?.planTransitionAvailable
@@ -253,19 +314,33 @@ export function DashboardPage({
                         />
                       )}
                     </button>
-                    <div className="border-t px-3 py-3">
-                      {activityPreview.markdown ? (
-                        <MarkdownBody text={activityPreview.text} />
-                      ) : (
-                        <p
-                          className={cn(
-                            'whitespace-pre-wrap break-words text-xs leading-relaxed',
-                            needsAction ? 'text-foreground' : 'text-muted-foreground'
-                          )}
-                        >
-                          {activityPreview.text}
-                        </p>
+                    <div
+                      className={cn(
+                        'flex items-start gap-3 border-t px-3 py-3',
+                        needsAction ? 'text-foreground' : 'text-muted-foreground'
                       )}
+                    >
+                      <div className="min-w-0 flex-1">
+                        {activityPreview.markdown ? (
+                          <MarkdownBody text={activityPreview.text} />
+                        ) : (
+                          <p className="whitespace-pre-wrap break-words text-xs leading-relaxed">
+                            {activityPreview.text}
+                          </p>
+                        )}
+                      </div>
+                      {canCompleteTask && linkedTask ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={completingTaskIds.has(linkedTask.id)}
+                          onClick={() => void completeTask(linkedTask)}
+                        >
+                          <CircleCheckIcon />
+                          {completingTaskIds.has(linkedTask.id) ? 'Finishing…' : 'Done'}
+                        </Button>
+                      ) : null}
                     </div>
                     {session.transport !== 'external' && (
                       <NativeSessionControls

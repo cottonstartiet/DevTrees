@@ -83,6 +83,9 @@ pub fn run() {
             if let Err(e) = terminal_sessions::init(app.handle()) {
                 eprintln!("failed to restore terminal session watches: {e}");
             }
+            if let Err(e) = tasks::reconcile_run_claims(app.handle()) {
+                eprintln!("failed to reconcile task run claims: {e}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -178,6 +181,7 @@ pub fn run() {
             tasks::tasks_set_copilot_session,
             tasks::tasks_set_queue_status,
             tasks::tasks_claim_run,
+            tasks::tasks_release_run,
             terminal_sessions::terminal_sessions_list,
             terminal_sessions::terminal_sessions_start,
             terminal_sessions::terminal_sessions_history,

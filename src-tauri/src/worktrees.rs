@@ -117,10 +117,11 @@ impl WorktreeStatusResult {
     }
 }
 
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_worktree_name(name: &str) -> bool {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"^[A-Za-z0-9._-]+$").unwrap());
-    re.is_match(name)
+    let trimmed = name.trim();
+    !trimmed.is_empty() && trimmed.len() <= MAX_NAME_LENGTH && re.is_match(trimmed)
 }
 
 fn normalize(p: &str) -> String {
@@ -185,7 +186,7 @@ fn parse_worktree_porcelain(stdout: &str, repository_path: &str) -> Vec<Worktree
     out
 }
 
-async fn list_worktrees(repository_path: &str) -> Result<Vec<Worktree>, GitError> {
+pub(crate) async fn list_worktrees(repository_path: &str) -> Result<Vec<Worktree>, GitError> {
     let out = run_git(
         vec!["worktree".into(), "list".into(), "--porcelain".into()],
         repository_path.to_string(),
@@ -205,9 +206,9 @@ fn compute_worktree_destination(repository_path: &str, name: &str) -> PathBuf {
     parent.join(format!("{ws_name}.worktrees")).join(name)
 }
 
-async fn create_worktree(repository_path: &str, name: &str) -> CreateWorktreeResult {
+pub(crate) async fn create_worktree(repository_path: &str, name: &str) -> CreateWorktreeResult {
     let trimmed = name.trim();
-    if trimmed.is_empty() || trimmed.len() > MAX_NAME_LENGTH || !valid_name(trimmed) {
+    if !valid_worktree_name(trimmed) {
         return CreateWorktreeResult::err("invalid-name", None);
     }
 
@@ -436,4 +437,18 @@ pub async fn worktrees_delete(
 #[tauri::command]
 pub async fn worktrees_status(worktree_path: String) -> AppResult<WorktreeStatusResult> {
     Ok(get_worktree_change_status(&worktree_path).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_worktree_name;
+
+    #[test]
+    fn validates_deferred_worktree_names() {
+        assert!(valid_worktree_name("feature-x"));
+        assert!(valid_worktree_name("release_1.2"));
+        assert!(!valid_worktree_name(""));
+        assert!(!valid_worktree_name("feature/new"));
+        assert!(!valid_worktree_name(&"a".repeat(65)));
+    }
 }

@@ -8,7 +8,9 @@ import { CreateBranchDialog } from '@/components/create-branch-dialog'
 import { CreateWorktreeDialog } from '@/components/create-worktree-dialog'
 import { DeleteWorktreeDialog } from '@/components/delete-worktree-dialog'
 import { DetailToolbar } from '@/components/detail-toolbar'
+import { GlobalTaskShortcut } from '@/components/global-task-shortcut'
 import { StatusBar, type StatusBarContext } from '@/components/status-bar'
+import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
@@ -48,40 +50,22 @@ function worktreeLabel(path: string): string {
 }
 
 interface TasksPageContainerProps {
-  repositories: Repository[]
-  worktreesByRepositoryId: Record<string, Worktree[]>
-  dialogOpen: boolean
-  onDialogOpenChange: (open: boolean) => void
-  activeTask: Task | null
-  taskDraft: BrowserCodeReviewDraft | null
   onOpenTask: (task: Task | null) => void
   onNavigateToSessions: () => void
   queue: TaskQueueController
 }
 
 function TasksPageContainer({
-  repositories,
-  worktreesByRepositoryId,
-  dialogOpen,
-  onDialogOpenChange,
-  activeTask,
-  taskDraft,
   onOpenTask,
   onNavigateToSessions,
   queue
 }: TasksPageContainerProps): React.JSX.Element {
   return (
     <TasksPage
-      repositories={repositories}
-      worktreesByRepositoryId={worktreesByRepositoryId}
       onStartTask={queue.startTask}
       onMoveTask={queue.moveTask}
       onReviewTask={queue.reviewTask}
       canReviewTask={queue.canReviewTask}
-      dialogOpen={dialogOpen}
-      onDialogOpenChange={onDialogOpenChange}
-      activeTask={activeTask}
-      taskDraft={taskDraft}
       onOpenTask={onOpenTask}
       onNavigateToSessions={onNavigateToSessions}
     />
@@ -272,7 +256,7 @@ function AppShell(): React.JSX.Element {
     setView('sessions')
   }, [])
 
-  const { tasks: allTasks } = useTaskBoard()
+  const { tasks: allTasks, createTask, updateTask, deleteTask } = useTaskBoard()
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [activeTaskForDialog, setActiveTaskForDialog] = useState<Task | null>(null)
   const [taskDraft, setTaskDraft] = useState<BrowserCodeReviewDraft | null>(null)
@@ -653,6 +637,7 @@ function AppShell(): React.JSX.Element {
         {(taskQueue) => (
           <DashboardProvider repositories={repositories}>
             <SidebarProvider className="flex h-svh flex-col">
+              <GlobalTaskShortcut onNewTask={handleOpenAddTaskDialog} />
               <div className="flex min-h-0 w-full flex-1">
                 <ActivityRail activeView={view} onSelect={setView} />
                 {view === 'repositories' || view === 'reviews' || view === 'sessions' ? (
@@ -722,6 +707,7 @@ function AppShell(): React.JSX.Element {
                       <DashboardPage
                         repositories={repositories}
                         onNavigateToSessions={handleNavigateToSessions}
+                        onDoneTask={(task) => taskQueue.moveTask(task, 'done')}
                         onNavigateToReviews={(repositoryId) => {
                           if (repositoryId) setReviewsRepositoryId(repositoryId)
                           setView('reviews')
@@ -729,12 +715,6 @@ function AppShell(): React.JSX.Element {
                       />
                     ) : view === 'tasks' ? (
                       <TasksPageContainer
-                        repositories={repositories}
-                        worktreesByRepositoryId={worktreesByRepositoryId}
-                        dialogOpen={taskDialogOpen}
-                        onDialogOpenChange={handleTaskDialogOpenChange}
-                        activeTask={activeTaskForDialog}
-                        taskDraft={taskDraft}
                         onOpenTask={handleOpenTaskDialog}
                         onNavigateToSessions={handleNavigateToSessions}
                         queue={taskQueue}
@@ -794,6 +774,71 @@ function AppShell(): React.JSX.Element {
                 </SidebarInset>
               </div>
               <StatusBar context={statusContext} />
+              <TaskDetailDialog
+                open={taskDialogOpen}
+                onOpenChange={handleTaskDialogOpenChange}
+                task={activeTaskForDialog}
+                initialDraft={taskDraft}
+                repositories={repositories}
+                worktreesByRepositoryId={worktreesByRepositoryId}
+                onCreate={async ({
+                  title,
+                  description,
+                  repository,
+                  worktreePath,
+                  worktreeBranch,
+                  pendingWorktreeName,
+                  attachmentStageId,
+                  attachments
+                }) => {
+                  const created = await createTask({
+                    title,
+                    description,
+                    intent: taskDraft?.kind ?? 'task',
+                    repositoryId: repository.id,
+                    repositoryName: repository.name,
+                    repositoryPath: repository.path,
+                    worktreePath,
+                    worktreeBranch,
+                    pendingWorktreeName,
+                    attachmentStageId,
+                    attachments
+                  })
+                  if (created?.intent === 'browser-code-review') {
+                    void taskQueue.startTask(created)
+                  }
+                  return created !== null
+                }}
+                onUpdate={async ({
+                  task,
+                  title,
+                  description,
+                  repository,
+                  worktreePath,
+                  worktreeBranch,
+                  pendingWorktreeName,
+                  attachmentStageId,
+                  attachments
+                }) => {
+                  const updated = await updateTask({
+                    id: task.id,
+                    title,
+                    description,
+                    repositoryId: repository.id,
+                    repositoryName: repository.name,
+                    repositoryPath: repository.path,
+                    worktreePath,
+                    worktreeBranch,
+                    pendingWorktreeName,
+                    attachmentStageId,
+                    attachments
+                  })
+                  return updated !== null
+                }}
+                onDelete={async (task) => {
+                  await deleteTask(task.id)
+                }}
+              />
               <CreateWorktreeDialog
                 repository={dialogRepository}
                 open={dialogOpen}

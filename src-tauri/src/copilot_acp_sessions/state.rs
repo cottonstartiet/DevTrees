@@ -53,6 +53,7 @@ pub struct Snapshot {
     pub queue: Vec<QueuedPrompt>,
     pub queue_paused: bool,
     pub phase: String,
+    pub last_stop_reason: Option<String>,
     pub replaces_id: Option<String>,
     pub usage: Option<Value>,
     pub available_modes: Vec<SessionMode>,
@@ -147,6 +148,7 @@ impl State {
                 queue: Vec::new(),
                 queue_paused: false,
                 phase: "starting".into(),
+                last_stop_reason: None,
                 replaces_id: None,
                 usage: None,
                 available_modes: Vec::new(),
@@ -413,6 +415,7 @@ impl State {
             ));
         }
         self.snapshot.plan_transition_available = false;
+        self.snapshot.last_stop_reason = None;
         Ok(true)
     }
 
@@ -641,21 +644,17 @@ impl State {
     }
 
     pub fn turn_finished(&mut self, stop: &str) {
+        let successful = matches!(stop, "end_turn" | "task_completed");
         self.finish_tools(stop);
         if let Some(id) = self.active_prompt.take() {
             if let Some(item) = self.snapshot.queue.iter_mut().find(|item| item.id == id) {
-                item.status = if stop == "end_turn" {
-                    "completed"
-                } else {
-                    "cancelled"
-                }
-                .into();
-                item.error = (stop != "end_turn").then(|| format!("Turn stopped: {stop}"));
+                item.status = if successful { "completed" } else { "cancelled" }.into();
+                item.error = (!successful).then(|| format!("Turn stopped: {stop}"));
             }
         }
         self.messages.clear();
         self.echo.clear();
-        self.snapshot.queue_paused |= stop != "end_turn";
+        self.snapshot.queue_paused |= !successful;
         if self.snapshot.phase != "ending" {
             self.snapshot.phase = "idle".into();
         }
@@ -667,6 +666,7 @@ impl State {
                 .queue
                 .iter()
                 .any(|item| item.status == "queued");
+        self.snapshot.last_stop_reason = Some(stop.into());
         self.snapshot.session.last_activity = format!("Turn finished: {stop}");
         self.changed();
     }
@@ -773,6 +773,45 @@ mod tests {
         state.set_current_mode("interactive".into());
         state.turn_finished("end_turn");
         assert!(!state.snapshot.plan_transition_available);
+    }
+
+    #[test]
+    fn task_completed_is_recorded_as_a_successful_stop() {
+        let mut state = state();
+        state
+            .stage_prompt(
+                "active".into(),
+                vec![json!({"type":"text","text":"Implement the task"})],
+                false,
+            )
+            .unwrap();
+        state.active_prompt = Some("active".into());
+
+        state.turn_finished("task_completed");
+
+        assert_eq!(
+            state.snapshot.last_stop_reason.as_deref(),
+            Some("task_completed")
+        );
+        assert_eq!(state.snapshot.queue[0].status, "completed");
+        assert!(state.snapshot.queue[0].error.is_none());
+        assert!(!state.snapshot.queue_paused);
+    }
+
+    #[test]
+    fn staging_follow_up_clears_the_previous_stop_reason() {
+        let mut state = state();
+        state.turn_finished("task_completed");
+
+        state
+            .stage_prompt(
+                "next".into(),
+                vec![json!({"type":"text","text":"Continue"})],
+                false,
+            )
+            .unwrap();
+
+        assert!(state.snapshot.last_stop_reason.is_none());
     }
 
     #[test]

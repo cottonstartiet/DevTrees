@@ -17,6 +17,7 @@ function worktreeLabel(path: string): string {
 export function TaskCard({
   task,
   session,
+  blockedByTask,
   onOpen,
   onOpenSession,
   onStart,
@@ -28,6 +29,7 @@ export function TaskCard({
 }: {
   task: Task
   session: TerminalSession | undefined
+  blockedByTask?: Task
   onOpen: (task: Task) => void
   onOpenSession: (session: TerminalSession) => void
   onStart: (task: Task) => void
@@ -51,11 +53,15 @@ export function TaskCard({
     (task.status === 'review' && (task.queueStatus === 'queued' || task.queueStatus === 'failed'))
   const queueLabel =
     task.queueStatus === 'running'
-      ? 'Running'
+      ? session?.status === 'idle'
+        ? 'Session idle'
+        : 'Running'
       : task.queueStatus === 'failed'
         ? 'Failed'
         : task.queueStatus === 'queued'
-          ? 'Queued'
+          ? blockedByTask
+            ? 'Waiting'
+            : 'Queued'
           : null
 
   return (
@@ -65,7 +71,10 @@ export function TaskCard({
       {...attributes}
       {...listeners}
       onClick={() => {
-        if (task.status === 'in_progress' && session) {
+        const opensSession =
+          task.status === 'in_progress' ||
+          (task.status === 'review' && task.queueStatus === 'running')
+        if (opensSession && session) {
           onOpenSession(session)
           return
         }
@@ -86,7 +95,7 @@ export function TaskCard({
               task.queueStatus === 'failed' && 'bg-destructive/10 text-destructive'
             )}
           >
-            {task.queueStatus === 'running' ? (
+            {task.queueStatus === 'running' && session?.status !== 'idle' ? (
               <LoaderCircleIcon className="motion-reduce:animate-none size-3 animate-spin" />
             ) : null}
             {queueLabel}
@@ -117,7 +126,12 @@ export function TaskCard({
           <Button
             type="button"
             size="sm"
-            disabled={isStarting || task.queueStatus === 'running'}
+            disabled={isStarting || task.queueStatus === 'running' || Boolean(blockedByTask)}
+            title={
+              blockedByTask
+                ? `Waiting for "${blockedByTask.title}" to release this worktree.`
+                : undefined
+            }
             onClick={(e) => {
               e.stopPropagation()
               onStart(task)

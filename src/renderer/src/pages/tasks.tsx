@@ -11,29 +11,19 @@ import { LoaderCircleIcon, PlusIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { TaskColumn } from '@/components/task-column'
-import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TASK_STATUSES, TASK_STATUS_LABELS, useTaskBoard } from '@/contexts/task-board-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
-import type { BrowserCodeReviewDraft } from '@/lib/deep-links'
 import { openTaskSession } from '@/lib/task-session-routing'
 import { cn } from '@/lib/utils'
-import type { Repository } from '@shared/repository'
 import type { TaskQueueMode } from '@shared/settings'
-import type { Task, TaskStatus } from '@shared/task'
+import { taskTargetIsOwned, type Task, type TaskStatus } from '@shared/task'
 import type { TerminalSession } from '@shared/terminal-session'
-import type { Worktree } from '@shared/worktree'
 
 interface TasksPageProps {
-  repositories: Repository[]
-  worktreesByRepositoryId: Record<string, Worktree[]>
   onStartTask: (task: Task) => Promise<void>
   onMoveTask: (task: Task, status: TaskStatus, beforeId?: string | null) => Promise<void>
   onReviewTask: (task: Task) => Promise<void>
   canReviewTask: (task: Task) => boolean
-  dialogOpen: boolean
-  onDialogOpenChange: (open: boolean) => void
-  activeTask: Task | null
-  taskDraft: BrowserCodeReviewDraft | null
   onOpenTask: (task: Task | null) => void
   onNavigateToSessions: () => void
 }
@@ -47,6 +37,10 @@ interface TasksHeaderControlsProps {
   modeBusy: boolean
   onModeChange: (mode: TaskQueueMode) => Promise<void>
   onAddTask: () => void
+}
+
+export function TasksBoardLayout({ children }: { children: React.ReactNode }): React.JSX.Element {
+  return <div className="flex min-h-full min-w-full shrink-0 items-stretch gap-4">{children}</div>
 }
 
 export function TasksHeaderControls({
@@ -127,20 +121,14 @@ function isNewerSession(candidate: TerminalSession, current: TerminalSession): b
 }
 
 export function TasksPage({
-  repositories,
-  worktreesByRepositoryId,
   onStartTask,
   onMoveTask,
   onReviewTask,
   canReviewTask,
-  dialogOpen,
-  onDialogOpenChange,
-  activeTask,
-  taskDraft,
   onOpenTask,
   onNavigateToSessions
 }: TasksPageProps): React.JSX.Element {
-  const { tasks, tasksByStatus, createTask, updateTask, deleteTask } = useTaskBoard()
+  const { tasks, tasksByStatus, deleteTask } = useTaskBoard()
   const { sessions, byId: sessionsById, select, focusExternal } = useTerminalSessions()
   const startingTaskIdsRef = React.useRef(new Set<string>())
   const [startingTaskIds, setStartingTaskIds] = React.useState<ReadonlySet<string>>(() => new Set())
@@ -164,6 +152,18 @@ export function TasksPage({
     }
     return resolved
   }, [sessions, sessionsById, tasks])
+  const targetOwnerByKey = React.useMemo(
+    () =>
+      Object.fromEntries(
+        tasks
+          .filter((task) => {
+            const session = task.copilotSessionId ? sessionsById[task.copilotSessionId] : undefined
+            return taskTargetIsOwned(task.queueStatus, session?.status)
+          })
+          .map((task) => [task.executionTargetKey, task])
+      ) as Record<string, Task | undefined>,
+    [sessionsById, tasks]
+  )
 
   const handleOpenSession = React.useCallback(
     (session: TerminalSession): void => {
@@ -220,7 +220,7 @@ export function TasksPage({
     <>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <div className="flex min-h-full min-w-full flex-1 items-stretch gap-4">
+          <TasksBoardLayout>
             {TASK_STATUSES.map((status) => (
               <TaskColumn
                 key={status}
@@ -228,6 +228,7 @@ export function TasksPage({
                 label={TASK_STATUS_LABELS[status]}
                 tasks={tasksByStatus[status]}
                 sessionByTaskId={sessionByTaskId}
+                targetOwnerByKey={targetOwnerByKey}
                 onOpenTask={onOpenTask}
                 onOpenSession={handleOpenSession}
                 onStartTask={(task) => void handleStartTask(task)}
@@ -238,75 +239,9 @@ export function TasksPage({
                 canReviewTask={canReviewTask}
               />
             ))}
-          </div>
+          </TasksBoardLayout>
         </DndContext>
       </div>
-
-      <TaskDetailDialog
-        open={dialogOpen}
-        onOpenChange={onDialogOpenChange}
-        task={activeTask}
-        initialDraft={taskDraft}
-        repositories={repositories}
-        worktreesByRepositoryId={worktreesByRepositoryId}
-        onCreate={async ({
-          title,
-          description,
-          repository,
-          worktreePath,
-          worktreeBranch,
-          pendingWorktreeName,
-          attachmentStageId,
-          attachments
-        }) => {
-          const created = await createTask({
-            title,
-            description,
-            intent: taskDraft?.kind ?? 'task',
-            repositoryId: repository.id,
-            repositoryName: repository.name,
-            repositoryPath: repository.path,
-            worktreePath,
-            worktreeBranch,
-            pendingWorktreeName,
-            attachmentStageId,
-            attachments
-          })
-          if (created?.intent === 'browser-code-review') {
-            void handleStartTask(created)
-          }
-          return created !== null
-        }}
-        onUpdate={async ({
-          task,
-          title,
-          description,
-          repository,
-          worktreePath,
-          worktreeBranch,
-          pendingWorktreeName,
-          attachmentStageId,
-          attachments
-        }) => {
-          const updated = await updateTask({
-            id: task.id,
-            title,
-            description,
-            repositoryId: repository.id,
-            repositoryName: repository.name,
-            repositoryPath: repository.path,
-            worktreePath,
-            worktreeBranch,
-            pendingWorktreeName,
-            attachmentStageId,
-            attachments
-          })
-          return updated !== null
-        }}
-        onDelete={async (task) => {
-          await deleteTask(task.id)
-        }}
-      />
     </>
   )
 }

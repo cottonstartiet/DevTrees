@@ -1485,6 +1485,15 @@ pub(crate) fn process_is_running(pid: u32) -> AppResult<bool> {
 // ----- Polling loop -----
 
 fn emit(app: &AppHandle, session: &TerminalSession, entries: Vec<TerminalTimelineEntry>) {
+    if session.status.is_final() {
+        if let Err(error) = crate::tasks::settle_run_for_session(
+            app,
+            &session.id,
+            session.status == TerminalSessionStatus::Error,
+        ) {
+            eprintln!("failed to settle task run for terminal session: {error}");
+        }
+    }
     let _ = app.emit(
         EVENT_UPDATE,
         TerminalSessionUpdate {
@@ -2200,6 +2209,13 @@ pub(crate) fn publish_native_session(app: &AppHandle, session: &TerminalSession)
     }
     watch.session = session.clone();
     drop(watches);
+    if session.status.is_final() {
+        crate::tasks::settle_run_for_session(
+            app,
+            &session.id,
+            session.status == TerminalSessionStatus::Error,
+        )?;
+    }
     app.emit(
         EVENT_UPDATE,
         TerminalSessionUpdate {
@@ -2635,7 +2651,20 @@ pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<(
         .0
         .lock()
         .map_err(|_| AppError::msg("database mutex poisoned"))?;
-    db.execute("DELETE FROM terminal_sessions WHERE id = ?1", [&id])?;
+    let tx = db.unchecked_transaction()?;
+    let changed = tx.execute(
+        "UPDATE tasks
+         SET queue_status = 'complete', run_claim_id = NULL, run_claimed_at = NULL,
+             updated_at = ?2
+         WHERE copilot_session_id = ?1 AND run_claim_id IS NOT NULL",
+        rusqlite::params![id, now_ms()],
+    )?;
+    tx.execute("DELETE FROM terminal_sessions WHERE id = ?1", [&id])?;
+    tx.commit()?;
+    drop(db);
+    if changed > 0 {
+        crate::tasks::emit_changed(&app);
+    }
     Ok(())
 }
 

@@ -1,6 +1,10 @@
+import type { TerminalSessionStatus } from './terminal-session'
+
 export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done'
 export type TaskQueueStatus = 'queued' | 'running' | 'complete' | 'failed'
 export type TaskIntent = 'task' | 'browser-code-review'
+
+export const TASKS_CHANGED_EVENT = 'tasks:changed'
 
 export type TaskAttachment = {
   id: string
@@ -19,8 +23,44 @@ export function taskLaunchInitialMode(status: TaskStatus): 'plan' | 'autopilot' 
   return undefined
 }
 
+export function taskTargetIsOwned(
+  queueStatus: TaskQueueStatus,
+  sessionStatus?: TerminalSessionStatus
+): boolean {
+  return (
+    queueStatus === 'running' ||
+    (sessionStatus !== undefined && sessionStatus !== 'done' && sessionStatus !== 'error')
+  )
+}
+
+export function taskConsumesQueueCapacity(
+  queueStatus: TaskQueueStatus,
+  sessionStatus?: TerminalSessionStatus
+): boolean {
+  if (sessionStatus === 'idle' || sessionStatus === 'done' || sessionStatus === 'error')
+    return false
+  return sessionStatus !== undefined || queueStatus === 'running'
+}
+
 type QueueTarget = {
   executionTargetKey: string
+}
+
+export type TaskQueueTargetGroup<T extends QueueTarget> = {
+  executionTargetKey: string
+  tasks: T[]
+}
+
+export function groupTaskQueueByTarget<T extends QueueTarget>(
+  queuedTasks: readonly T[]
+): TaskQueueTargetGroup<T>[] {
+  const groups = new Map<string, T[]>()
+  for (const task of queuedTasks) {
+    const group = groups.get(task.executionTargetKey)
+    if (group) group.push(task)
+    else groups.set(task.executionTargetKey, [task])
+  }
+  return Array.from(groups, ([executionTargetKey, tasks]) => ({ executionTargetKey, tasks }))
 }
 
 export function selectTaskQueueCandidates<T extends QueueTarget>(
@@ -33,9 +73,11 @@ export function selectTaskQueueCandidates<T extends QueueTarget>(
   const occupiedTargets = new Set(runningTasks.map((task) => task.executionTargetKey))
   for (const target of dispatchingTargets) occupiedTargets.add(target)
   const selected: T[] = []
-  for (const task of queuedTasks) {
-    if (occupiedTargets.has(task.executionTargetKey)) continue
-    occupiedTargets.add(task.executionTargetKey)
+  for (const group of groupTaskQueueByTarget(queuedTasks)) {
+    if (occupiedTargets.has(group.executionTargetKey)) continue
+    const task = group.tasks[0]
+    if (!task) continue
+    occupiedTargets.add(group.executionTargetKey)
     selected.push(task)
     if (selected.length === available) break
   }
@@ -140,6 +182,7 @@ export type DeleteTaskResult = { ok: true } | { ok: false; error: TaskErrorCode;
 export type SetTaskCopilotSessionRequest = {
   id: string
   copilotSessionId: string
+  claimId: string
 }
 
 export type SetTaskQueueStatusRequest = {
@@ -151,6 +194,16 @@ export type ClaimTaskRunRequest = {
   id: string
 }
 
+export type ClaimTaskRunResult =
+  | { ok: true; task: Task; claimId: string }
+  | { ok: false; error: TaskErrorCode; message?: string }
+
+export type ReleaseTaskRunRequest = {
+  id: string
+  claimId: string
+  queueStatus: 'complete' | 'failed'
+}
+
 export const TaskIpcChannels = {
   List: 'tasks:list',
   Create: 'tasks:create',
@@ -159,5 +212,6 @@ export const TaskIpcChannels = {
   Delete: 'tasks:delete',
   setCopilotSession: 'tasks:set-copilot-session',
   setQueueStatus: 'tasks:set-queue-status',
-  claimRun: 'tasks:claim-run'
+  claimRun: 'tasks:claim-run',
+  releaseRun: 'tasks:release-run'
 } as const

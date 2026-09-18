@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::db::DbState;
@@ -13,6 +13,13 @@ use crate::error::{AppError, AppResult};
 const MAX_ATTACHMENTS: usize = 32;
 const MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES: u64 = 64 * 1024 * 1024;
+pub const EVENT_CHANGED: &str = "tasks:changed";
+
+pub fn emit_changed(app: &AppHandle) {
+    if let Err(error) = app.emit(EVENT_CHANGED, ()) {
+        eprintln!("failed to emit task change: {error}");
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -101,6 +108,42 @@ pub struct TaskResult {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimTaskRunResult {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<Task>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claim_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl ClaimTaskRunResult {
+    fn ok(task: Task, claim_id: String) -> Self {
+        Self {
+            ok: true,
+            task: Some(task),
+            claim_id: Some(claim_id),
+            error: None,
+            message: None,
+        }
+    }
+
+    fn err(code: &str, message: Option<String>) -> Self {
+        Self {
+            ok: false,
+            task: None,
+            claim_id: None,
+            error: Some(code.to_string()),
+            message,
+        }
+    }
 }
 
 impl TaskResult {
@@ -928,8 +971,26 @@ pub async fn tasks_update(
         .0
         .lock()
         .map_err(|_| AppError::msg("db mutex poisoned"))?;
-    if load_task(&conn, &id)?.is_none() {
+    let Some(existing) = load_task(&conn, &id)? else {
         return Ok(TaskResult::err("not-found", None));
+    };
+    let has_claim: bool = conn.query_row(
+        "SELECT run_claim_id IS NOT NULL FROM tasks WHERE id = ?1",
+        [&id],
+        |row| row.get(0),
+    )?;
+    if has_claim
+        && existing.execution_target_key
+            != execution_target_key(
+                &repository_id,
+                &worktree_path,
+                pending_worktree_name.as_deref(),
+            )
+    {
+        return Ok(TaskResult::err(
+            "target-busy",
+            Some("End the current task session before changing its worktree.".into()),
+        ));
     }
 
     let now = now_ms();
@@ -1081,13 +1142,30 @@ pub async fn tasks_delete(
         .0
         .lock()
         .map_err(|_| AppError::msg("db mutex poisoned"))?;
-    let worktree_path = conn
+    let task_state = conn
         .query_row(
-            "SELECT worktree_path FROM tasks WHERE id = ?1",
+            "SELECT worktree_path,
+                    run_claim_id IS NOT NULL
+                    OR EXISTS (
+                        SELECT 1 FROM terminal_sessions
+                        WHERE terminal_sessions.id = tasks.copilot_session_id
+                          AND terminal_sessions.status IN
+                              ('starting', 'working', 'waiting-input', 'idle')
+                    )
+             FROM tasks WHERE id = ?1",
             [&id],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
         )
         .optional()?;
+    let Some((worktree_path, target_owned)) = task_state else {
+        return Ok(DeleteTaskResult::err("not-found", None));
+    };
+    if target_owned {
+        return Ok(DeleteTaskResult::err(
+            "target-busy",
+            Some("End the task session before deleting this task.".into()),
+        ));
+    }
     let changed = conn.execute("DELETE FROM tasks WHERE id = ?1", [&id])?;
     if changed == 0 {
         return Ok(DeleteTaskResult::err("not-found", None));
@@ -1099,15 +1177,13 @@ pub async fn tasks_delete(
             eprintln!("failed to remove task attachment directory: {error}");
         }
     }
-    if let Some(worktree_path) = worktree_path {
-        let materialized = PathBuf::from(worktree_path)
-            .join(".devtrees")
-            .join("attachments")
-            .join(&id);
-        if materialized.exists() {
-            if let Err(error) = fs::remove_dir_all(materialized) {
-                eprintln!("failed to remove materialized task attachments: {error}");
-            }
+    let materialized = PathBuf::from(worktree_path)
+        .join(".devtrees")
+        .join("attachments")
+        .join(&id);
+    if materialized.exists() {
+        if let Err(error) = fs::remove_dir_all(materialized) {
+            eprintln!("failed to remove materialized task attachments: {error}");
         }
     }
     Ok(DeleteTaskResult::ok())
@@ -1118,19 +1194,28 @@ pub async fn tasks_set_copilot_session(
     state: State<'_, DbState>,
     id: String,
     copilot_session_id: String,
+    claim_id: String,
 ) -> AppResult<TaskResult> {
     let conn = state
         .0
         .lock()
         .map_err(|_| AppError::msg("db mutex poisoned"))?;
-    if load_task(&conn, &id)?.is_none() {
-        return Ok(TaskResult::err("not-found", None));
-    }
     let now = now_ms();
-    conn.execute(
-        "UPDATE tasks SET copilot_session_id = ?2, updated_at = ?3 WHERE id = ?1",
-        rusqlite::params![id, copilot_session_id, now],
+    let changed = conn.execute(
+        "UPDATE tasks
+         SET copilot_session_id = ?2, updated_at = ?4
+         WHERE id = ?1 AND run_claim_id = ?3",
+        rusqlite::params![id, copilot_session_id, claim_id, now],
     )?;
+    if changed == 0 {
+        if load_task(&conn, &id)?.is_none() {
+            return Ok(TaskResult::err("not-found", None));
+        }
+        return Ok(TaskResult::err(
+            "unknown",
+            Some("This task run is no longer current.".into()),
+        ));
+    }
     match load_task(&conn, &id)? {
         Some(task) => Ok(TaskResult::ok(task)),
         None => Ok(TaskResult::err("not-found", None)),
@@ -1162,6 +1247,17 @@ pub async fn tasks_set_queue_status(
     if load_task(&conn, &id)?.is_none() {
         return Ok(TaskResult::err("not-found", None));
     }
+    let has_claim: bool = conn.query_row(
+        "SELECT run_claim_id IS NOT NULL FROM tasks WHERE id = ?1",
+        [&id],
+        |row| row.get(0),
+    )?;
+    if has_claim {
+        return Ok(TaskResult::err(
+            "unknown",
+            Some("Release the current task run before changing its queue status.".into()),
+        ));
+    }
     conn.execute(
         "UPDATE tasks SET queue_status = ?2, updated_at = ?3 WHERE id = ?1",
         rusqlite::params![id, queue_status, now_ms()],
@@ -1172,52 +1268,204 @@ pub async fn tasks_set_queue_status(
     }
 }
 
-fn claim_task_run(conn: &mut Connection, id: &str) -> rusqlite::Result<TaskResult> {
+fn claim_task_run(conn: &mut Connection, id: &str) -> rusqlite::Result<ClaimTaskRunResult> {
     let tx = conn.transaction()?;
     let Some(task) = load_task(&tx, id)? else {
-        return Ok(TaskResult::err("not-found", None));
+        return Ok(ClaimTaskRunResult::err("not-found", None));
     };
     let conflicting_title: Option<String> = tx
         .query_row(
             "SELECT title FROM tasks
-             WHERE execution_target_key = ?1 AND id != ?2
+             WHERE execution_target_key = ?1
                AND (
-                 queue_status = 'running'
+                 run_claim_id IS NOT NULL
+                 OR queue_status = 'running'
                  OR EXISTS (
                    SELECT 1 FROM terminal_sessions
                    WHERE terminal_sessions.id = tasks.copilot_session_id
-                     AND terminal_sessions.status IN ('starting', 'working', 'waiting-input')
+                     AND terminal_sessions.status IN ('starting', 'working', 'waiting-input', 'idle')
                  )
                )
              ORDER BY updated_at ASC LIMIT 1",
-            rusqlite::params![task.execution_target_key, id],
+            [task.execution_target_key.as_str()],
             |row| row.get(0),
         )
         .optional()?;
     if let Some(title) = conflicting_title {
-        return Ok(TaskResult::err(
+        return Ok(ClaimTaskRunResult::err(
             "target-busy",
             Some(format!(
                 "\"{title}\" is already running in this repository worktree."
             )),
         ));
     }
+    let claim_id = uuid::Uuid::new_v4().to_string();
     tx.execute(
-        "UPDATE tasks SET queue_status = 'running', updated_at = ?2 WHERE id = ?1",
-        rusqlite::params![id, now_ms()],
+        "UPDATE tasks
+         SET queue_status = 'running', copilot_session_id = NULL,
+             run_claim_id = ?2, run_claimed_at = ?3, updated_at = ?3
+         WHERE id = ?1",
+        rusqlite::params![id, claim_id, now_ms()],
     )?;
     let claimed = load_task(&tx, id)?.expect("claimed task must still exist");
     tx.commit()?;
-    Ok(TaskResult::ok(claimed))
+    Ok(ClaimTaskRunResult::ok(claimed, claim_id))
 }
 
 #[tauri::command]
-pub async fn tasks_claim_run(state: State<'_, DbState>, id: String) -> AppResult<TaskResult> {
+pub async fn tasks_claim_run(
+    state: State<'_, DbState>,
+    id: String,
+) -> AppResult<ClaimTaskRunResult> {
     let mut conn = state
         .0
         .lock()
         .map_err(|_| AppError::msg("db mutex poisoned"))?;
     Ok(claim_task_run(&mut conn, &id)?)
+}
+
+#[tauri::command]
+pub async fn tasks_release_run(
+    state: State<'_, DbState>,
+    id: String,
+    claim_id: String,
+    queue_status: String,
+) -> AppResult<TaskResult> {
+    if !matches!(queue_status.as_str(), "complete" | "failed") {
+        return Ok(TaskResult::err(
+            "unknown",
+            Some("Invalid task run release status.".into()),
+        ));
+    }
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("db mutex poisoned"))?;
+    let changed = conn.execute(
+        "UPDATE tasks
+         SET queue_status = ?3, run_claim_id = NULL, run_claimed_at = NULL, updated_at = ?4
+         WHERE id = ?1 AND run_claim_id = ?2",
+        rusqlite::params![id, claim_id, queue_status, now_ms()],
+    )?;
+    if changed == 0 {
+        if load_task(&conn, &id)?.is_none() {
+            return Ok(TaskResult::err("not-found", None));
+        }
+        return Ok(TaskResult::err(
+            "unknown",
+            Some("This task run is no longer current.".into()),
+        ));
+    }
+    Ok(TaskResult::ok(
+        load_task(&conn, &id)?.expect("released task must still exist"),
+    ))
+}
+
+pub(crate) fn settle_run_for_session(
+    app: &AppHandle,
+    session_id: &str,
+    failed: bool,
+) -> AppResult<()> {
+    let state = app.state::<DbState>();
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("database mutex poisoned"))?;
+    let changed = settle_run_for_session_db(&conn, session_id, failed)?;
+    drop(conn);
+    if changed > 0 {
+        emit_changed(app);
+    }
+    Ok(())
+}
+
+fn settle_run_for_session_db(
+    conn: &Connection,
+    session_id: &str,
+    failed: bool,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE tasks
+         SET status = CASE WHEN ?2 = 1 AND status = 'in_progress' THEN 'todo' ELSE status END,
+             sort_order = CASE
+                 WHEN ?2 = 1 AND status = 'in_progress'
+                 THEN (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tasks AS queued
+                       WHERE queued.status = 'todo')
+                 ELSE sort_order
+             END,
+             queue_status = CASE WHEN ?2 = 1 THEN 'failed' ELSE 'complete' END,
+             run_claim_id = NULL, run_claimed_at = NULL, updated_at = ?3
+         WHERE copilot_session_id = ?1 AND run_claim_id IS NOT NULL",
+        rusqlite::params![session_id, failed, now_ms()],
+    )
+}
+
+pub(crate) fn reconcile_run_claims(app: &AppHandle) -> AppResult<()> {
+    let state = app.state::<DbState>();
+    let conn = state
+        .0
+        .lock()
+        .map_err(|_| AppError::msg("database mutex poisoned"))?;
+    let changed = reconcile_run_claims_db(&conn)?;
+    drop(conn);
+    if changed > 0 {
+        emit_changed(app);
+    }
+    Ok(())
+}
+
+fn reconcile_run_claims_db(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE tasks
+         SET status = CASE
+                 WHEN status = 'in_progress'
+                   AND (
+                     copilot_session_id IS NULL
+                     OR EXISTS (
+                         SELECT 1 FROM terminal_sessions
+                         WHERE terminal_sessions.id = tasks.copilot_session_id
+                           AND terminal_sessions.status = 'error'
+                     )
+                   )
+                 THEN 'todo'
+                 ELSE status
+             END,
+             sort_order = CASE
+                 WHEN status = 'in_progress'
+                   AND (
+                     copilot_session_id IS NULL
+                     OR EXISTS (
+                         SELECT 1 FROM terminal_sessions
+                         WHERE terminal_sessions.id = tasks.copilot_session_id
+                           AND terminal_sessions.status = 'error'
+                     )
+                   )
+                 THEN (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tasks AS queued
+                       WHERE queued.status = 'todo')
+                 ELSE sort_order
+             END,
+             queue_status = CASE
+                 WHEN copilot_session_id IS NULL OR EXISTS (
+                     SELECT 1 FROM terminal_sessions
+                     WHERE terminal_sessions.id = tasks.copilot_session_id
+                       AND terminal_sessions.status = 'error'
+                 ) THEN 'failed'
+                 ELSE 'complete'
+             END,
+             run_claim_id = NULL,
+             run_claimed_at = NULL,
+             updated_at = ?1
+         WHERE (run_claim_id IS NOT NULL OR queue_status = 'running')
+           AND (
+             copilot_session_id IS NULL
+             OR NOT EXISTS (
+                 SELECT 1 FROM terminal_sessions
+                 WHERE terminal_sessions.id = tasks.copilot_session_id
+                   AND terminal_sessions.status IN ('starting', 'working', 'waiting-input', 'idle')
+             )
+           )",
+        [now_ms()],
+    )
 }
 
 #[cfg(test)]
@@ -1235,7 +1483,8 @@ mod tests {
                 repository_path TEXT NOT NULL, worktree_path TEXT NOT NULL, worktree_branch TEXT,
                 pending_worktree_name TEXT, copilot_session_id TEXT, queue_status TEXT NOT NULL,
                 queue_order INTEGER NOT NULL, sort_order INTEGER NOT NULL,
-                execution_target_key TEXT NOT NULL, created_at INTEGER NOT NULL,
+                execution_target_key TEXT NOT NULL, run_claim_id TEXT, run_claimed_at INTEGER,
+                created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
             );
             CREATE TABLE terminal_sessions (
@@ -1343,6 +1592,7 @@ mod tests {
 
         let independent = claim_task_run(&mut conn, "independent").unwrap();
         assert!(independent.ok);
+        assert!(independent.claim_id.is_some());
     }
 
     #[test]
@@ -1356,7 +1606,7 @@ mod tests {
     }
 
     #[test]
-    fn active_linked_session_keeps_the_target_after_board_completion() {
+    fn idle_linked_session_keeps_the_target_until_it_is_final() {
         let mut conn = connection();
         insert(&conn, "active", "target", "complete");
         conn.execute(
@@ -1380,6 +1630,96 @@ mod tests {
             [],
         )
         .unwrap();
+        let idle = claim_task_run(&mut conn, "next").unwrap();
+        assert!(!idle.ok);
+        assert_eq!(idle.error.as_deref(), Some("target-busy"));
+
+        conn.execute(
+            "UPDATE terminal_sessions SET status = 'done' WHERE id = 'session'",
+            [],
+        )
+        .unwrap();
         assert!(claim_task_run(&mut conn, "next").unwrap().ok);
+    }
+
+    #[test]
+    fn stale_claim_cannot_link_or_release_a_newer_run() {
+        let mut conn = connection();
+        insert(&conn, "task", "target", "queued");
+        let first = claim_task_run(&mut conn, "task").unwrap();
+        let first_claim = first.claim_id.unwrap();
+        conn.execute(
+            "UPDATE tasks SET run_claim_id = NULL, run_claimed_at = NULL, queue_status = 'failed'",
+            [],
+        )
+        .unwrap();
+        let second = claim_task_run(&mut conn, "task").unwrap();
+        let second_claim = second.claim_id.unwrap();
+        assert_ne!(first_claim, second_claim);
+
+        let changed = conn
+            .execute(
+                "UPDATE tasks SET copilot_session_id = 'old'
+                 WHERE id = 'task' AND run_claim_id = ?1",
+                [first_claim],
+            )
+            .unwrap();
+        assert_eq!(changed, 0);
+        let current: String = conn
+            .query_row(
+                "SELECT run_claim_id FROM tasks WHERE id = 'task'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, second_claim);
+    }
+
+    #[test]
+    fn final_session_releases_claim_and_failed_run_returns_to_todo() {
+        let conn = connection();
+        insert(&conn, "task", "target", "running");
+        conn.execute(
+            "UPDATE tasks
+             SET status = 'in_progress', copilot_session_id = 'session',
+                 run_claim_id = 'claim', run_claimed_at = 1
+             WHERE id = 'task'",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(
+            settle_run_for_session_db(&conn, "session", true).unwrap(),
+            1
+        );
+        let settled: (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT status, queue_status, run_claim_id FROM tasks WHERE id = 'task'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(settled, ("todo".into(), "failed".into(), None));
+    }
+
+    #[test]
+    fn startup_reconciliation_releases_unlinked_launch_claims() {
+        let conn = connection();
+        insert(&conn, "task", "target", "running");
+        conn.execute(
+            "UPDATE tasks SET run_claim_id = 'claim', run_claimed_at = 1 WHERE id = 'task'",
+            [],
+        )
+        .unwrap();
+
+        assert_eq!(reconcile_run_claims_db(&conn).unwrap(), 1);
+        let settled: (String, Option<String>) = conn
+            .query_row(
+                "SELECT queue_status, run_claim_id FROM tasks WHERE id = 'task'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(settled, ("failed".into(), None));
     }
 }

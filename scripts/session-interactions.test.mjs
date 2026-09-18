@@ -27,6 +27,8 @@ const {
   latestNativeAssistantResponse,
   acpPermissionOptionIsRemembered,
   acpPermissionOptionScope,
+  orderedAcpPermissionOptions,
+  nativeInteractionRequiresFullSession,
   acpCommandQuery,
   matchingAcpCommands,
   acpCommandDraft
@@ -225,6 +227,78 @@ test('ACP permission choices expose one-time and remembered scope accurately', (
   assert.equal(acpPermissionOptionIsRemembered('allow_always'), true)
   assert.equal(acpPermissionOptionIsRemembered('reject_always'), true)
   assert.equal(acpPermissionOptionIsRemembered('allow_once'), false)
+})
+
+test('compact interaction rules keep complex requests in the full session', () => {
+  const base = { id: 'request', createdAt: 1, message: 'Choose' }
+  assert.equal(
+    nativeInteractionRequiresFullSession({
+      ...base,
+      kind: 'acpPermission',
+      options: [],
+      detail: 'command'
+    }),
+    false
+  )
+  assert.equal(
+    nativeInteractionRequiresFullSession({
+      ...base,
+      kind: 'permission',
+      permissionKind: 'write',
+      target: 'file',
+      intention: null,
+      diff: 'diff',
+      detail: 'details',
+      managed: false,
+      scopes: []
+    }),
+    true
+  )
+  assert.equal(
+    nativeInteractionRequiresFullSession({
+      ...base,
+      kind: 'elicitation',
+      schema: {
+        properties: {
+          answer: { type: 'string', enum: ['one', 'two'] }
+        }
+      },
+      url: null,
+      unsupported: null
+    }),
+    false
+  )
+  assert.equal(
+    nativeInteractionRequiresFullSession({
+      ...base,
+      kind: 'elicitation',
+      schema: { properties: { answer: { type: 'string' } } },
+      url: null,
+      unsupported: null
+    }),
+    true
+  )
+  assert.equal(
+    nativeInteractionRequiresFullSession({
+      ...base,
+      kind: 'question',
+      choices: Array.from({ length: 7 }, (_, index) => String(index)),
+      allowFreeform: false
+    }),
+    true
+  )
+})
+
+test('ACP permission options put rejection before approval', () => {
+  const ordered = orderedAcpPermissionOptions([
+    { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+    { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+    { optionId: 'future', name: 'Future', kind: 'future_scope' }
+  ])
+  assert.deepEqual(
+    ordered.map((option) => option.optionId),
+    ['reject', 'future', 'allow']
+  )
 })
 
 test('plan replies are available only for the current idle decision without structured input', () => {

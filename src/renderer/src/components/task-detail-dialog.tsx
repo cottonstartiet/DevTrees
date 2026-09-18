@@ -121,19 +121,19 @@ function TaskDetailForm({
   const [description, setDescription] = React.useState(
     task?.description ?? initialDraft?.description ?? ''
   )
-  const [repositoryId, setRepositoryId] = React.useState<string>(
+  const initialRepositoryId =
     task?.repositoryId ??
-      (initialDraft
-        ? matchedDraftRepositories.length === 1
-          ? matchedDraftRepositories[0].id
-          : ''
-        : (repositories[0]?.id ?? ''))
-  )
+    (initialDraft
+      ? matchedDraftRepositories.length === 1
+        ? matchedDraftRepositories[0].id
+        : ''
+      : (repositories[0]?.id ?? ''))
+  const [repositoryId, setRepositoryId] = React.useState<string>(initialRepositoryId)
   const initialSelection = task?.pendingWorktreeName
     ? NEW_WORKTREE_VALUE
     : task && task.worktreePath === task.repositoryPath
       ? MAIN_BRANCH_VALUE
-      : (task?.worktreePath ?? '')
+      : (task?.worktreePath ?? (initialRepositoryId ? MAIN_BRANCH_VALUE : ''))
   const [worktreeSelection, setWorktreeSelection] = React.useState<string>(initialSelection)
   const [newWorktreeName, setNewWorktreeName] = React.useState(task?.pendingWorktreeName ?? '')
   const [attachmentStageId] = React.useState(() => crypto.randomUUID())
@@ -157,16 +157,29 @@ function TaskDetailForm({
     [attachmentStageId]
   )
 
-  const repository = repositories.find((r) => r.id === repositoryId) ?? null
+  const effectiveRepositoryId =
+    repositoryId ||
+    (!isEdit
+      ? initialDraft
+        ? matchedDraftRepositories.length === 1
+          ? matchedDraftRepositories[0].id
+          : ''
+        : (repositories[0]?.id ?? '')
+      : '')
+  const effectiveWorktreeSelection =
+    worktreeSelection || (!isEdit && effectiveRepositoryId ? MAIN_BRANCH_VALUE : '')
+  const repository = repositories.find((r) => r.id === effectiveRepositoryId) ?? null
   const worktrees = repository ? (worktreesByRepositoryId[repository.id] ?? []) : []
-  const creatingNewWorktree = worktreeSelection === NEW_WORKTREE_VALUE
+  const creatingNewWorktree = effectiveWorktreeSelection === NEW_WORKTREE_VALUE
   /** Once work has started, the task's scope is frozen — the fields become read-only. */
   const readOnly = isEdit && task.status !== 'todo'
 
   const titleError = !title.trim() ? 'Title is required.' : null
   const worktreeNameError = creatingNewWorktree ? validateWorktreeName(newWorktreeName) : null
   const worktreeError =
-    !creatingNewWorktree && !worktreeSelection ? 'Select where this task will run.' : null
+    !creatingNewWorktree && !effectiveWorktreeSelection
+      ? 'Select where this task will run.'
+      : null
   const showTitleError = (editedFields.title || submitAttempted) && titleError !== null
   const showWorktreeError = (editedFields.worktree || submitAttempted) && worktreeError !== null
   const showWorktreeNameError =
@@ -174,7 +187,7 @@ function TaskDetailForm({
 
   const handleRepositoryChange = (id: string): void => {
     setRepositoryId(id)
-    setWorktreeSelection('')
+    setWorktreeSelection(id ? MAIN_BRANCH_VALUE : '')
     setNewWorktreeName('')
     setEditedFields((current) => ({
       ...current,
@@ -206,14 +219,14 @@ function TaskDetailForm({
         pendingWorktreeName: newWorktreeName.trim()
       }
     }
-    if (worktreeSelection === MAIN_BRANCH_VALUE) {
+    if (effectiveWorktreeSelection === MAIN_BRANCH_VALUE) {
       return {
         worktreePath: repository.path,
         worktreeBranch: null,
         pendingWorktreeName: null
       }
     }
-    const worktree = worktrees.find((w) => w.path === worktreeSelection)
+    const worktree = worktrees.find((w) => w.path === effectiveWorktreeSelection)
     return worktree
       ? {
           worktreePath: worktree.path,
@@ -229,7 +242,7 @@ function TaskDetailForm({
     setSubmitAttempted(true)
     if (!title.trim() || !repository) return
     if (creatingNewWorktree && worktreeNameError) return
-    if (!creatingNewWorktree && !worktreeSelection) return
+    if (!creatingNewWorktree && !effectiveWorktreeSelection) return
 
     setBusy(true)
     try {
@@ -319,8 +332,8 @@ function TaskDetailForm({
         : `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 
   return (
-    <DialogContent className="h-[75vh] max-h-[calc(100vh-2rem)] w-[75vw] max-w-[calc(100vw-2rem)] min-w-0 overflow-y-auto sm:max-w-[75vw]">
-      <DialogHeader className="min-w-0">
+    <DialogContent className="grid h-[75vh] max-h-[calc(100vh-2rem)] w-[60vw] max-w-[calc(100vw-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden sm:max-w-[60vw]">
+      <DialogHeader className="min-w-0 gap-1">
         <DialogTitle>{isEdit ? 'Task details' : 'Add task'}</DialogTitle>
         <DialogDescription className="break-words">
           {isEdit
@@ -331,7 +344,10 @@ function TaskDetailForm({
         </DialogDescription>
       </DialogHeader>
 
-      <form onSubmit={handleSubmit} className="flex min-w-0 flex-col gap-4">
+      <form
+        onSubmit={handleSubmit}
+        className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto pr-1"
+      >
         <div className="flex min-w-0 flex-col gap-1.5">
           <label htmlFor="task-title" className="text-sm font-medium">
             Title
@@ -351,7 +367,7 @@ function TaskDetailForm({
           {showTitleError ? <p className="text-destructive text-xs">{titleError}</p> : null}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-1.5">
+        <div className="flex min-h-24 min-w-0 flex-1 flex-col gap-1.5">
           <label htmlFor="task-description" className="text-sm font-medium">
             Description
           </label>
@@ -362,75 +378,81 @@ function TaskDetailForm({
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Add more context for this task…"
             rows={4}
-            className="max-w-full min-w-0 field-sizing-fixed resize-y [overflow-wrap:anywhere]"
+            className="h-full max-w-full min-h-16 min-w-0 flex-1 field-sizing-fixed resize-y [overflow-wrap:anywhere]"
           />
         </div>
 
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <span id="task-repository-label" className="text-sm font-medium">
-            Repository
-          </span>
-          <Select value={repositoryId} onValueChange={handleRepositoryChange} disabled={readOnly}>
-            <SelectTrigger className="w-full min-w-0" aria-labelledby="task-repository-label">
-              <SelectValue placeholder="Select a repository" />
-            </SelectTrigger>
-            <SelectContent>
-              {repositories.map((repo) => (
-                <SelectItem key={repo.id} value={repo.id}>
-                  {repo.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <span id="task-worktree-label" className="text-sm font-medium">
-            Run in
-          </span>
-          <Select
-            value={worktreeSelection}
-            onValueChange={handleWorktreeSelectionChange}
-            disabled={readOnly || !repository}
-          >
-            <SelectTrigger
-              className="w-full min-w-0"
-              aria-labelledby="task-worktree-label"
-              aria-invalid={showWorktreeError || undefined}
+        <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span id="task-repository-label" className="text-sm font-medium">
+              Repository
+            </span>
+            <Select
+              value={effectiveRepositoryId}
+              onValueChange={handleRepositoryChange}
+              disabled={readOnly}
             >
-              <SelectValue placeholder="Select a worktree" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={MAIN_BRANCH_VALUE}>Main branch</SelectItem>
-              {worktrees.map((wt) => (
-                <SelectItem key={wt.path} value={wt.path}>
-                  {wt.branch ?? worktreeLabel(wt.path)}
-                </SelectItem>
-              ))}
-              <SelectItem value={NEW_WORKTREE_VALUE}>+ Create new worktree…</SelectItem>
-            </SelectContent>
-          </Select>
-          {showWorktreeError ? <p className="text-destructive text-xs">{worktreeError}</p> : null}
-          {creatingNewWorktree ? (
-            <div className="flex flex-col gap-1 pt-1">
-              <Input
-                value={newWorktreeName}
-                onChange={(e) => {
-                  setNewWorktreeName(e.target.value)
-                  setEditedFields((current) => ({ ...current, newWorktreeName: true }))
-                }}
-                placeholder="feature-x"
-                aria-invalid={showWorktreeNameError || undefined}
-              />
-              {showWorktreeNameError ? (
-                <p className="text-destructive text-xs">{worktreeNameError}</p>
-              ) : (
-                <p className="text-muted-foreground text-xs">
-                  The worktree will be created when this task moves to In Progress.
-                </p>
-              )}
-            </div>
-          ) : null}
+              <SelectTrigger className="w-full min-w-0" aria-labelledby="task-repository-label">
+                <SelectValue placeholder="Select a repository" />
+              </SelectTrigger>
+              <SelectContent>
+                {repositories.map((repo) => (
+                  <SelectItem key={repo.id} value={repo.id}>
+                    {repo.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <span id="task-worktree-label" className="text-sm font-medium">
+              Run in
+            </span>
+            <Select
+              value={effectiveWorktreeSelection}
+              onValueChange={handleWorktreeSelectionChange}
+              disabled={readOnly || !repository}
+            >
+              <SelectTrigger
+                className="w-full min-w-0"
+                aria-labelledby="task-worktree-label"
+                aria-invalid={showWorktreeError || undefined}
+              >
+                <SelectValue placeholder="Select a worktree" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={MAIN_BRANCH_VALUE}>Main branch</SelectItem>
+                {worktrees.map((wt) => (
+                  <SelectItem key={wt.path} value={wt.path}>
+                    {wt.branch ?? worktreeLabel(wt.path)}
+                  </SelectItem>
+                ))}
+                <SelectItem value={NEW_WORKTREE_VALUE}>+ Create new worktree…</SelectItem>
+              </SelectContent>
+            </Select>
+            {showWorktreeError ? <p className="text-destructive text-xs">{worktreeError}</p> : null}
+            {creatingNewWorktree ? (
+              <div className="flex flex-col gap-1 pt-1">
+                <Input
+                  value={newWorktreeName}
+                  onChange={(e) => {
+                    setNewWorktreeName(e.target.value)
+                    setEditedFields((current) => ({ ...current, newWorktreeName: true }))
+                  }}
+                  placeholder="feature-x"
+                  aria-invalid={showWorktreeNameError || undefined}
+                />
+                {showWorktreeNameError ? (
+                  <p className="text-destructive text-xs">{worktreeNameError}</p>
+                ) : (
+                  <p className="text-muted-foreground text-xs">
+                    The worktree will be created when this task moves to In Progress.
+                  </p>
+                )}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex min-w-0 flex-col gap-2">

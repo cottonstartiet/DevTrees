@@ -13,9 +13,11 @@ import {
   initialNativeDraft,
   nativeFields,
   nativeFormContent,
+  nativeInteractionRequiresFullSession,
   nativeKey,
   nativeSessionCanReopenPlanTransition,
   nativeSessionCanReplyToPlan,
+  orderedAcpPermissionOptions,
   type NativeAnswer,
   type NativeField,
   type NativeInteraction,
@@ -293,17 +295,7 @@ export function SessionInteraction({
     setValidationError(null)
     void respondNative(session, interaction.id, answer, prepare)
   }
-  const large =
-    interaction.kind === 'plan' ||
-    (interaction.kind === 'permission' && Boolean(interaction.diff)) ||
-    (interaction.kind === 'elicitation' &&
-      (parsed.fields.length !== 1 ||
-        interaction.url ||
-        interaction.unsupported ||
-        parsed.error ||
-        (!parsed.fields[0]?.choices && parsed.fields[0]?.type !== 'boolean') ||
-        (parsed.fields[0]?.choices?.length ?? 0) > 6)) ||
-    (interaction.kind === 'question' && interaction.choices.length > 6)
+  const large = nativeInteractionRequiresFullSession(interaction)
 
   return (
     <section
@@ -340,12 +332,7 @@ export function SessionInteraction({
                 >
                   Cancel
                 </Button>
-                {[...interaction.options]
-                  .sort(
-                    (a, b) =>
-                      Number(a.kind.startsWith('allow')) - Number(b.kind.startsWith('allow'))
-                  )
-                  .map((option) => {
+                {orderedAcpPermissionOptions(interaction.options).map((option) => {
                     const scope = acpPermissionOptionScope(option.kind)
                     return (
                       <Button

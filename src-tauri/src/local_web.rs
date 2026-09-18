@@ -29,9 +29,11 @@ use tower_http::{limit::RequestBodyLimitLayer, services::ServeDir};
 use crate::{
     copilot_acp_sessions::{self, Target},
     error::AppError,
+    repositories,
     session_interactions::InteractionAnswer,
     tasks,
     terminal_sessions::{self, StartTerminalSessionRequest},
+    worktrees,
 };
 
 const CSRF_HEADER: &str = "x-devtrees-lan";
@@ -91,11 +93,7 @@ struct CreateTaskBody {
     #[serde(default)]
     intent: Option<String>,
     repository_id: String,
-    repository_name: String,
-    repository_path: String,
     worktree_path: String,
-    #[serde(default)]
-    worktree_branch: Option<String>,
     #[serde(default)]
     pending_worktree_name: Option<String>,
 }
@@ -152,7 +150,27 @@ struct NativePromptBody {
 #[serde(rename_all = "camelCase")]
 struct PlanBody {
     generation: String,
-    action: String,
+    action: PlanTransitionAction,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PlanTransitionAction {
+    Interactive,
+    Autopilot,
+    AutopilotFleet,
+    ExitOnly,
+}
+
+impl PlanTransitionAction {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Autopilot => "autopilot",
+            Self::AutopilotFleet => "autopilot_fleet",
+            Self::ExitOnly => "exit_only",
+        }
+    }
 }
 
 fn random_secret(length: usize) -> String {
@@ -300,28 +318,106 @@ async fn list_tasks(State(runtime): State<Arc<ServerRuntime>>) -> Response {
     }
 }
 
+async fn list_repositories(State(runtime): State<Arc<ServerRuntime>>) -> Response {
+    match repositories::repositories_list(runtime.app.clone()).await {
+        Ok(value) => Json(value).into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+async fn list_repository_worktrees(
+    State(runtime): State<Arc<ServerRuntime>>,
+    Path(id): Path<String>,
+) -> Response {
+    let repositories = match repositories::repositories_list(runtime.app.clone()).await {
+        Ok(value) => value,
+        Err(error) => return server_error(error),
+    };
+    let Some(repository) = repositories
+        .into_iter()
+        .find(|repository| repository.id == id)
+    else {
+        return (StatusCode::NOT_FOUND, "Repository not found.").into_response();
+    };
+    match worktrees::list_worktrees(&repository.path).await {
+        Ok(value) => Json(value).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Could not load worktrees: {}", error.message),
+        )
+            .into_response(),
+    }
+}
+
 async fn create_task(
     State(runtime): State<Arc<ServerRuntime>>,
     Json(body): Json<CreateTaskBody>,
 ) -> Response {
+    let repositories = match repositories::repositories_list(runtime.app.clone()).await {
+        Ok(value) => value,
+        Err(error) => return server_error(error),
+    };
+    let Some(repository) = repositories
+        .into_iter()
+        .find(|repository| repository.id == body.repository_id)
+    else {
+        return (StatusCode::NOT_FOUND, "Repository not found.").into_response();
+    };
+    let (worktree_path, worktree_branch, pending_worktree_name) = if let Some(name) =
+        body.pending_worktree_name
+    {
+        if !worktrees::valid_worktree_name(&name) {
+            return (
+                    StatusCode::BAD_REQUEST,
+                    "Worktree names may contain only letters, digits, dot, underscore, and hyphen, up to 64 characters.",
+                )
+                    .into_response();
+        }
+        (repository.path.clone(), None, Some(name.trim().to_string()))
+    } else if body.worktree_path == repository.path {
+        (repository.path.clone(), None, None)
+    } else {
+        let available = match worktrees::list_worktrees(&repository.path).await {
+            Ok(value) => value,
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Could not validate the worktree: {}", error.message),
+                )
+                    .into_response()
+            }
+        };
+        let Some(worktree) = available
+            .into_iter()
+            .find(|worktree| !worktree.is_main && worktree.path == body.worktree_path)
+        else {
+            return (StatusCode::BAD_REQUEST, "Select an available worktree.").into_response();
+        };
+        (worktree.path, worktree.branch, None)
+    };
     match tasks::tasks_create(
         runtime.app.clone(),
         runtime.app.state(),
         body.title,
         body.description,
         body.intent,
-        body.repository_id,
-        body.repository_name,
-        body.repository_path,
-        body.worktree_path,
-        body.worktree_branch,
-        body.pending_worktree_name,
-        String::new(),
+        repository.id,
+        repository.name,
+        repository.path,
+        worktree_path,
+        worktree_branch,
+        pending_worktree_name,
+        uuid::Uuid::new_v4().to_string(),
         Vec::new(),
     )
     .await
     {
-        Ok(value) => Json(value).into_response(),
+        Ok(value) => {
+            if value.ok {
+                tasks::emit_changed(&runtime.app);
+            }
+            Json(value).into_response()
+        }
         Err(error) => server_error(error),
     }
 }
@@ -331,6 +427,14 @@ async fn update_task(
     Path(id): Path<String>,
     Json(body): Json<UpdateTaskBody>,
 ) -> Response {
+    let all = match tasks::tasks_list(runtime.app.state()).await {
+        Ok(value) => value,
+        Err(error) => return server_error(error),
+    };
+    let Some(existing) = all.into_iter().find(|task| task.id == id) else {
+        return (StatusCode::NOT_FOUND, "Task not found.").into_response();
+    };
+    let attachments = task_attachment_selections(&existing);
     match tasks::tasks_update(
         runtime.app.clone(),
         runtime.app.state(),
@@ -343,12 +447,17 @@ async fn update_task(
         body.worktree_path,
         body.worktree_branch,
         body.pending_worktree_name,
-        String::new(),
-        Vec::new(),
+        uuid::Uuid::new_v4().to_string(),
+        attachments,
     )
     .await
     {
-        Ok(value) => Json(value).into_response(),
+        Ok(value) => {
+            if value.ok {
+                tasks::emit_changed(&runtime.app);
+            }
+            Json(value).into_response()
+        }
         Err(error) => server_error(error),
     }
 }
@@ -358,8 +467,64 @@ async fn move_task(
     Path(id): Path<String>,
     Json(body): Json<MoveTaskBody>,
 ) -> Response {
+    let all = match tasks::tasks_list(runtime.app.state()).await {
+        Ok(value) => value,
+        Err(error) => return server_error(error),
+    };
+    let Some(task) = all.into_iter().find(|task| task.id == id) else {
+        return (StatusCode::NOT_FOUND, "Task not found.").into_response();
+    };
+    if matches!(body.status.as_str(), "review" | "done") {
+        let Some(session_id) = task.copilot_session_id.as_ref() else {
+            if task.queue_status == "running" {
+                return (
+                    StatusCode::CONFLICT,
+                    "Wait for the task session to finish starting before changing its status.",
+                )
+                    .into_response();
+            }
+            return match tasks::tasks_move(runtime.app.state(), id, body.status, body.before_id)
+                .await
+            {
+                Ok(value) => {
+                    if value.ok {
+                        tasks::emit_changed(&runtime.app);
+                    }
+                    Json(value).into_response()
+                }
+                Err(error) => server_error(error),
+            };
+        };
+        let running = match terminal_sessions::terminal_sessions_is_running(
+            runtime.app.clone(),
+            session_id.clone(),
+        ) {
+            Ok(value) => value,
+            Err(error) => return server_error(error),
+        };
+        if body.status == "review" && running {
+            return (
+                StatusCode::CONFLICT,
+                "End the task session before moving it to Review.",
+            )
+                .into_response();
+        }
+        if body.status == "done" && running {
+            if let Err(error) =
+                terminal_sessions::terminal_sessions_forget(runtime.app.clone(), session_id.clone())
+                    .await
+            {
+                return server_error(error);
+            }
+        }
+    }
     match tasks::tasks_move(runtime.app.state(), id, body.status, body.before_id).await {
-        Ok(value) => Json(value).into_response(),
+        Ok(value) => {
+            if value.ok {
+                tasks::emit_changed(&runtime.app);
+            }
+            Json(value).into_response()
+        }
         Err(error) => server_error(error),
     }
 }
@@ -369,9 +534,124 @@ async fn delete_task(
     Path(id): Path<String>,
 ) -> Response {
     match tasks::tasks_delete(runtime.app.clone(), runtime.app.state(), id).await {
-        Ok(value) => Json(value).into_response(),
+        Ok(value) => {
+            if value.ok {
+                tasks::emit_changed(&runtime.app);
+            }
+            Json(value).into_response()
+        }
         Err(error) => server_error(error),
     }
+}
+
+fn worktree_label(path: &str) -> &str {
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
+}
+
+fn task_attachment_selections(task: &tasks::Task) -> Vec<tasks::TaskAttachmentSelection> {
+    task.attachments
+        .iter()
+        .map(|attachment| tasks::TaskAttachmentSelection {
+            id: attachment.id.clone(),
+            name: attachment.name.clone(),
+            mime_type: attachment.mime_type.clone(),
+            size_bytes: attachment.size_bytes,
+            staged: false,
+        })
+        .collect()
+}
+
+async fn materialize_task_worktree(
+    runtime: &Arc<ServerRuntime>,
+    task: tasks::Task,
+) -> Result<tasks::Task, Response> {
+    let Some(name) = task.pending_worktree_name.as_deref() else {
+        return Ok(task);
+    };
+    let repositories = repositories::repositories_list(runtime.app.clone())
+        .await
+        .map_err(server_error)?;
+    let repository = repositories
+        .into_iter()
+        .find(|repository| repository.id == task.repository_id)
+        .ok_or_else(|| {
+            (
+                StatusCode::CONFLICT,
+                "The repository for this task is unavailable.",
+            )
+                .into_response()
+        })?;
+    let mut worktree = worktrees::list_worktrees(&repository.path)
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Could not inspect worktrees: {}", error.message),
+            )
+                .into_response()
+        })?
+        .into_iter()
+        .find(|candidate| !candidate.is_main && worktree_label(&candidate.path) == name);
+    if worktree.is_none() {
+        let created = worktrees::create_worktree(&repository.path, name).await;
+        if created.ok {
+            worktree = created.worktree;
+        } else if created.error.as_deref() == Some("already-exists") {
+            worktree = worktrees::list_worktrees(&repository.path)
+                .await
+                .map_err(|error| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Could not resolve the existing worktree: {}", error.message),
+                    )
+                        .into_response()
+                })?
+                .into_iter()
+                .find(|candidate| !candidate.is_main && worktree_label(&candidate.path) == name);
+        } else {
+            return Err((
+                StatusCode::CONFLICT,
+                created
+                    .message
+                    .unwrap_or_else(|| "Could not create the task worktree.".to_string()),
+            )
+                .into_response());
+        }
+    }
+    let worktree = worktree.ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The worktree was created but could not be resolved.",
+        )
+            .into_response()
+    })?;
+    let attachments = task_attachment_selections(&task);
+    let updated = tasks::tasks_update(
+        runtime.app.clone(),
+        runtime.app.state(),
+        task.id,
+        task.title,
+        task.description,
+        repository.id,
+        repository.name,
+        repository.path,
+        worktree.path,
+        worktree.branch,
+        None,
+        uuid::Uuid::new_v4().to_string(),
+        attachments,
+    )
+    .await
+    .map_err(server_error)?;
+    updated.task.ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            updated
+                .message
+                .unwrap_or_else(|| "Could not update the task worktree.".to_string()),
+        )
+            .into_response()
+    })
 }
 
 async fn start_task(State(runtime): State<Arc<ServerRuntime>>, Path(id): Path<String>) -> Response {
@@ -382,41 +662,12 @@ async fn start_task(State(runtime): State<Arc<ServerRuntime>>, Path(id): Path<St
     let Some(task) = all.into_iter().find(|task| task.id == id) else {
         return (StatusCode::NOT_FOUND, "Task not found.").into_response();
     };
-    let was_todo = task.status == "todo";
-    let claim = match tasks::tasks_claim_run(runtime.app.state(), task.id.clone()).await {
-        Ok(value) => value,
-        Err(error) => return server_error(error),
-    };
-    if !claim.ok {
+    if task.status != "todo" && task.status != "review" {
         return (
             StatusCode::CONFLICT,
-            claim
-                .message
-                .unwrap_or_else(|| "This task cannot start on its current worktree.".to_string()),
+            "Only To Do and Review tasks can be started.",
         )
             .into_response();
-    }
-    if was_todo {
-        match tasks::tasks_move(
-            runtime.app.state(),
-            task.id.clone(),
-            "in_progress".to_string(),
-            None,
-        )
-        .await
-        {
-            Ok(result) if result.ok => {}
-            Ok(result) => {
-                return (
-                    StatusCode::CONFLICT,
-                    result
-                        .message
-                        .unwrap_or_else(|| "Could not move the task to In Progress.".to_string()),
-                )
-                    .into_response()
-            }
-            Err(error) => return server_error(error),
-        }
     }
     let mode = match crate::settings::settings_session_launch_mode(runtime.app.clone()) {
         Ok(crate::settings::SessionLaunchMode::Acp) => {
@@ -435,6 +686,70 @@ async fn start_task(State(runtime): State<Arc<ServerRuntime>>, Path(id): Path<St
         }
         Err(error) => return server_error(error),
     };
+    let task = match materialize_task_worktree(&runtime, task).await {
+        Ok(task) => task,
+        Err(response) => return response,
+    };
+    let was_todo = task.status == "todo";
+    let claim = match tasks::tasks_claim_run(runtime.app.state(), task.id.clone()).await {
+        Ok(value) => value,
+        Err(error) => return server_error(error),
+    };
+    if !claim.ok {
+        return (
+            StatusCode::CONFLICT,
+            claim
+                .message
+                .unwrap_or_else(|| "This task cannot start on its current worktree.".to_string()),
+        )
+            .into_response();
+    }
+    let Some(claim_id) = claim.claim_id else {
+        return server_error(AppError::msg(
+            "The task run claim did not return an identity.",
+        ));
+    };
+    tasks::emit_changed(&runtime.app);
+    if was_todo {
+        match tasks::tasks_move(
+            runtime.app.state(),
+            task.id.clone(),
+            "in_progress".to_string(),
+            None,
+        )
+        .await
+        {
+            Ok(result) if result.ok => tasks::emit_changed(&runtime.app),
+            Ok(result) => {
+                let _ = tasks::tasks_release_run(
+                    runtime.app.state(),
+                    task.id.clone(),
+                    claim_id.clone(),
+                    "failed".to_string(),
+                )
+                .await;
+                tasks::emit_changed(&runtime.app);
+                return (
+                    StatusCode::CONFLICT,
+                    result
+                        .message
+                        .unwrap_or_else(|| "Could not move the task to In Progress.".to_string()),
+                )
+                    .into_response();
+            }
+            Err(error) => {
+                let _ = tasks::tasks_release_run(
+                    runtime.app.state(),
+                    task.id.clone(),
+                    claim_id.clone(),
+                    "failed".to_string(),
+                )
+                .await;
+                tasks::emit_changed(&runtime.app);
+                return server_error(error);
+            }
+        }
+    }
     let prompt = if task.description.trim().is_empty() {
         task.title.clone()
     } else {
@@ -459,14 +774,49 @@ async fn start_task(State(runtime): State<Arc<ServerRuntime>>, Path(id): Path<St
     .await;
     match result {
         Ok(value) if value.ok => {
-            if let Some(session) = value.session.as_ref() {
-                let _ = tasks::tasks_set_copilot_session(
+            let Some(session) = value.session.as_ref() else {
+                let _ = tasks::tasks_release_run(
                     runtime.app.state(),
-                    task.id,
+                    task.id.clone(),
+                    claim_id,
+                    "failed".to_string(),
+                )
+                .await;
+                tasks::emit_changed(&runtime.app);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Copilot started without returning a session.",
+                )
+                    .into_response();
+            };
+            let linked = tasks::tasks_set_copilot_session(
+                runtime.app.state(),
+                task.id.clone(),
+                session.id.clone(),
+                claim_id.clone(),
+            )
+            .await;
+            if !matches!(linked, Ok(ref result) if result.ok) {
+                let _ = terminal_sessions::terminal_sessions_forget(
+                    runtime.app.clone(),
                     session.id.clone(),
                 )
                 .await;
+                let _ = tasks::tasks_release_run(
+                    runtime.app.state(),
+                    task.id,
+                    claim_id,
+                    "failed".to_string(),
+                )
+                .await;
+                tasks::emit_changed(&runtime.app);
+                return (
+                    StatusCode::CONFLICT,
+                    "Could not link the Copilot session to the current task run.",
+                )
+                    .into_response();
             }
+            tasks::emit_changed(&runtime.app);
             Json(value).into_response()
         }
         Ok(value) => {
@@ -479,9 +829,14 @@ async fn start_task(State(runtime): State<Arc<ServerRuntime>>, Path(id): Path<St
                 )
                 .await;
             }
-            let _ =
-                tasks::tasks_set_queue_status(runtime.app.state(), task.id, "failed".to_string())
-                    .await;
+            let _ = tasks::tasks_release_run(
+                runtime.app.state(),
+                task.id,
+                claim_id,
+                "failed".to_string(),
+            )
+            .await;
+            tasks::emit_changed(&runtime.app);
             Json(value).into_response()
         }
         Err(error) => {
@@ -494,9 +849,14 @@ async fn start_task(State(runtime): State<Arc<ServerRuntime>>, Path(id): Path<St
                 )
                 .await;
             }
-            let _ =
-                tasks::tasks_set_queue_status(runtime.app.state(), task.id, "failed".to_string())
-                    .await;
+            let _ = tasks::tasks_release_run(
+                runtime.app.state(),
+                task.id,
+                claim_id,
+                "failed".to_string(),
+            )
+            .await;
+            tasks::emit_changed(&runtime.app);
             server_error(error)
         }
     }
@@ -588,10 +948,27 @@ async fn native_plan(
             id,
             generation: body.generation,
         },
-        body.action,
+        body.action.as_str().to_string(),
     )
     .await
     {
+        Ok(value) => Json(value).into_response(),
+        Err(error) => server_error(error),
+    }
+}
+
+async fn native_reopen_plan(
+    State(runtime): State<Arc<ServerRuntime>>,
+    Path(id): Path<String>,
+    Json(body): Json<NativeTargetBody>,
+) -> Response {
+    match copilot_acp_sessions::acp_session_reopen_plan_transition(
+        runtime.app.clone(),
+        Target {
+            id,
+            generation: body.generation,
+        },
+    ) {
         Ok(value) => Json(value).into_response(),
         Err(error) => server_error(error),
     }
@@ -683,6 +1060,11 @@ fn server_error(error: AppError) -> Response {
 fn router(runtime: Arc<ServerRuntime>, assets: PathBuf) -> Router {
     Router::new()
         .route("/api/pair", post(pair))
+        .route("/api/repositories", get(list_repositories))
+        .route(
+            "/api/repositories/{id}/worktrees",
+            get(list_repository_worktrees),
+        )
         .route("/api/tasks", get(list_tasks).post(create_task))
         .route("/api/tasks/{id}", put(update_task).delete(delete_task))
         .route("/api/tasks/{id}/move", post(move_task))
@@ -693,6 +1075,7 @@ fn router(runtime: Arc<ServerRuntime>, assets: PathBuf) -> Router {
         .route("/api/sessions/{id}/respond", post(native_respond))
         .route("/api/sessions/{id}/prompt", post(native_prompt))
         .route("/api/sessions/{id}/plan", post(native_plan))
+        .route("/api/sessions/{id}/plan/reopen", post(native_reopen_plan))
         .route("/api/sessions/{id}/cancel", post(native_cancel))
         .route("/api/sessions/{id}/end", post(native_end))
         .route("/api/events", get(websocket))
@@ -807,5 +1190,19 @@ mod tests {
         assert!(!is_private(Ipv4Addr::LOCALHOST));
         assert!(!is_private(Ipv4Addr::new(169, 254, 1, 1)));
         assert!(!is_private(Ipv4Addr::new(8, 8, 8, 8)));
+    }
+
+    #[test]
+    fn plan_transition_actions_are_explicitly_typed() {
+        for (value, expected) in [
+            ("\"interactive\"", "interactive"),
+            ("\"autopilot\"", "autopilot"),
+            ("\"autopilot_fleet\"", "autopilot_fleet"),
+            ("\"exit_only\"", "exit_only"),
+        ] {
+            let action: PlanTransitionAction = serde_json::from_str(value).unwrap();
+            assert_eq!(action.as_str(), expected);
+        }
+        assert!(serde_json::from_str::<PlanTransitionAction>("\"unsupported\"").is_err());
     }
 }

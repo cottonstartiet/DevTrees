@@ -49,6 +49,8 @@ const SCHEMA: &str = "
         queue_order           INTEGER NOT NULL DEFAULT 0,
         sort_order            INTEGER NOT NULL DEFAULT 0,
         execution_target_key  TEXT NOT NULL DEFAULT '',
+        run_claim_id           TEXT,
+        run_claimed_at         INTEGER,
         created_at            INTEGER NOT NULL,
         updated_at            INTEGER NOT NULL
     );
@@ -127,6 +129,8 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
         ("queue_status", "TEXT NOT NULL DEFAULT 'queued'"),
         ("queue_order", "INTEGER NOT NULL DEFAULT 0"),
         ("execution_target_key", "TEXT NOT NULL DEFAULT ''"),
+        ("run_claim_id", "TEXT"),
+        ("run_claimed_at", "INTEGER"),
         ("intent", "TEXT NOT NULL DEFAULT 'task'"),
     ] {
         if !task_columns.iter().any(|column| column == name) {
@@ -201,6 +205,8 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
                  queue_order           INTEGER NOT NULL DEFAULT 0,
                  sort_order            INTEGER NOT NULL DEFAULT 0,
                  execution_target_key  TEXT NOT NULL DEFAULT '',
+                 run_claim_id           TEXT,
+                 run_claimed_at         INTEGER,
                  created_at            INTEGER NOT NULL,
                  updated_at            INTEGER NOT NULL
              );
@@ -208,13 +214,13 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
                  id, title, description, intent, status, repository_id, repository_name,
                  repository_path, worktree_path, worktree_branch, pending_worktree_name,
                  copilot_session_id, queue_status, queue_order, sort_order,
-                 execution_target_key, created_at, updated_at
+                 execution_target_key, run_claim_id, run_claimed_at, created_at, updated_at
              )
              SELECT
                  id, title, description, intent, status, repository_id, repository_name,
                  repository_path, worktree_path, worktree_branch, pending_worktree_name,
                  copilot_session_id, queue_status, queue_order, sort_order,
-                 execution_target_key, created_at, updated_at
+                 execution_target_key, run_claim_id, run_claimed_at, created_at, updated_at
              FROM tasks_with_sources;
              DROP TABLE tasks_with_sources;
              CREATE INDEX idx_tasks_status_sort ON tasks(status, sort_order ASC);",
@@ -234,9 +240,13 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              ON task_attachments(task_id, created_at ASC);",
     )?;
     tx.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_tasks_running_target
+        "DROP INDEX IF EXISTS idx_tasks_running_target;
+         CREATE INDEX IF NOT EXISTS idx_tasks_running_target
              ON tasks(execution_target_key)
-             WHERE queue_status = 'running';",
+             WHERE queue_status = 'running';
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_live_claim_target
+             ON tasks(execution_target_key)
+             WHERE run_claim_id IS NOT NULL;",
     )?;
     tx.execute_batch(
         "CREATE TABLE IF NOT EXISTS app_settings (
@@ -273,7 +283,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              payload TEXT NOT NULL
          );
          DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
-         PRAGMA user_version = 12;",
+         PRAGMA user_version = 13;",
     )?;
     let prompt_seeded: bool = tx.query_row(
         "SELECT EXISTS(
@@ -334,7 +344,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 12);
+        assert_eq!(version, 13);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -670,6 +680,30 @@ mod tests {
             key,
             crate::tasks::execution_target_key("Repo-ID", "C:\\Repo", Some("Feature-One"))
         );
+    }
+
+    #[test]
+    fn live_run_claims_are_unique_per_execution_target() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize_schema(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO tasks
+                (id, title, status, repository_id, repository_name, repository_path,
+                 worktree_path, execution_target_key, created_at, updated_at)
+             VALUES
+                ('first', 'First', 'todo', 'repo', 'Repo', 'repo', 'tree', 'target', 1, 1),
+                ('second', 'Second', 'todo', 'repo', 'Repo', 'repo', 'tree', 'target', 1, 1);
+             UPDATE tasks SET run_claim_id = 'first-claim', run_claimed_at = 1
+             WHERE id = 'first';",
+        )
+        .unwrap();
+
+        let duplicate = conn.execute(
+            "UPDATE tasks SET run_claim_id = 'second-claim', run_claimed_at = 1
+             WHERE id = 'second'",
+            [],
+        );
+        assert!(duplicate.is_err());
     }
 
     #[test]

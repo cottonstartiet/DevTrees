@@ -116,14 +116,17 @@ export function TaskBoardProvider({ children }: { children: React.ReactNode }): 
     return request
   }, [])
 
+  const refreshTasks = React.useCallback(async (): Promise<void> => {
+    await mutate(async () => {
+      const startedAt = { revision: revision.current, tasks: currentTasks.current }
+      const list = await listTasks()
+      applyResponse(list, startedAt, true)
+    })
+  }, [applyResponse, mutate])
+
   React.useEffect(() => {
     let active = true
-    const startedAt = { revision: revision.current, tasks: currentTasks.current }
-    listTasks()
-      .then((list) => {
-        if (!active) return
-        applyResponse(list, startedAt, true)
-      })
+    refreshTasks()
       .catch((error) => {
         if (active) toast.error(errorMessage(error, 'Could not load tasks.'))
       })
@@ -133,7 +136,41 @@ export function TaskBoardProvider({ children }: { children: React.ReactNode }): 
     return () => {
       active = false
     }
-  }, [applyResponse])
+  }, [refreshTasks])
+
+  React.useEffect(() => {
+    let active = true
+    let unsubscribe = (): void => {}
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined
+
+    void window.api.tasks
+      .onUpdate(() => {
+        if (!active) return
+        if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+        refreshTimer = setTimeout(() => {
+          refreshTimer = undefined
+          void refreshTasks().catch((error) => {
+            if (active) toast.error(errorMessage(error, 'Could not refresh tasks.'))
+          })
+        }, 100)
+      })
+      .then((stopUpdates) => {
+        if (!active) {
+          stopUpdates()
+          return
+        }
+        unsubscribe = stopUpdates
+      })
+      .catch((error) => {
+        console.error('[tasks] failed to subscribe to task updates:', error)
+      })
+
+    return () => {
+      active = false
+      if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+      unsubscribe()
+    }
+  }, [refreshTasks])
 
   const handleCreateTask = React.useCallback(
     async (req: CreateTaskRequest): Promise<Task | null> => {

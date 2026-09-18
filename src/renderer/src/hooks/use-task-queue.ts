@@ -9,13 +9,14 @@ import {
 import { buildTaskReviewPrompt } from '@/lib/copilot-code-review-prompt'
 import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { saveTaskQueueSettings, TASK_QUEUE_SETTINGS_CHANGED_EVENT } from '@/lib/task-queue-settings'
-import { claimTaskRun, setTaskCopilotSession } from '@/lib/tasks'
+import { claimTaskRun, releaseTaskRun, setTaskCopilotSession } from '@/lib/tasks'
 import { listWorktreesForRepository } from '@/lib/worktrees'
-import { nativeKey, nativeSessionKeepsTaskQueueSlot } from '@shared/native-session'
 import type { Repository } from '@shared/repository'
 import {
   selectTaskQueueCandidates,
+  taskConsumesQueueCapacity,
   taskLaunchInitialMode,
+  taskTargetIsOwned,
   type Task,
   type TaskStatus
 } from '@shared/task'
@@ -56,21 +57,13 @@ export function useTaskQueue({
   checkWorktreeStatus
 }: UseTaskQueueOptions): TaskQueueController {
   const { tasks, moveTask, setTaskLocal, setTaskQueueStatus, updateTask } = useTaskBoard()
-  const {
-    byId: terminalSessionsById,
-    forget: forgetTerminalSession,
-    nativeById,
-    nativeBusy,
-    observationNow
-  } = useTerminalSessions()
+  const { byId: terminalSessionsById, forget: forgetTerminalSession } = useTerminalSessions()
   const launchCopilot = useCopilotLauncher()
   const [settings, setSettings] = React.useState<TaskQueueSettings>(DEFAULT_SETTINGS)
   const [settingsBusy, setSettingsBusy] = React.useState(true)
   const settingsWriteRef = React.useRef(false)
   const dispatchingRef = React.useRef(new Map<string, string>())
   const completingRef = React.useRef(new Set<string>())
-  const reconcilingRef = React.useRef(new Set<string>())
-  const settlingRef = React.useRef(new Set<string>())
 
   React.useEffect(() => {
     let active = true
@@ -207,11 +200,16 @@ export function useTaskQueue({
     async (task: Task, foreground: boolean): Promise<void> => {
       if (dispatchingRef.current.has(task.id)) return
       dispatchingRef.current.set(task.id, task.executionTargetKey)
-      let claimed = false
+      let claimId: string | null = null
       const failExecution = async (): Promise<void> => {
-        if (!claimed) return
+        if (!claimId) return
         if (task.status === 'todo') await moveTask(task.id, 'todo')
-        await setTaskQueueStatus(task.id, 'failed')
+        const released = await releaseTaskRun({
+          id: task.id,
+          claimId,
+          queueStatus: 'failed'
+        })
+        if (released.ok) setTaskLocal(released.task)
       }
       try {
         const resolvedTask = await materializeTaskWorktree(task)
@@ -234,7 +232,7 @@ export function useTaskQueue({
         }
         if (task.status === 'review' && linkedId) {
           const linkedIsRunning = linkedTerminal
-            ? !isTerminalSessionFinished(linkedTerminal.status) && linkedTerminal.status !== 'idle'
+            ? !isTerminalSessionFinished(linkedTerminal.status)
             : await window.api.terminalSessions.isRunning(linkedId)
           if (linkedIsRunning) {
             toast.info('End the task session before starting its review.')
@@ -258,7 +256,7 @@ export function useTaskQueue({
           toast.error(claim.message ?? 'Could not reserve this worktree for the task.')
           return
         }
-        claimed = true
+        claimId = claim.claimId
         setTaskLocal(claim.task)
 
         if (task.status === 'todo') {
@@ -314,10 +312,16 @@ export function useTaskQueue({
         setTaskLocal(runningTask)
         const linked = await setTaskCopilotSession({
           id: claimedTask.id,
-          copilotSessionId: result.sessionId
+          copilotSessionId: result.sessionId,
+          claimId
         })
         if (linked.ok) setTaskLocal({ ...linked.task, queueStatus: 'running' })
-        else toast.error(linked.message ?? 'Could not link the session to this task.')
+        else {
+          await forgetTerminalSession(result.sessionId)
+          await failExecution()
+          toast.error(linked.message ?? 'Could not link the session to this task.')
+          return
+        }
 
         toast.success(
           isReview
@@ -337,6 +341,7 @@ export function useTaskQueue({
       launchCopilot,
       materializeTaskWorktree,
       moveTask,
+      forgetTerminalSession,
       setTaskLocal,
       setTaskQueueStatus,
       terminalSessionsById
@@ -367,91 +372,51 @@ export function useTaskQueue({
     () => tasks.filter((task) => task.queueStatus === 'running'),
     [tasks]
   )
+  const targetOwningTasks = React.useMemo(
+    () =>
+      tasks.filter((task) => {
+        const session = task.copilotSessionId
+          ? terminalSessionsById[task.copilotSessionId]
+          : undefined
+        return taskTargetIsOwned(task.queueStatus, session?.status)
+      }),
+    [tasks, terminalSessionsById]
+  )
+  const activeRunningTasks = React.useMemo(
+    () =>
+      targetOwningTasks.filter((task) => {
+        const session = task.copilotSessionId
+          ? terminalSessionsById[task.copilotSessionId]
+          : undefined
+        return taskConsumesQueueCapacity(task.queueStatus, session?.status)
+      }),
+    [targetOwningTasks, terminalSessionsById]
+  )
 
   React.useEffect(() => {
     if (settingsBusy || settings.mode !== 'automatic') return
-    const available = settings.concurrency - runningTasks.length - dispatchingRef.current.size
+    const dispatchingWithoutClaims = Array.from(dispatchingRef.current.keys()).filter(
+      (id) => !runningTasks.some((task) => task.id === id)
+    ).length
+    const available = settings.concurrency - activeRunningTasks.length - dispatchingWithoutClaims
     if (available <= 0) return
     const selected = selectTaskQueueCandidates(
       queuedTasks,
-      runningTasks,
+      targetOwningTasks,
       dispatchingRef.current.values(),
       available
     )
     for (const task of selected) {
       void executeTask(task, false)
     }
-  }, [executeTask, queuedTasks, runningTasks, settings, settingsBusy])
-
-  React.useEffect(() => {
-    for (const task of runningTasks) {
-      if (
-        dispatchingRef.current.has(task.id) ||
-        completingRef.current.has(task.id) ||
-        reconcilingRef.current.has(task.id) ||
-        settlingRef.current.has(task.id)
-      ) {
-        continue
-      }
-      const settleTask = async (queueStatus: 'complete' | 'failed'): Promise<void> => {
-        if (queueStatus === 'failed' && task.status === 'in_progress') {
-          await moveTask(task.id, 'todo')
-        }
-        await setTaskQueueStatus(task.id, queueStatus)
-      }
-      const sessionId = task.copilotSessionId
-      if (!sessionId) {
-        settlingRef.current.add(task.id)
-        void settleTask('failed').finally(() => {
-          settlingRef.current.delete(task.id)
-        })
-        continue
-      }
-      const session = terminalSessionsById[sessionId]
-      if (session?.status === 'idle' || session?.status === 'done') {
-        const planTransitionBusy = nativeBusy[nativeKey(session, 'plan-transition')] === true
-        if (
-          session.status === 'idle' &&
-          nativeSessionKeepsTaskQueueSlot(session, nativeById[sessionId], planTransitionBusy)
-        ) {
-          continue
-        }
-        settlingRef.current.add(task.id)
-        void settleTask('complete').finally(() => {
-          settlingRef.current.delete(task.id)
-        })
-        continue
-      }
-      if (session?.status === 'error') {
-        settlingRef.current.add(task.id)
-        void settleTask('failed').finally(() => {
-          settlingRef.current.delete(task.id)
-        })
-        continue
-      }
-      if (session) continue
-
-      reconcilingRef.current.add(task.id)
-      void window.api.terminalSessions
-        .isRunning(sessionId)
-        .then((isRunning) => {
-          if (!isRunning) void setTaskQueueStatus(task.id, 'complete')
-        })
-        .catch((error) => {
-          console.error('[task-queue] failed to reconcile task session:', error)
-        })
-        .finally(() => {
-          reconcilingRef.current.delete(task.id)
-        })
-    }
   }, [
-    moveTask,
-    nativeBusy,
-    nativeById,
-    observationNow,
+    activeRunningTasks,
+    executeTask,
+    queuedTasks,
     runningTasks,
-    setTaskQueueStatus,
-    terminalSessionsById
+    settings,
+    settingsBusy,
+    targetOwningTasks
   ])
 
   const canReviewTask = React.useCallback(
@@ -461,23 +426,26 @@ export function useTaskQueue({
       if (!linkedId) return false
       const session = terminalSessionsById[linkedId]
       if (!session) return true
-      return isTerminalSessionFinished(session.status) || session.status === 'idle'
+      return isTerminalSessionFinished(session.status)
     },
     [terminalSessionsById]
   )
 
   const hasAvailableSlot = React.useCallback((): boolean => {
-    if (runningTasks.length + dispatchingRef.current.size < settings.concurrency) return true
+    const dispatchingWithoutClaims = Array.from(dispatchingRef.current.keys()).filter(
+      (id) => !runningTasks.some((task) => task.id === id)
+    ).length
+    if (activeRunningTasks.length + dispatchingWithoutClaims < settings.concurrency) return true
     toast.info(
       `${settings.concurrency} ${settings.concurrency === 1 ? 'task is' : 'tasks are'} already running. Finish one before starting another.`
     )
     return false
-  }, [runningTasks.length, settings.concurrency])
+  }, [activeRunningTasks.length, runningTasks, settings.concurrency])
 
   const hasAvailableTarget = React.useCallback(
     (task: Task): boolean => {
       const busy =
-        runningTasks.some(
+        targetOwningTasks.some(
           (running) =>
             running.id !== task.id && running.executionTargetKey === task.executionTargetKey
         ) ||
@@ -488,7 +456,7 @@ export function useTaskQueue({
       toast.info('Another task is already using this repository worktree.')
       return false
     },
-    [runningTasks]
+    [targetOwningTasks]
   )
 
   const startTask = React.useCallback(
@@ -583,7 +551,7 @@ export function useTaskQueue({
     settings,
     settingsBusy,
     queuedCount: queuedTasks.length,
-    runningCount: runningTasks.length,
+    runningCount: activeRunningTasks.length,
     failedCount: failedTasks.length,
     setMode,
     startTask,

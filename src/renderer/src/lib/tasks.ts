@@ -5,12 +5,14 @@ import type {
   DeleteTaskRequest,
   DeleteTaskResult,
   DiscardTaskAttachmentStageRequest,
+  ClaimTaskRunResult,
   MoveTaskRequest,
   MoveTaskResult,
   PickTaskAttachmentsRequest,
   PickTaskAttachmentsResult,
   SetTaskCopilotSessionRequest,
   SetTaskQueueStatusRequest,
+  ReleaseTaskRunRequest,
   Task,
   UpdateTaskRequest,
   UpdateTaskResult
@@ -26,9 +28,7 @@ export function pickTaskAttachments(
   return window.api.tasks.pickAttachments(req)
 }
 
-export function discardTaskAttachmentStage(
-  req: DiscardTaskAttachmentStageRequest
-): Promise<void> {
+export function discardTaskAttachmentStage(req: DiscardTaskAttachmentStageRequest): Promise<void> {
   return window.api.tasks.discardAttachmentStage(req)
 }
 
@@ -58,6 +58,10 @@ export function setTaskQueueStatus(req: SetTaskQueueStatusRequest): Promise<Upda
   return window.api.tasks.setQueueStatus(req)
 }
 
-export function claimTaskRun(req: ClaimTaskRunRequest): Promise<UpdateTaskResult> {
+export function claimTaskRun(req: ClaimTaskRunRequest): Promise<ClaimTaskRunResult> {
   return window.api.tasks.claimRun(req)
+}
+
+export function releaseTaskRun(req: ReleaseTaskRunRequest): Promise<UpdateTaskResult> {
+  return window.api.tasks.releaseRun(req)
 }

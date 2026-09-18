@@ -112,22 +112,25 @@ import type { AppInfo, KeepAwakeResult, LaunchResult } from '@shared/system'
 import type { LocalWebStatus } from '@shared/local-web'
 import type { CopilotHistoryListResult } from '@shared/copilot-history'
 import type { CopilotAnalyticsResult } from '@shared/copilot-analytics'
-import type {
-  CreateTaskRequest,
-  CreateTaskResult,
-  ClaimTaskRunRequest,
-  DeleteTaskRequest,
-  DeleteTaskResult,
-  DiscardTaskAttachmentStageRequest,
-  MoveTaskRequest,
-  MoveTaskResult,
-  PickTaskAttachmentsRequest,
-  PickTaskAttachmentsResult,
-  SetTaskCopilotSessionRequest,
-  SetTaskQueueStatusRequest,
-  Task,
-  UpdateTaskRequest,
-  UpdateTaskResult
+import {
+  TASKS_CHANGED_EVENT,
+  type ClaimTaskRunRequest,
+  type ClaimTaskRunResult,
+  type CreateTaskRequest,
+  type CreateTaskResult,
+  type DeleteTaskRequest,
+  type DeleteTaskResult,
+  type DiscardTaskAttachmentStageRequest,
+  type MoveTaskRequest,
+  type MoveTaskResult,
+  type PickTaskAttachmentsRequest,
+  type PickTaskAttachmentsResult,
+  type SetTaskCopilotSessionRequest,
+  type SetTaskQueueStatusRequest,
+  type ReleaseTaskRunRequest,
+  type Task,
+  type UpdateTaskRequest,
+  type UpdateTaskResult
 } from '@shared/task'
 import {
   TERMINAL_SESSIONS_UPDATE_EVENT,
@@ -496,6 +499,7 @@ const api = {
   },
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),
+    onUpdate: (cb: () => void): Promise<() => void> => listen(TASKS_CHANGED_EVENT, () => cb()),
     pickAttachments: (req: PickTaskAttachmentsRequest): Promise<PickTaskAttachmentsResult> =>
       result('tasks_pick_attachments', { ...req }, (message) => ({
         ok: false,
@@ -540,8 +544,14 @@ const api = {
         error: 'unknown',
         message
       })),
-    claimRun: (req: ClaimTaskRunRequest): Promise<UpdateTaskResult> =>
+    claimRun: (req: ClaimTaskRunRequest): Promise<ClaimTaskRunResult> =>
       result('tasks_claim_run', { ...req }, (message) => ({
+        ok: false,
+        error: 'unknown',
+        message
+      })),
+    releaseRun: (req: ReleaseTaskRunRequest): Promise<UpdateTaskResult> =>
+      result('tasks_release_run', { ...req }, (message) => ({
         ok: false,
         error: 'unknown',
         message

@@ -211,7 +211,7 @@ export function ActivityRail({
               <span className="ring-sidebar absolute -top-1 -right-1 size-2.5 rounded-full bg-emerald-500 ring-2" />
             ) : null}
           </span>
-          <span className="max-w-full truncate text-[10px] leading-none font-medium">Web</span>
+          <span className="max-w-full truncate text-[10px] leading-none font-medium">Remote</span>
         </button>
         <KeepAwakeButton
           enabled={keepAwakeEnabled}

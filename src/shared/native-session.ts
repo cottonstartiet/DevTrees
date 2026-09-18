@@ -70,6 +70,7 @@ export type NativeSnapshot = {
   queue?: QueuedPrompt[]
   queuePaused?: boolean
   phase?: string
+  lastStopReason?: string | null
   replacesId?: string | null
   usage?: { used: number; size: number; cost?: { amount: number; currency: string } } | null
   availableModes: { id: string; name: string }[]
@@ -340,6 +341,32 @@ export function acpPermissionOptionScope(kind: string): string {
 
 export function acpPermissionOptionIsRemembered(kind: string): boolean {
   return kind === 'allow_always' || kind === 'reject_always'
+}
+
+export function orderedAcpPermissionOptions(
+  options: readonly AcpPermissionOption[]
+): AcpPermissionOption[] {
+  return [...options].sort(
+    (a, b) => Number(a.kind.startsWith('allow')) - Number(b.kind.startsWith('allow'))
+  )
+}
+
+export function nativeInteractionRequiresFullSession(interaction: NativeInteraction): boolean {
+  if (interaction.kind === 'plan') return true
+  if (interaction.kind === 'permission') return Boolean(interaction.diff)
+  if (interaction.kind === 'question') return interaction.choices.length > 6
+  if (interaction.kind !== 'elicitation') return false
+  if (interaction.url || interaction.unsupported) return true
+  try {
+    const fields = nativeFields(interaction.schema)
+    return (
+      fields.length !== 1 ||
+      (!fields[0]?.choices && fields[0]?.type !== 'boolean') ||
+      (fields[0]?.choices?.length ?? 0) > 6
+    )
+  } catch {
+    return true
+  }
 }
 
 export function acpCommandQuery(message: string): string | null {
