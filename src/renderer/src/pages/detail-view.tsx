@@ -409,6 +409,7 @@ function ChangesTab({ ctrl, folderPath }: ChangesTabProps): React.JSX.Element {
 }
 
 function BranchesTab({
+  kind,
   folderPath,
   repository,
   onSelectWorktreePath
@@ -418,8 +419,17 @@ function BranchesTab({
       <PlaceholderCard title="Branches" hint="Branch list is available at the repository level." />
     )
   }
+  const isRepositoryRoot = kind === 'repository-default' || kind === 'repository-feature'
+
   return (
     <div className="grid grid-cols-1 gap-4">
+      {isRepositoryRoot ? (
+        <WorktreesOverviewPanel
+          repositoryPath={repository.path}
+          activeFolderPath={folderPath}
+          onSelectWorktree={onSelectWorktreePath}
+        />
+      ) : null}
       <MyBranchesPanel
         repositoryPath={repository.path}
         activeFolderPath={folderPath}
@@ -436,8 +446,7 @@ function PullRequestTab({
   defaultBranch,
   repository,
   existingPullRequest,
-  onCreateBranch,
-  onSelectWorktreePath
+  onCreateBranch
 }: TabSectionProps): React.JSX.Element {
   const isRepositoryRoot = kind === 'repository-default' || kind === 'repository-feature'
   const isFeature = kind === 'repository-feature' || kind === 'worktree-feature'
@@ -446,16 +455,9 @@ function PullRequestTab({
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       {isRepositoryRoot && repository ? (
-        <>
-          <WorktreesOverviewPanel
-            repositoryPath={repository.path}
-            activeFolderPath={folderPath}
-            onSelectWorktree={onSelectWorktreePath}
-          />
-          {folderPath ? (
-            <MyOpenPrsPanel folderPath={folderPath} remoteKind={repository.remoteKind} />
-          ) : null}
-        </>
+        folderPath ? (
+          <MyOpenPrsPanel folderPath={folderPath} remoteKind={repository.remoteKind} />
+        ) : null
       ) : null}
 
       {isWorktreeDetached && folderPath ? (
