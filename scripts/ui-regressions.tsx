@@ -290,6 +290,181 @@ async function globalNewTaskShortcut(): Promise<void> {
   }
 }
 
+async function taskSaveShortcut(): Promise<void> {
+  const repository: Repository = {
+    id: 'repo',
+    path: 'C:\\repo',
+    name: 'Repo',
+    addedAt: 0,
+    remoteKind: 'github'
+  }
+  mockApi({
+    tasks: {
+      discardAttachmentStage: () => Promise.resolve()
+    }
+  })
+
+  let invalidCreateCalls = 0
+  const invalidFixture = mount(
+    <TaskDetailDialog
+      open
+      onOpenChange={() => undefined}
+      task={null}
+      repositories={[repository]}
+      worktreesByRepositoryId={{ [repository.id]: [] }}
+      onCreate={() => {
+        invalidCreateCalls += 1
+        return Promise.resolve(true)
+      }}
+      onUpdate={() => Promise.resolve(true)}
+      onDelete={() => Promise.resolve()}
+    />
+  )
+  try {
+    await until(() => Boolean(document.querySelector('[role="dialog"]')))
+    const shortcutAccepted = window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 's',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    assert(!shortcutAccepted, 'Ctrl+S did not prevent the WebView default')
+    await until(() => document.body.textContent?.includes('Title is required.') === true)
+    assert(invalidCreateCalls === 0, 'Ctrl+S bypassed task validation')
+    assert(document.querySelector('[role="dialog"]'), 'Invalid Ctrl+S closed the task dialog')
+  } finally {
+    invalidFixture.dispose()
+  }
+
+  let createCalls = 0
+  let createSucceeds = false
+  function CreateHarness(): React.JSX.Element {
+    const [open, setOpen] = React.useState(true)
+    return (
+      <TaskDetailDialog
+        open={open}
+        onOpenChange={setOpen}
+        task={null}
+        initialDraft={{
+          id: 'draft',
+          title: 'Draft task',
+          description: 'Draft description',
+          repositoryName: repository.name
+        }}
+        repositories={[repository]}
+        worktreesByRepositoryId={{ [repository.id]: [] }}
+        onCreate={() => {
+          createCalls += 1
+          return Promise.resolve(createSucceeds)
+        }}
+        onUpdate={() => Promise.resolve(true)}
+        onDelete={() => Promise.resolve()}
+      />
+    )
+  }
+  const createFixture = mount(<CreateHarness />)
+  try {
+    await until(() => Boolean(document.querySelector('[role="dialog"]')))
+    const modifiedAccepted = window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 's',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    assert(modifiedAccepted, 'Ctrl+Shift+S was incorrectly intercepted')
+    assert(createCalls === 0, 'Modified save shortcut created a task')
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 's',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    await until(() => createCalls === 1)
+    assert(document.querySelector('[role="dialog"]'), 'Failed Ctrl+S create closed the task dialog')
+
+    createSucceeds = true
+    await delay(20)
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'S',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    await until(() => !document.querySelector('[role="dialog"]'))
+    assert(Number(createCalls) === 2, 'Successful Ctrl+S did not create the task exactly once')
+  } finally {
+    createFixture.dispose()
+  }
+
+  const update = deferred<boolean>()
+  let updateCalls = 0
+  function UpdateHarness(): React.JSX.Element {
+    const [open, setOpen] = React.useState(true)
+    return (
+      <TaskDetailDialog
+        open={open}
+        onOpenChange={setOpen}
+        task={task}
+        repositories={[repository]}
+        worktreesByRepositoryId={{ [repository.id]: [] }}
+        onCreate={() => Promise.resolve(true)}
+        onUpdate={() => {
+          updateCalls += 1
+          return update.promise
+        }}
+        onDelete={() => Promise.resolve()}
+      />
+    )
+  }
+  const updateFixture = mount(<UpdateHarness />)
+  try {
+    await until(() => Boolean(document.querySelector('[role="dialog"]')))
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 's',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    await until(() => updateCalls === 1)
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 's',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 's',
+        ctrlKey: true,
+        repeat: true,
+        bubbles: true,
+        cancelable: true
+      })
+    )
+    await delay(20)
+    assert(updateCalls === 1, 'Ctrl+S submitted again while a task save was in progress')
+    update.resolve(true)
+    await until(() => !document.querySelector('[role="dialog"]'))
+  } finally {
+    update.resolve(true)
+    updateFixture.dispose()
+  }
+}
+
 async function taskMainBranchDefault(): Promise<void> {
   const repositories: Repository[] = [
     {
@@ -1365,6 +1540,14 @@ async function reviewWorkspaceModes(): Promise<void> {
       deletions: 1,
       isBinary: false,
       isMarkdown: false
+    },
+    {
+      path: 'src/components/button.tsx',
+      changeType: 'add',
+      additions: 3,
+      deletions: 0,
+      isBinary: false,
+      isMarkdown: false
     }
   ]
   const diffs = new Map<string, PrFileDiff>(
@@ -1409,6 +1592,16 @@ async function reviewWorkspaceModes(): Promise<void> {
         path: 'src/app.ts',
         side: 'head',
         text: 'const title = true\rconst value = "new"\rend()',
+        isBinary: false,
+        truncated: false
+      }
+    ],
+    [
+      'src/components/button.tsx',
+      {
+        path: 'src/components/button.tsx',
+        side: 'head',
+        text: 'export function Button() {\n  return <button />\n}',
         isBinary: false,
         truncated: false
       }
@@ -1461,6 +1654,55 @@ async function reviewWorkspaceModes(): Promise<void> {
       'Markdown preview opened by default'
     )
 
+    const changedFilesTree = fixture.container.querySelector(
+      '[role="tree"][aria-label="Changed files"]'
+    )
+    assert(changedFilesTree, 'Changed files did not render as a tree')
+    const sourceFolder = fixture.container.querySelector<HTMLButtonElement>(
+      'button[role="treeitem"][title="src"]'
+    )
+    const componentsFolder = fixture.container.querySelector<HTMLButtonElement>(
+      'button[role="treeitem"][title="src/components"]'
+    )
+    assert(sourceFolder?.getAttribute('aria-expanded') === 'true', 'Source folder was not expanded')
+    assert(
+      componentsFolder?.getAttribute('aria-level') === '2',
+      'Nested folder did not render at the expected depth'
+    )
+    assert(
+      fixture.container
+        .querySelector('button[title="src/components/button.tsx"]')
+        ?.getAttribute('aria-level') === '3',
+      'Nested file did not render at the expected depth'
+    )
+
+    sourceFolder.click()
+    await until(() => !fixture.container.querySelector('button[title="src/app.ts"]'))
+
+    const filter = fixture.container.querySelector<HTMLInputElement>(
+      'input[aria-label="Filter changed files"]'
+    )
+    assert(filter, 'Changed-file filter was not rendered')
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    assert(valueSetter, 'Browser did not expose the input value setter')
+    valueSetter.call(filter, 'button.tsx')
+    filter.dispatchEvent(new Event('input', { bubbles: true }))
+    await until(() =>
+      Boolean(fixture.container.querySelector('button[title="src/components/button.tsx"]'))
+    )
+    assert(
+      fixture.container
+        .querySelector('button[role="treeitem"][title="src"]')
+        ?.getAttribute('aria-expanded') === 'true',
+      'Filtering did not reveal the matching file ancestry'
+    )
+
+    valueSetter.call(filter, '')
+    filter.dispatchEvent(new Event('input', { bubbles: true }))
+    await until(() => !fixture.container.querySelector('button[title="src/app.ts"]'))
+    fixture.container.querySelector<HTMLButtonElement>('button[title="src"]')?.click()
+    await until(() => Boolean(fixture.container.querySelector('button[title="src/app.ts"]')))
+
     button('Preview')?.click()
     await until(() => Boolean(fixture.container.querySelector('.markdown-preview')))
     assert(
@@ -1469,14 +1711,14 @@ async function reviewWorkspaceModes(): Promise<void> {
     )
 
     const sourceFile = Array.from(fixture.container.querySelectorAll('button')).find(
-      (candidate) => candidate.getAttribute('title') === 'src/app.ts'
+      (candidate) => candidate.getAttribute('title') === 'src/components/button.tsx'
     )
-    assert(sourceFile, 'Source file was not listed')
+    assert(sourceFile, 'Nested source file was not listed')
     sourceFile.click()
-    await until(() => contentRequests.includes('src/app.ts'))
+    await until(() => contentRequests.includes('src/components/button.tsx'))
     assert(
       fixture.container.querySelector('[aria-label="Diff layout"]'),
-      'Source diff did not expose layout controls'
+      'Nested source diff did not expose layout controls'
     )
     assert(
       !fixture.container.querySelector('[aria-label="View mode"]'),
@@ -1492,6 +1734,7 @@ window.uiRegressions = (async () => {
   for (const [name, run] of [
     ['popup input lock recovery', popupLifecycles],
     ['global new task shortcut', globalNewTaskShortcut],
+    ['task save shortcut', taskSaveShortcut],
     ['task main branch default', taskMainBranchDefault],
     ['worktree dropdown placement', worktreeDropdownPlacement],
     ['repository request isolation', repositoryIsolation],

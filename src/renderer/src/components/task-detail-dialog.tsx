@@ -149,6 +149,7 @@ function TaskDetailForm({
   })
   const [submitAttempted, setSubmitAttempted] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
+  const formRef = React.useRef<HTMLFormElement>(null)
 
   React.useEffect(
     () => () => {
@@ -177,9 +178,7 @@ function TaskDetailForm({
   const titleError = !title.trim() ? 'Title is required.' : null
   const worktreeNameError = creatingNewWorktree ? validateWorktreeName(newWorktreeName) : null
   const worktreeError =
-    !creatingNewWorktree && !effectiveWorktreeSelection
-      ? 'Select where this task will run.'
-      : null
+    !creatingNewWorktree && !effectiveWorktreeSelection ? 'Select where this task will run.' : null
   const showTitleError = (editedFields.title || submitAttempted) && titleError !== null
   const showWorktreeError = (editedFields.worktree || submitAttempted) && worktreeError !== null
   const showWorktreeNameError =
@@ -276,6 +275,27 @@ function TaskDetailForm({
     }
   }
 
+  React.useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      const isSaveShortcut =
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === 's'
+
+      if (!isSaveShortcut || event.defaultPrevented || event.isComposing) return
+
+      event.preventDefault()
+      if (event.repeat || readOnly || busy) return
+
+      formRef.current?.requestSubmit()
+    }
+
+    window.addEventListener('keydown', handleKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
+  }, [busy, readOnly])
+
   const handleDelete = async (): Promise<void> => {
     if (!task) return
     setBusy(true)
@@ -345,6 +365,7 @@ function TaskDetailForm({
       </DialogHeader>
 
       <form
+        ref={formRef}
         onSubmit={handleSubmit}
         className="flex min-h-0 min-w-0 flex-col gap-4 overflow-y-auto pr-1"
       >

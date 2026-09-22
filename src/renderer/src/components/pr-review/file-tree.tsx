@@ -1,9 +1,12 @@
 import * as React from 'react'
 import {
+  ChevronRight as ChevronRightIcon,
   FileDiff as FileDiffIcon,
   FileMinus as FileMinusIcon,
   FilePen as FilePenIcon,
   FilePlus as FilePlusIcon,
+  Folder as FolderIcon,
+  FolderOpen as FolderOpenIcon,
   MessageSquare as MessageSquareIcon
 } from 'lucide-react'
 
@@ -25,7 +28,23 @@ export interface FileTreeProps {
   isLoading: boolean
 }
 
-/** Changed-file list for the review workspace, filtered and keyboard-navigable. */
+type FileNode = {
+  kind: 'file'
+  name: string
+  path: string
+  file: PrChangedFile
+}
+
+type FolderNode = {
+  kind: 'folder'
+  name: string
+  path: string
+  children: TreeNode[]
+}
+
+type TreeNode = FileNode | FolderNode
+
+/** Changed-file tree for the review workspace, filtered and keyboard-navigable. */
 export function FileTree({
   files,
   selectedPath,
@@ -35,12 +54,33 @@ export function FileTree({
   isLoading
 }: FileTreeProps): React.JSX.Element {
   const [query, setQuery] = React.useState('')
+  const [collapsedFolders, setCollapsedFolders] = React.useState<Map<string, string | null>>(
+    () => new Map()
+  )
 
-  const filtered = React.useMemo(() => {
+  const filteredFiles = React.useMemo(() => {
     const needle = query.trim().toLowerCase()
     if (!needle) return files
     return files.filter((file) => file.path.toLowerCase().includes(needle))
   }, [files, query])
+  const tree = React.useMemo(() => buildFileTree(filteredFiles), [filteredFiles])
+  const isFiltering = query.trim().length > 0
+  const selectedAncestors = React.useMemo(
+    () => new Set(selectedPath ? ancestorPaths(selectedPath) : []),
+    [selectedPath]
+  )
+
+  const toggleFolder = React.useCallback(
+    (path: string): void => {
+      setCollapsedFolders((current) => {
+        const next = new Map(current)
+        if (next.has(path)) next.delete(path)
+        else next.set(path, selectedPath)
+        return next
+      })
+    },
+    [selectedPath]
+  )
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -53,59 +93,173 @@ export function FileTree({
           className="h-7 text-xs"
         />
       </div>
-      <ul className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
+      <ul
+        className="min-h-0 flex-1 overflow-y-auto px-1 pb-2"
+        role="tree"
+        aria-label="Changed files"
+      >
         {isLoading && files.length === 0 ? (
-          <li className="text-muted-foreground px-2 py-1 text-xs italic">Loading files…</li>
-        ) : filtered.length === 0 ? (
-          <li className="text-muted-foreground px-2 py-1 text-xs italic">
+          <li className="text-muted-foreground px-2 py-1 text-xs italic" role="none">
+            Loading files…
+          </li>
+        ) : filteredFiles.length === 0 ? (
+          <li className="text-muted-foreground px-2 py-1 text-xs italic" role="none">
             {files.length === 0 ? 'No changed files.' : 'No files match the filter.'}
           </li>
         ) : (
-          filtered.map((file) => {
-            const counts = diffCounts.get(file.path)
-            const additions = counts?.additions ?? file.additions
-            const deletions = counts?.deletions ?? file.deletions
-            const threads = threadCounts.get(file.path) ?? 0
-            const isSelected = file.path === selectedPath
-
-            return (
-              <li key={file.path}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(file.path)}
-                  aria-current={isSelected ? 'true' : undefined}
-                  title={file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded px-2 py-1 text-left',
-                    isSelected
-                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                      : 'hover:bg-accent hover:text-accent-foreground'
-                  )}
-                >
-                  <ChangeGlyph changeType={file.changeType} />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-                    {basename(file.path)}
-                    <span className="text-muted-foreground"> {dirname(file.path)}</span>
-                  </span>
-                  {threads > 0 ? (
-                    <span className="text-muted-foreground inline-flex shrink-0 items-center gap-0.5 text-[10px]">
-                      <MessageSquareIcon className="size-3" />
-                      {threads}
-                    </span>
-                  ) : null}
-                  {additions > 0 || deletions > 0 ? (
-                    <span className="shrink-0 font-mono text-[10px] tabular-nums">
-                      <span className="text-emerald-600 dark:text-emerald-400">+{additions}</span>{' '}
-                      <span className="text-muted-foreground">-{deletions}</span>
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            )
-          })
+          <TreeNodes
+            nodes={tree}
+            depth={0}
+            selectedPath={selectedPath}
+            onSelect={onSelect}
+            threadCounts={threadCounts}
+            diffCounts={diffCounts}
+            collapsedFolders={collapsedFolders}
+            selectedAncestors={selectedAncestors}
+            isFiltering={isFiltering}
+            onToggleFolder={toggleFolder}
+          />
         )}
       </ul>
     </div>
+  )
+}
+
+interface TreeNodesProps {
+  nodes: TreeNode[]
+  depth: number
+  selectedPath: string | null
+  onSelect: (path: string) => void
+  threadCounts: Map<string, number>
+  diffCounts: Map<string, { additions: number; deletions: number }>
+  collapsedFolders: Map<string, string | null>
+  selectedAncestors: Set<string>
+  isFiltering: boolean
+  onToggleFolder: (path: string) => void
+}
+
+function TreeNodes({
+  nodes,
+  depth,
+  selectedPath,
+  onSelect,
+  threadCounts,
+  diffCounts,
+  collapsedFolders,
+  selectedAncestors,
+  isFiltering,
+  onToggleFolder
+}: TreeNodesProps): React.JSX.Element {
+  return (
+    <>
+      {nodes.map((node) => {
+        if (node.kind === 'folder') {
+          const isSelectionAncestor = selectedAncestors.has(node.path)
+          const isExpanded =
+            isFiltering ||
+            !collapsedFolders.has(node.path) ||
+            (isSelectionAncestor && collapsedFolders.get(node.path) !== selectedPath)
+
+          return (
+            <li key={node.path} role="none">
+              <button
+                type="button"
+                role="treeitem"
+                aria-expanded={isExpanded}
+                aria-level={depth + 1}
+                title={node.path}
+                onClick={() => {
+                  if (!isFiltering) onToggleFolder(node.path)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowRight' && !isExpanded) {
+                    event.preventDefault()
+                    onToggleFolder(node.path)
+                  } else if (event.key === 'ArrowLeft' && isExpanded && !isFiltering) {
+                    event.preventDefault()
+                    onToggleFolder(node.path)
+                  }
+                }}
+                className="hover:bg-accent hover:text-accent-foreground flex w-full items-center gap-1 rounded py-1 pr-2 text-left"
+                style={{ paddingLeft: `${4 + depth * 12}px` }}
+              >
+                <ChevronRightIcon
+                  className={cn(
+                    'text-muted-foreground size-3 shrink-0 transition-transform',
+                    isExpanded && 'rotate-90'
+                  )}
+                />
+                {isExpanded ? (
+                  <FolderOpenIcon className="text-muted-foreground size-3.5 shrink-0" />
+                ) : (
+                  <FolderIcon className="text-muted-foreground size-3.5 shrink-0" />
+                )}
+                <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{node.name}</span>
+              </button>
+              {isExpanded ? (
+                <ul role="group">
+                  <TreeNodes
+                    nodes={node.children}
+                    depth={depth + 1}
+                    selectedPath={selectedPath}
+                    onSelect={onSelect}
+                    threadCounts={threadCounts}
+                    diffCounts={diffCounts}
+                    collapsedFolders={collapsedFolders}
+                    selectedAncestors={selectedAncestors}
+                    isFiltering={isFiltering}
+                    onToggleFolder={onToggleFolder}
+                  />
+                </ul>
+              ) : null}
+            </li>
+          )
+        }
+
+        const { file } = node
+        const counts = diffCounts.get(file.path)
+        const additions = counts?.additions ?? file.additions
+        const deletions = counts?.deletions ?? file.deletions
+        const threads = threadCounts.get(file.path) ?? 0
+        const isSelected = file.path === selectedPath
+
+        return (
+          <li key={file.path} role="none">
+            <button
+              type="button"
+              role="treeitem"
+              aria-level={depth + 1}
+              aria-selected={isSelected}
+              onClick={() => onSelect(file.path)}
+              aria-current={isSelected ? 'true' : undefined}
+              title={file.previousPath ? `${file.previousPath} → ${file.path}` : file.path}
+              className={cn(
+                'flex w-full items-center gap-2 rounded py-1 pr-2 text-left',
+                isSelected
+                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                  : 'hover:bg-accent hover:text-accent-foreground'
+              )}
+              style={{ paddingLeft: `${8 + depth * 12}px` }}
+            >
+              <ChangeGlyph changeType={file.changeType} />
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{node.name}</span>
+              {threads > 0 ? (
+                <span className="text-muted-foreground inline-flex shrink-0 items-center gap-0.5 text-[10px]">
+                  <MessageSquareIcon className="size-3" />
+                  {threads}
+                </span>
+              ) : null}
+              {additions > 0 || deletions > 0 ? (
+                <span className="shrink-0 font-mono text-[10px] tabular-nums">
+                  <span className="text-emerald-600 dark:text-emerald-400">+{additions}</span>{' '}
+                  <span className="text-muted-foreground">-{deletions}</span>
+                </span>
+              ) : null}
+            </button>
+          </li>
+        )
+      })}
+    </>
   )
 }
 
@@ -127,12 +281,49 @@ function ChangeGlyph({
   }
 }
 
-function basename(path: string): string {
-  const idx = path.lastIndexOf('/')
-  return idx < 0 ? path : path.slice(idx + 1)
+function buildFileTree(files: PrChangedFile[]): TreeNode[] {
+  const root: FolderNode = { kind: 'folder', name: '', path: '', children: [] }
+
+  for (const file of files) {
+    const parts = file.path.split('/')
+    const fileName = parts.pop()
+    if (!fileName) continue
+
+    let parent = root
+    let parentPath = ''
+    for (const part of parts) {
+      parentPath = parentPath ? `${parentPath}/${part}` : part
+      const existing = parent.children.find(
+        (child): child is FolderNode => child.kind === 'folder' && child.name === part
+      )
+      if (existing) {
+        parent = existing
+        continue
+      }
+
+      const folder: FolderNode = {
+        kind: 'folder',
+        name: part,
+        path: parentPath,
+        children: []
+      }
+      parent.children.push(folder)
+      parent = folder
+    }
+
+    parent.children.push({
+      kind: 'file',
+      name: fileName,
+      path: file.path,
+      file
+    })
+  }
+
+  return root.children
 }
 
-function dirname(path: string): string {
-  const idx = path.lastIndexOf('/')
-  return idx < 0 ? '' : path.slice(0, idx)
+function ancestorPaths(path: string): string[] {
+  const parts = path.split('/')
+  parts.pop()
+  return parts.map((_, index) => parts.slice(0, index + 1).join('/'))
 }
