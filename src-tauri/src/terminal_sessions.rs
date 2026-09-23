@@ -122,6 +122,7 @@ pub struct TerminalSession {
     pub created_at: i64,
     pub updated_at: i64,
     pub transport: String,
+    pub terminal_id: Option<String>,
     pub permission_profile: crate::settings::CopilotPermissionProfile,
     pub generation: Option<String>,
     pub revision: u64,
@@ -493,6 +494,7 @@ fn row_to_watch(row: &rusqlite::Row<'_>) -> rusqlite::Result<Watch> {
             created_at: row.get(10)?,
             updated_at: row.get(11)?,
             transport: row.get(14)?,
+            terminal_id: None,
             permission_profile,
             generation: row.get(16)?,
             revision: row.get::<_, i64>(17)?.max(0) as u64,
@@ -804,7 +806,7 @@ fn apply_event(session: &mut TerminalSession, event: &RawEvent) -> bool {
         }
         "session.error" => {
             // A CLI error may end a turn, not the process. Keep its terminal usable.
-            session.status = if session.transport == "external" {
+            session.status = if matches!(session.transport.as_str(), "external" | "embedded") {
                 TerminalSessionStatus::Idle
             } else {
                 TerminalSessionStatus::Error
@@ -1446,6 +1448,173 @@ fn has_lock(dir: &PathBuf) -> AppResult<bool> {
     Ok(false)
 }
 
+fn lock_pids(dir: &PathBuf) -> AppResult<Vec<u32>> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    let mut pids = Vec::new();
+    for entry in entries {
+        let name = entry?.file_name();
+        let name = name.to_string_lossy();
+        if let Some(pid) = name
+            .strip_prefix("inuse.")
+            .and_then(|value| value.strip_suffix(".lock"))
+            .and_then(|value| value.parse::<u32>().ok())
+        {
+            pids.push(pid);
+        }
+    }
+    Ok(pids)
+}
+
+#[cfg(windows)]
+fn process_descends_from(pid: u32, root_pid: u32) -> bool {
+    use std::collections::HashMap;
+    use winapi::um::{
+        handleapi::CloseHandle,
+        tlhelp32::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+            TH32CS_SNAPPROCESS,
+        },
+    };
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == winapi::um::handleapi::INVALID_HANDLE_VALUE {
+            return false;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut parents = HashMap::new();
+        if Process32FirstW(snapshot, &mut entry) != 0 {
+            loop {
+                parents.insert(entry.th32ProcessID, entry.th32ParentProcessID);
+                if Process32NextW(snapshot, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snapshot);
+        let mut current = pid;
+        for _ in 0..128 {
+            if current == root_pid {
+                return true;
+            }
+            let Some(parent) = parents.get(&current).copied() else {
+                return false;
+            };
+            if parent == 0 || parent == current {
+                return false;
+            }
+            current = parent;
+        }
+        false
+    }
+}
+
+#[cfg(not(windows))]
+fn process_descends_from(pid: u32, root_pid: u32) -> bool {
+    pid == root_pid
+}
+
+pub(crate) fn discover_embedded_copilot(root_pid: u32, started_at: i64) -> Option<String> {
+    let root = session_state_root().ok()?;
+    let mut candidates = fs::read_dir(root)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let id = entry.file_name().to_string_lossy().to_string();
+            uuid::Uuid::parse_str(&id).ok()?;
+            let modified = entry
+                .metadata()
+                .ok()?
+                .modified()
+                .ok()?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_millis() as i64;
+            (modified >= started_at).then_some((modified, id, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|candidate| std::cmp::Reverse(candidate.0));
+    candidates.into_iter().find_map(|(_, id, path)| {
+        lock_pids(&path)
+            .ok()?
+            .into_iter()
+            .any(|pid| process_descends_from(pid, root_pid))
+            .then_some(id)
+    })
+}
+
+pub(crate) fn attach_discovered_embedded(
+    app: &AppHandle,
+    terminal: &crate::embedded_terminals::EmbeddedTerminal,
+    copilot_session_id: &str,
+) -> AppResult<()> {
+    let monitor = app.state::<TerminalSessionMonitor>();
+    if monitor
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("Session mutex poisoned."))?
+        .contains_key(copilot_session_id)
+    {
+        return Ok(());
+    }
+    let (cursor, seq) = history_cursor(
+        &session_state_root()?
+            .join(copilot_session_id)
+            .join("events.jsonl"),
+    )?;
+    let session = TerminalSession {
+        id: copilot_session_id.to_string(),
+        task_id: terminal.task_id.clone(),
+        folder_path: terminal.folder_path.clone(),
+        label: terminal.label.clone(),
+        repository: terminal.repository.clone(),
+        branch: terminal.branch.clone(),
+        status: TerminalSessionStatus::Starting,
+        last_activity: "Monitoring Copilot in the embedded terminal".into(),
+        pending_prompt: None,
+        created_at: terminal.created_at,
+        updated_at: now_ms(),
+        transport: "embedded".into(),
+        terminal_id: Some(terminal.terminal_id.clone()),
+        permission_profile: crate::settings::CopilotPermissionProfile::Default,
+        generation: Some(uuid::Uuid::new_v4().to_string()),
+        revision: terminal.revision + 1,
+        observed_at: None,
+        observation_error: None,
+    };
+    monitor
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("Session mutex poisoned."))?
+        .insert(
+            copilot_session_id.to_string(),
+            Watch {
+                session: session.clone(),
+                cursor,
+                seq,
+                saw_lock: true,
+                missing_polls: 0,
+                managed: false,
+                attention: crate::session_attention::Attention::default(),
+                log_error: None,
+            },
+        );
+    ensure_polling(app);
+    emit(app, &session, Vec::new());
+    Ok(())
+}
+
+pub(crate) fn detach_embedded_terminal(app: &AppHandle, terminal_id: &str) {
+    let monitor = app.state::<TerminalSessionMonitor>();
+    if let Ok(mut watches) = monitor.watches.lock() {
+        watches.retain(|_, watch| watch.session.terminal_id.as_deref() != Some(terminal_id));
+    };
+}
+
 pub(crate) fn process_is_running(pid: u32) -> AppResult<bool> {
     #[cfg(windows)]
     {
@@ -1504,7 +1673,7 @@ fn emit(app: &AppHandle, session: &TerminalSession, entries: Vec<TerminalTimelin
 }
 
 fn persist(app: &AppHandle, session: &TerminalSession, cursor: u64, seq: u64) {
-    if session.transport == "external" {
+    if matches!(session.transport.as_str(), "external" | "embedded") {
         return;
     }
     if let Some(state) = app.try_state::<DbState>() {
@@ -1572,9 +1741,17 @@ fn observe_external(watch: &mut Watch, dir: &PathBuf) -> AppResult<()> {
         watch.saw_lock = true;
         watch.missing_polls = 0;
     } else if watch.saw_lock {
-        watch.session.status = TerminalSessionStatus::Done;
+        watch.session.status = if watch.session.transport == "embedded" {
+            TerminalSessionStatus::Idle
+        } else {
+            TerminalSessionStatus::Done
+        };
         watch.session.pending_prompt = None;
-        watch.session.last_activity = "External Copilot session ended".into();
+        watch.session.last_activity = if watch.session.transport == "embedded" {
+            "Copilot ended; PowerShell remains available".into()
+        } else {
+            "External Copilot session ended".into()
+        };
         return Ok(());
     } else {
         watch.missing_polls += 1;
@@ -1633,7 +1810,7 @@ fn poll_once(app: &AppHandle) {
             .lock()
             .map_err(|_| AppError::msg("Session mutex poisoned."))?
             .values()
-            .filter(|watch| watch.session.transport == "external")
+            .filter(|watch| matches!(watch.session.transport.as_str(), "external" | "embedded"))
             .cloned()
             .collect();
         for mut watch in watches {
@@ -1691,11 +1868,11 @@ fn apply_external_observation(
     };
     if current.session.generation != observed.session.generation
         || current.session.revision != revision
-        || current.session.transport != "external"
+        || !matches!(current.session.transport.as_str(), "external" | "embedded")
     {
         return false;
     }
-    if observed.session.status.is_final() {
+    if observed.session.status.is_final() && observed.session.transport == "external" {
         watches.remove(&observed.session.id);
     } else {
         watches.insert(observed.session.id.clone(), observed.clone());
@@ -1930,6 +2107,7 @@ fn start_external(
         created_at: now,
         updated_at: now,
         transport: "external".into(),
+        terminal_id: None,
         permission_profile: req
             .permission_profile
             .or_else(|| previous.map(|session| session.permission_profile))
@@ -1960,6 +2138,7 @@ fn start_external(
             "Could not launch the external terminal.".into()
         })));
     }
+
     // Keep the watch even if persistence cleanup fails: the external process has
     // already started, and retrying must not create a second controller.
     watches.insert(
@@ -1979,6 +2158,94 @@ fn start_external(
     ensure_polling(app);
     emit(app, &session, Vec::new());
     tx.commit()?;
+    Ok(TerminalSessionResult {
+        ok: true,
+        session: Some(session),
+        error: None,
+    })
+}
+
+fn start_embedded(
+    app: &AppHandle,
+    req: StartTerminalSessionRequest,
+    id: String,
+) -> AppResult<TerminalSessionResult> {
+    uuid::Uuid::parse_str(&id)
+        .map_err(|_| AppError::msg("This agent session ID cannot be launched embedded."))?;
+    let initial_prompt = external_initial_prompt(&req, &req.folder_path);
+    let cli = crate::copilot_acp_sessions::installed_cli()?;
+    let command = crate::system::copilot_command(
+        &cli,
+        if req.resume_session_id.is_some() {
+            ""
+        } else {
+            &initial_prompt
+        },
+        Some(&id),
+        if req.resume_session_id.is_some() {
+            None
+        } else {
+            req.initial_mode.as_ref().map(CopilotSessionMode::as_str)
+        },
+    )
+    .map_err(AppError::msg)?;
+    let terminal = crate::embedded_terminals::start_copilot(
+        app,
+        crate::embedded_terminals::StartRequest {
+            folder_path: req.folder_path.clone(),
+            label: req.label.clone(),
+            repository: req.repository.clone(),
+            branch: req.branch.clone(),
+            task_id: req.task_id.clone(),
+            cols: 120,
+            rows: 30,
+        },
+        id.clone(),
+        command,
+    )?;
+    let (cursor, seq) = history_cursor(&session_state_root()?.join(&id).join("events.jsonl"))?;
+    let now = now_ms();
+    let session = TerminalSession {
+        id: id.clone(),
+        task_id: req.task_id,
+        folder_path: req.folder_path,
+        label: req.label,
+        repository: req.repository,
+        branch: req.branch,
+        status: TerminalSessionStatus::Starting,
+        last_activity: "Starting Copilot in the embedded terminal".into(),
+        pending_prompt: None,
+        created_at: now,
+        updated_at: now,
+        transport: "embedded".into(),
+        terminal_id: Some(terminal.terminal_id),
+        permission_profile: req
+            .permission_profile
+            .unwrap_or(crate::settings::CopilotPermissionProfile::Default),
+        generation: Some(uuid::Uuid::new_v4().to_string()),
+        revision: now as u64,
+        observed_at: None,
+        observation_error: None,
+    };
+    app.state::<TerminalSessionMonitor>()
+        .watches
+        .lock()
+        .map_err(|_| AppError::msg("Session mutex poisoned."))?
+        .insert(
+            id,
+            Watch {
+                session: session.clone(),
+                cursor,
+                seq,
+                saw_lock: false,
+                missing_polls: 0,
+                managed: false,
+                attention: crate::session_attention::Attention::default(),
+                log_error: None,
+            },
+        );
+    ensure_polling(app);
+    emit(app, &session, Vec::new());
     Ok(TerminalSessionResult {
         ok: true,
         session: Some(session),
@@ -2032,6 +2299,7 @@ fn watch_terminal_session(
         created_at,
         updated_at: now,
         transport: "external".into(),
+        terminal_id: None,
         permission_profile: crate::settings::CopilotPermissionProfile::Default,
         generation: None,
         revision: existing
@@ -2134,6 +2402,7 @@ pub(crate) fn watch_managed_session(
             created_at: previous.map_or(now, |watch| watch.session.created_at),
             updated_at: now,
             transport: transport.into(),
+            terminal_id: None,
             permission_profile: req
                 .permission_profile
                 .or_else(|| previous.map(|watch| watch.session.permission_profile))
@@ -2541,6 +2810,11 @@ pub async fn terminal_sessions_start(
         crate::settings::SessionLaunchMode::Acp => {
             crate::copilot_acp_sessions::start(app, req).await
         }
+        crate::settings::SessionLaunchMode::Embedded => {
+            tauri::async_runtime::spawn_blocking(move || start_embedded(&app, req, id))
+                .await
+                .map_err(|error| AppError::msg(format!("Copilot launch failed: {error}")))?
+        }
         crate::settings::SessionLaunchMode::External => {
             uuid::Uuid::parse_str(&id).map_err(|_| {
                 AppError::msg(
@@ -2641,10 +2915,17 @@ pub async fn terminal_sessions_forget(app: AppHandle, id: String) -> AppResult<(
             pending.retain(|(session_id, _), _| session_id != &id);
         };
     }
-    {
+    let embedded_terminal_id = {
         let monitor = app.state::<TerminalSessionMonitor>();
-        let removed = monitor.watches.lock().map(|mut w| w.remove(&id));
-        drop(removed);
+        monitor
+            .watches
+            .lock()
+            .ok()
+            .and_then(|mut watches| watches.remove(&id))
+            .and_then(|watch| watch.session.terminal_id)
+    };
+    if let Some(terminal_id) = embedded_terminal_id {
+        let _ = crate::embedded_terminals::close_terminal(&app, &terminal_id);
     }
     let state = app.state::<DbState>();
     let db = state
@@ -2859,6 +3140,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             transport: "external".into(),
+            terminal_id: None,
             permission_profile: crate::settings::CopilotPermissionProfile::Default,
             generation: None,
             revision: 0,

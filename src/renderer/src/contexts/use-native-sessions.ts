@@ -18,9 +18,16 @@ import {
 } from '@shared/terminal-session'
 
 function target(session: TerminalSession): TerminalTarget {
-  if (!session.generation || session.transport === 'external')
+  if (
+    !session.generation ||
+    (session.transport !== 'acp' && session.transport !== 'sdk')
+  )
     throw new Error('This is not a connected native session.')
   return { id: session.id, generation: session.generation }
+}
+
+function isNativeSession(session: TerminalSession): boolean {
+  return session.transport === 'acp' || session.transport === 'sdk'
 }
 
 export function nativeError(error: unknown): string {
@@ -134,7 +141,7 @@ export function useNativeSessions(
         for (const session of list) {
           if (
             active &&
-            session.transport !== 'external' &&
+            isNativeSession(session) &&
             !isTerminalSessionFinished(session.status)
           ) {
             try {
@@ -178,7 +185,7 @@ export function useNativeSessions(
           if (!active) break
           if (
             !session ||
-            session.transport === 'external' ||
+            !isNativeSession(session) ||
             isTerminalSessionFinished(session.status)
           )
             continue

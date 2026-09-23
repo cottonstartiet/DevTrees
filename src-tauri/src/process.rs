@@ -8,6 +8,28 @@ pub struct ProcessScope {
 }
 
 impl ProcessScope {
+    pub fn attach_pid(pid: u32) -> io::Result<Self> {
+        #[cfg(windows)]
+        unsafe {
+            use winapi::um::{
+                handleapi::CloseHandle,
+                processthreadsapi::OpenProcess,
+                winnt::{PROCESS_SET_QUOTA, PROCESS_TERMINATE},
+            };
+            let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+            if process.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let result = Self::attach_handle(process);
+            CloseHandle(process);
+            result
+        }
+        #[cfg(unix)]
+        {
+            Ok(Self { pid })
+        }
+    }
+
     pub fn attach(child: &tokio::process::Child) -> io::Result<Self> {
         #[cfg(windows)]
         {

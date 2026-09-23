@@ -1959,6 +1959,26 @@
     "@types/babel__core" "^7.20.5"
     react-refresh "^0.18.0"
 
+"@xterm/addon-fit@^0.10.0":
+  version "0.10.0"
+  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@xterm/addon-fit/-/addon-fit-0.10.0.tgz#bebf87fadd74e3af30fdcdeef47030e2592c6f55"
+  integrity sha1-vr+H+t10468w/c3u9HAw4lksb1U=
+
+"@xterm/addon-search@^0.15.0":
+  version "0.15.0"
+  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@xterm/addon-search/-/addon-search-0.15.0.tgz#5c772d5f14c26546c4bfbeb0c3d4b3333057411f"
+  integrity sha1-XHctXxTCZUbEv76ww9SzMzBXQR8=
+
+"@xterm/addon-web-links@^0.11.0":
+  version "0.11.0"
+  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@xterm/addon-web-links/-/addon-web-links-0.11.0.tgz#f283513b8c713757bad8e3bf04b6becc3b4e585f"
+  integrity sha1-8oNRO4xxN1e62OO/BLa+zDtOWF8=
+
+"@xterm/xterm@^5.5.0":
+  version "5.5.0"
+  resolved "https://ms-feed-25.pkgs.visualstudio.com/1es-public/_packaging/npm-public/npm/registry/@xterm/xterm/-/xterm-5.5.0.tgz#275fb8f6e14afa6e8a0c05d4ebc94523ff775396"
+  integrity sha1-J1+49uFK+m6KDAXU68lFI/93U5Y=
+
 acorn-jsx@^5.3.2:
   version "5.3.2"
   resolved "https://registry.yarnpkg.com/acorn-jsx/-/acorn-jsx-5.3.2.tgz#7ed5bb55908b3b2f1bc55c6af1653bada7f07937"

@@ -23,6 +23,7 @@ import { useDashboard } from '@/contexts/dashboard-context'
 import { useTaskBoard } from '@/contexts/task-board-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import type { AutoReviewStatus } from '@/lib/auto-reviews'
+import { sessionNavigationId } from '@/lib/task-session-routing'
 import { cn } from '@/lib/utils'
 import {
   isTerminalSessionFinished,
@@ -103,7 +104,14 @@ export function DashboardPage({
   onNavigateToReviews: (repositoryId?: string) => void
   onDoneTask: (task: Task) => Promise<void>
 }): React.JSX.Element {
-  const { sessions, nativeById, select, focusExternal, observationNow } = useTerminalSessions()
+  const {
+    sessions,
+    embeddedTerminals,
+    nativeById,
+    select,
+    focusExternal,
+    observationNow
+  } = useTerminalSessions()
   const { tasks } = useTaskBoard()
   const completingTaskIdsRef = React.useRef(new Set<string>())
   const [completingTaskIds, setCompletingTaskIds] = React.useState<ReadonlySet<string>>(
@@ -141,18 +149,39 @@ export function DashboardPage({
   const { items, errors, isLoading, refresh } = useDashboard()
   const liveSessions = React.useMemo(
     () =>
-      sessions
+      [
+        ...sessions,
+        ...embeddedTerminals.map(
+          (terminal): TerminalSession => ({
+            id: terminal.terminalId,
+            taskId: terminal.taskId,
+            folderPath: terminal.folderPath,
+            label: terminal.label,
+            repository: terminal.repository,
+            branch: terminal.branch,
+            status: terminal.status,
+            lastActivity: terminal.lastActivity,
+            pendingPrompt: terminal.pendingPrompt,
+            createdAt: terminal.createdAt,
+            updatedAt: terminal.updatedAt,
+            transport: 'embedded',
+            terminalId: terminal.terminalId,
+            permissionProfile: 'default',
+            revision: terminal.revision
+          })
+        )
+      ]
         .filter((session) => !isTerminalSessionFinished(session.status))
         .sort(compareActiveSessions),
-    [sessions]
+    [embeddedTerminals, sessions]
   )
   const sessionsNeedingAction = liveSessions.filter((session) =>
     nativeSessionNeedsUserAction(session, nativeById[session.id])
   ).length
 
   const openSession = React.useCallback(
-    (sessionId: string): void => {
-      select(sessionId)
+    (session: TerminalSession): void => {
+      select(sessionNavigationId(session))
       onNavigateToSessions()
     },
     [onNavigateToSessions, select]
@@ -243,7 +272,7 @@ export function DashboardPage({
                       onClick={() =>
                         session.transport === 'external'
                           ? void focusExternal(session.id)
-                          : openSession(session.id)
+                          : openSession(session)
                       }
                       title={
                         session.transport === 'external'
@@ -342,7 +371,7 @@ export function DashboardPage({
                         </Button>
                       ) : null}
                     </div>
-                    {session.transport !== 'external' && (
+                    {(session.transport === 'acp' || session.transport === 'sdk') && (
                       <NativeSessionControls
                         session={session}
                         compact

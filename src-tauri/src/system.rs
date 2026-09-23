@@ -478,7 +478,7 @@ pub(crate) fn focus_copilot_terminal(_session_id: &str) -> LaunchResult {
     LaunchResult::err("Focusing an external Copilot terminal is currently Windows-only.")
 }
 
-fn copilot_command(
+pub(crate) fn copilot_command(
     cli: &Path,
     prompt: &str,
     session_id: Option<&str>,

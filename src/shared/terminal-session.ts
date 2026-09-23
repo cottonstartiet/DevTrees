@@ -34,7 +34,9 @@ export type TerminalSession = {
   pendingPrompt?: string | null
   createdAt: number
   updatedAt: number
-  transport: 'sdk' | 'acp' | 'external'
+  transport: 'sdk' | 'acp' | 'embedded' | 'external'
+  /** Stable app-owned PTY identity for embedded Copilot sessions. */
+  terminalId?: string | null
   permissionProfile: import('./settings').CopilotPermissionProfile
   generation?: string | null
   revision: number

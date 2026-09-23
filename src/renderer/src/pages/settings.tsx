@@ -480,8 +480,9 @@ const SESSION_MODE_OPTIONS: ReadonlyArray<{
   value: SessionLaunchMode
   Icon: typeof SunIcon
 }> = [
-  { value: 'external', Icon: SquareTerminalIcon },
-  { value: 'acp', Icon: MessageSquareIcon }
+  { value: 'acp', Icon: MessageSquareIcon },
+  { value: 'embedded', Icon: SquareTerminalIcon },
+  { value: 'external', Icon: MonitorIcon }
 ]
 
 const PERMISSION_PROFILE_OPTIONS: ReadonlyArray<{
@@ -841,7 +842,8 @@ function CopilotSessionSettings(): React.JSX.Element {
           </h2>
           <p id="session-launch-help" className="text-muted-foreground max-w-xl text-xs leading-5">
             Running sessions stay where they are. End a session before resuming it in a different
-            mode. External sessions show live status only while DevTrees is open. In-app sessions
+            mode. Embedded sessions run in app-owned PowerShell terminals and end when DevTrees
+            exits. External sessions show live status only while DevTrees is open. In-app sessions
             use the permission profile below plus project approvals already saved by Copilot CLI.
           </p>
         </div>
@@ -850,7 +852,7 @@ function CopilotSessionSettings(): React.JSX.Element {
           aria-labelledby="session-launch-label"
           aria-describedby="session-launch-help"
           aria-busy={busy}
-          className="grid grid-cols-2 gap-2"
+          className="grid grid-cols-3 gap-2"
         >
           {SESSION_MODE_OPTIONS.map(({ value, Icon }) => (
             <label key={value} className="min-w-0">

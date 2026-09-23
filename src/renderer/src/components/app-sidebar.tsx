@@ -9,6 +9,7 @@ import {
   Loader2 as Loader2Icon,
   MoreHorizontal as MoreHorizontalIcon,
   Plus as PlusIcon,
+  Settings as SettingsIcon,
   Sparkles as SparklesIcon,
   SquareTerminal as SquareTerminalIcon,
   Trash2 as Trash2Icon,
@@ -71,6 +72,7 @@ import { useCopilotLauncher } from '@/lib/copilot-launch'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { isTerminalSessionFinished, type TerminalSessionStatus } from '@shared/terminal-session'
 import { nativeSessionNeedsUserAction } from '@shared/native-session'
+import { TerminalLauncherDialog } from '@/components/sessions/terminal-launcher-dialog'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -404,8 +406,17 @@ export function AppSidebar({
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
   const [completedSessionsOpen, setCompletedSessionsOpen] = React.useState(false)
+  const [terminalLauncherOpen, setTerminalLauncherOpen] = React.useState(false)
   const launchCopilot = useCopilotLauncher()
-  const { sessions, selectedId, select, forget, nativeById } = useTerminalSessions()
+  const {
+    sessions,
+    embeddedTerminals,
+    selectedId,
+    select,
+    forget,
+    closeEmbedded,
+    nativeById
+  } = useTerminalSessions()
   const activeSessions = sessions.filter((session) => !isTerminalSessionFinished(session.status))
   const endedSessions = sessions.filter((session) => isTerminalSessionFinished(session.status))
   const selectedSessionIsCompleted = sessions.some(
@@ -512,6 +523,54 @@ export function AppSidebar({
     </SidebarMenu>
   )
 
+  const renderEmbeddedMenu = (): React.JSX.Element => (
+    <SidebarMenu>
+      {embeddedTerminals.map((terminal) => {
+        const needsAction = terminal.status === 'waiting-input'
+        return (
+          <SidebarMenuItem key={terminal.terminalId}>
+            <SidebarMenuButton
+              tooltip={`${terminal.label} · ${terminal.repository ?? 'Terminal'}`}
+              isActive={activeView === 'sessions' && selectedId === terminal.terminalId}
+              className={cn(
+                'h-auto border border-transparent py-1',
+                needsAction &&
+                  'border-amber-500/35 bg-amber-500/[0.035] hover:bg-amber-500/[0.07] data-[active=true]:border-amber-500/45 data-[active=true]:bg-amber-500/[0.09]'
+              )}
+              onClick={() => {
+                select(terminal.terminalId)
+                onSelectView('sessions')
+              }}
+            >
+              <SquareTerminalIcon
+                className={cn('size-3.5 shrink-0', SESSION_DOT_CLASS[terminal.status])}
+              />
+              <div className="flex min-w-0 flex-1 flex-col leading-tight">
+                <span className="truncate">{terminal.label}</span>
+                <span className="text-sidebar-foreground/70 truncate text-[10px]">
+                  {terminal.repository ? `${terminal.repository} · ` : ''}
+                  {needsAction
+                    ? 'Needs you'
+                    : terminal.kind === 'copilot'
+                      ? 'Copilot'
+                      : 'PowerShell'}
+                </span>
+              </div>
+            </SidebarMenuButton>
+            <SidebarMenuAction
+              showOnHover
+              title="Close terminal"
+              onClick={() => void closeEmbedded(terminal.terminalId)}
+            >
+              <XIcon />
+              <span className="sr-only">Close terminal</span>
+            </SidebarMenuAction>
+          </SidebarMenuItem>
+        )
+      })}
+    </SidebarMenu>
+  )
+
   return (
     <Sidebar
       collapsible="offcanvas"
@@ -606,13 +665,39 @@ export function AppSidebar({
 
         {activeView === 'sessions' ? (
           <SidebarGroup className="shrink-0">
+            <div className="flex h-9 items-center gap-1">
+              <SidebarGroupLabel className="h-9 min-w-0 flex-1 text-sm font-semibold text-sidebar-foreground">
+                Active sessions
+              </SidebarGroupLabel>
+              <div className="flex shrink-0 items-center gap-1">
+                <button
+                  type="button"
+                  className="hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex size-6 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:outline-none"
+                  title="Terminal settings"
+                  onClick={() => onSelectView('settings')}
+                >
+                  <SettingsIcon className="size-3.5" />
+                  <span className="sr-only">Terminal settings</span>
+                </button>
+                <button
+                  type="button"
+                  className="hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex size-6 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:outline-none"
+                  title="Start terminal"
+                  onClick={() => setTerminalLauncherOpen(true)}
+                >
+                  <PlusIcon className="size-3.5" />
+                  <span className="sr-only">Start terminal</span>
+                </button>
+              </div>
+            </div>
             <SidebarGroupContent>
-              {sessions.length === 0 ? (
+              {sessions.length === 0 && embeddedTerminals.length === 0 ? (
                 <p className="text-sidebar-foreground/60 px-2 py-1.5 text-xs group-data-[collapsible=icon]:hidden">
                   No sessions yet.
                 </p>
               ) : (
                 <>
+                  {embeddedTerminals.length > 0 ? renderEmbeddedMenu() : null}
                   {activeSessions.length > 0 ? renderSessionMenu(activeSessions) : null}
                   {endedSessions.length > 0 ? (
                     <Collapsible
@@ -638,6 +723,14 @@ export function AppSidebar({
           </SidebarGroup>
         ) : null}
       </SidebarContent>
+      {terminalLauncherOpen && (
+        <TerminalLauncherDialog
+          open
+          onOpenChange={setTerminalLauncherOpen}
+          repositories={repositories}
+          worktreesByRepositoryId={worktreesByRepositoryId}
+        />
+      )}
     </Sidebar>
   )
 }

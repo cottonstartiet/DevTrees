@@ -20,6 +20,7 @@ import {
 import { alignSplitRows, type DiffDisplayRow } from '@/components/pr-review/diff-rows'
 import { DiffView } from '@/components/pr-review/diff-view'
 import { ReviewWorkspace } from '@/components/pr-review/review-workspace'
+import { CreateBranchDialog } from '@/components/create-branch-dialog'
 import { GlobalTaskShortcut } from '@/components/global-task-shortcut'
 import { TaskCard } from '@/components/task-card'
 import { TaskColumn } from '@/components/task-column'
@@ -674,6 +675,77 @@ async function worktreeDropdownPlacement(): Promise<Record<string, unknown>> {
       popupClientHeight: selectViewport.clientHeight,
       popupScrollHeight: selectViewport.scrollHeight
     }
+  } finally {
+    fixture.dispose()
+  }
+}
+
+async function editableBranchName(): Promise<void> {
+  mockApi({
+    repo: {
+      userAlias: async () => 'developer'
+    }
+  })
+  const repository: Repository = {
+    id: 'repo',
+    path: 'C:\\repo',
+    name: 'Repo',
+    addedAt: 0,
+    remoteKind: 'other'
+  }
+  const worktree: Worktree = {
+    path: 'C:\\repo\\Fix branch modal',
+    branch: null,
+    head: 'abc123',
+    isDetached: true,
+    isMain: false,
+    isLocked: false
+  }
+  let submitted: string | null = null
+  const fixture = mount(
+    <ThemeProvider>
+      <CreateBranchDialog
+        repository={repository}
+        worktree={worktree}
+        open
+        onOpenChange={() => undefined}
+        onSubmit={(branchName) => {
+          submitted = branchName
+        }}
+      />
+    </ThemeProvider>
+  )
+  try {
+    const input = await (async (): Promise<HTMLInputElement> => {
+      await until(() => Boolean(document.querySelector<HTMLInputElement>('#branch-name')?.value))
+      return document.querySelector<HTMLInputElement>('#branch-name')!
+    })()
+    assert(
+      input.value === 'users/developer/Fix-branch-modal',
+      `Generated branch name was not fully editable: ${input.value}`
+    )
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    assert(valueSetter, 'Browser did not expose the input value setter')
+
+    valueSetter.call(input, 'feature..broken')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await until(() =>
+      Boolean(document.body.textContent?.includes('cannot contain two consecutive dots'))
+    )
+    const submit = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Create branch'
+    )
+    assert(submit?.disabled, 'Invalid full branch name did not disable submission')
+
+    valueSetter.call(input, ' release/editable-branch ')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await until(() => Boolean(submit && !submit.disabled))
+    submit.click()
+    await until(() => submitted !== null)
+    assert(
+      submitted === 'release/editable-branch',
+      `Full replacement branch name was not submitted: ${submitted}`
+    )
   } finally {
     fixture.dispose()
   }
@@ -1737,6 +1809,7 @@ window.uiRegressions = (async () => {
     ['task save shortcut', taskSaveShortcut],
     ['task main branch default', taskMainBranchDefault],
     ['worktree dropdown placement', worktreeDropdownPlacement],
+    ['editable branch name', editableBranchName],
     ['repository request isolation', repositoryIsolation],
     ['task card session routing', taskCardSessionRouting],
     ['task column content height', taskColumnContentHeight],

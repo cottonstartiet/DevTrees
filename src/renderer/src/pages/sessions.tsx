@@ -2,14 +2,16 @@ import * as React from 'react'
 import { TerminalIcon } from 'lucide-react'
 
 import { TerminalSessionView } from '@/components/sessions/terminal-session-view'
+import { EmbeddedTerminalView } from '@/components/sessions/embedded-terminal-view'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 
 export function SessionsHeaderControls(): React.JSX.Element {
-  const { sessions } = useTerminalSessions()
+  const { sessions, embeddedTerminals } = useTerminalSessions()
+  const count = sessions.length + embeddedTerminals.length
   return (
     <div className="ml-auto flex items-center gap-3">
       <span className="text-muted-foreground text-xs">
-        {sessions.length} session{sessions.length === 1 ? '' : 's'}
+        {count} session{count === 1 ? '' : 's'}
       </span>
     </div>
   )
@@ -19,8 +21,21 @@ export function SessionsHeaderControls(): React.JSX.Element {
  * Inspect native chat or the current external session's status.
  */
 export function SessionsPage(): React.JSX.Element {
-  const { sessions, selectedId, selectionRevision } = useTerminalSessions()
+  const { sessions, embeddedTerminals, selectedId, selectionRevision } = useTerminalSessions()
   const selected = sessions.find((session) => session.id === selectedId) ?? null
+  const selectedTerminal =
+    embeddedTerminals.find((terminal) => terminal.terminalId === selectedId) ?? null
+
+  if (selectedTerminal) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <EmbeddedTerminalView
+          key={`${selectedTerminal.terminalId}:${selectionRevision}`}
+          terminal={selectedTerminal}
+        />
+      </div>
+    )
+  }
 
   if (selected) {
     return (
@@ -38,11 +53,13 @@ export function SessionsPage(): React.JSX.Element {
       <TerminalIcon className="size-10 opacity-35" />
       <div className="space-y-1">
         <p className="text-foreground text-sm font-medium">
-          {sessions.length === 0 ? 'No Copilot sessions' : 'No session selected'}
+          {sessions.length + embeddedTerminals.length === 0
+            ? 'No active sessions'
+            : 'No session selected'}
         </p>
         <p className="max-w-sm text-xs">
-          {sessions.length === 0
-            ? 'Start Copilot from a repository, worktree, pull request, or task. Choose in-app chat or an external terminal in Settings.'
+          {sessions.length + embeddedTerminals.length === 0
+            ? 'Start Copilot from a repository, worktree, pull request, or task, or use the plus button to open PowerShell.'
             : 'Pick a session in the sidebar to see its history.'}
         </p>
       </div>

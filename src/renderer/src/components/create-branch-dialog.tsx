@@ -12,10 +12,9 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { getUserAlias } from '@/lib/repo'
-import { cn } from '@/lib/utils'
 
-const VALID_SUFFIX = /^[A-Za-z0-9._-]+$/
-const MAX_SUFFIX_LENGTH = 64
+const VALID_BRANCH_NAME = /^[A-Za-z0-9._/-]+$/
+const MAX_BRANCH_NAME_LENGTH = 200
 
 function worktreeLabel(path: string): string {
   const idx = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
@@ -24,22 +23,25 @@ function worktreeLabel(path: string): string {
 
 function defaultSuffixFromWorktree(path: string): string {
   const label = worktreeLabel(path).trim()
-  // Replace any chars not allowed by VALID_SUFFIX with '-', collapse repeats,
+  // Replace any chars not allowed in the generated suffix with '-', collapse repeats,
   // strip leading/trailing dashes, and cap length so the default already passes validation.
   const sanitized = label
     .replace(/[^A-Za-z0-9._-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '')
-  return sanitized.slice(0, MAX_SUFFIX_LENGTH)
+  return sanitized.slice(0, MAX_BRANCH_NAME_LENGTH)
 }
 
-function validateSuffix(name: string): string | null {
+function validateBranchName(name: string): string | null {
   const trimmed = name.trim()
-  if (!trimmed) return 'Name is required.'
-  if (trimmed.length > MAX_SUFFIX_LENGTH)
-    return `Name must be ≤ ${MAX_SUFFIX_LENGTH} characters.`
-  if (!VALID_SUFFIX.test(trimmed))
-    return 'Only letters, digits, dot, underscore, and hyphen are allowed.'
+  if (!trimmed) return 'Branch name is required.'
+  if (trimmed.length > MAX_BRANCH_NAME_LENGTH)
+    return `Branch name must be ${MAX_BRANCH_NAME_LENGTH} characters or fewer.`
+  if (!VALID_BRANCH_NAME.test(trimmed))
+    return 'Use only letters, digits, dot, underscore, hyphen, and slash.'
+  if (trimmed.includes('..')) return 'Branch name cannot contain two consecutive dots.'
+  if (trimmed.startsWith('/') || trimmed.endsWith('/'))
+    return 'Branch name cannot start or end with a slash.'
   return null
 }
 
@@ -64,8 +66,9 @@ function BranchForm({
   onSubmit,
   onCancel
 }: BranchFormProps): React.JSX.Element {
-  const [suffix, setSuffix] = React.useState(() => defaultSuffixFromWorktree(worktree.path))
+  const [branchName, setBranchName] = React.useState('')
   const [touched, setTouched] = React.useState(false)
+  const inputRef = React.useRef<HTMLInputElement>(null)
   const [aliasSnapshot, setAliasSnapshot] = React.useState<{
     repositoryPath: string
     alias: string | null
@@ -75,17 +78,22 @@ function BranchForm({
   const isAliasCurrent = aliasSnapshot.repositoryPath === repository.path
   const alias = isAliasCurrent ? aliasSnapshot.alias : null
   const aliasError = isAliasCurrent ? aliasSnapshot.error : null
+  const aliasReady = alias !== null
 
   React.useEffect(() => {
     let cancelled = false
     getUserAlias(repository.path)
       .then((value) => {
         if (cancelled) return
+        const alias = value || null
         setAliasSnapshot({
           repositoryPath: repository.path,
-          alias: value || null,
-          error: value ? null : 'Could not determine your alias.'
+          alias,
+          error: alias ? null : 'Could not determine your alias.'
         })
+        if (alias) {
+          setBranchName(`users/${alias}/${defaultSuffixFromWorktree(worktree.path)}`)
+        }
       })
       .catch((err) => {
         if (cancelled) return
@@ -98,73 +106,55 @@ function BranchForm({
     return () => {
       cancelled = true
     }
-  }, [repository.path])
+  }, [repository.path, worktree.path])
 
-  const error = validateSuffix(suffix)
+  React.useEffect(() => {
+    if (!aliasReady) return
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [aliasReady])
+
+  const error = validateBranchName(branchName)
   const showError = touched && error !== null
-  const aliasReady = alias !== null
-  const fullName = aliasReady ? `users/${alias}/${suffix.trim()}` : ''
-  const previewName = aliasReady
-    ? `users/${alias}/${suffix.trim() || '<name>'}`
-    : `users/…/${suffix.trim() || '<name>'}`
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>): void => {
     e.preventDefault()
     setTouched(true)
     if (!aliasReady || error) return
-    onSubmit(fullName)
+    onSubmit(branchName.trim())
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="branch-suffix" className="text-sm font-medium">
+        <label htmlFor="branch-name" className="text-sm font-medium">
           Branch name
         </label>
-        <div
-          className={cn(
-            'border-input dark:bg-input/30 flex h-9 w-full min-w-0 items-center rounded-md border bg-transparent text-base shadow-xs transition-[color,box-shadow] outline-none md:text-sm',
-            'focus-within:border-ring focus-within:ring-ring/50 focus-within:ring-[3px]',
-            showError &&
-              'aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 border-destructive ring-destructive/20 dark:ring-destructive/40 ring-[3px]'
-          )}
+        <input
+          ref={inputRef}
+          id="branch-name"
+          value={branchName}
+          disabled={!aliasReady}
           aria-invalid={showError || undefined}
-        >
-          <span className="text-muted-foreground pointer-events-none flex h-full items-center px-3 font-mono text-xs select-none">
-            {aliasReady ? `users/${alias}/` : 'users/…/'}
-          </span>
-          <input
-            id="branch-suffix"
-            autoFocus
-            value={suffix}
-            disabled={!aliasReady}
-            onChange={(e) => {
-              setSuffix(e.target.value)
-              if (!touched) setTouched(true)
-            }}
-            onFocus={(e) => {
-              e.currentTarget.select()
-            }}
-            placeholder="feature-x"
-            className="placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground h-full w-full min-w-0 flex-1 border-0 bg-transparent pr-3 py-1 text-base outline-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
-          />
-        </div>
+          onChange={(e) => {
+            setBranchName(e.target.value)
+            if (!touched) setTouched(true)
+          }}
+          onFocus={(e) => {
+            e.currentTarget.select()
+          }}
+          placeholder="users/alias/feature-x"
+          className="border-input dark:bg-input/30 placeholder:text-muted-foreground selection:bg-primary selection:text-primary-foreground focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 font-mono text-base shadow-xs transition-[color,box-shadow] outline-none focus-visible:ring-[3px] aria-invalid:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 md:text-sm"
+        />
         {showError ? (
           <p className="text-destructive text-xs">{error}</p>
         ) : aliasError ? (
           <p className="text-destructive text-xs">{aliasError}</p>
         ) : (
           <p className="text-muted-foreground text-xs">
-            Only letters, digits, dot, underscore, and hyphen.
+            Letters, digits, dot, underscore, hyphen, and slash.
           </p>
         )}
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <span className="text-xs font-medium">Will create branch</span>
-        <code className="bg-muted text-muted-foreground rounded px-2 py-1.5 font-mono text-xs break-all">
-          {previewName}
-        </code>
       </div>
 
       <DialogFooter>

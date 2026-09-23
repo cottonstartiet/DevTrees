@@ -138,7 +138,7 @@ export function ActivityRail({
   activeView: AppView
   onSelect: (view: AppView) => void
 }): React.JSX.Element {
-  const { sessions, nativeById } = useTerminalSessions()
+  const { sessions, embeddedTerminals, nativeById } = useTerminalSessions()
   const [keepAwakeEnabled, setKeepAwakeEnabled] = React.useState(false)
   const [keepAwakePending, setKeepAwakePending] = React.useState(true)
   const [localWebOpen, setLocalWebOpen] = React.useState(false)
@@ -148,8 +148,9 @@ export function ActivityRail({
       sessions.filter((session) => {
         if (isTerminalSessionFinished(session.status)) return false
         return nativeSessionNeedsUserAction(session, nativeById[session.id])
-      }).length,
-    [nativeById, sessions]
+      }).length +
+      embeddedTerminals.filter((terminal) => terminal.status === 'waiting-input').length,
+    [embeddedTerminals, nativeById, sessions]
   )
 
   React.useEffect(() => {

@@ -6,6 +6,7 @@ mod copilot_analytics;
 mod copilot_history;
 mod db;
 mod desktop_notifications;
+mod embedded_terminals;
 mod error;
 mod gh;
 mod git;
@@ -70,6 +71,7 @@ pub fn run() {
             let conn = db::init(&app.path().app_data_dir()?)?;
             app.manage(DbState(Mutex::new(conn)));
             app.manage(system::KeepAwakeState::default());
+            app.manage(embedded_terminals::EmbeddedTerminalManager::default());
             app.manage(TerminalSessionMonitor::default());
             app.manage(terminal_sessions::AcpSessionManager::default());
             app.manage(copilot_acp_sessions::SessionManager::default());
@@ -123,6 +125,13 @@ pub fn run() {
             settings::settings_delete_saved_prompt,
             settings::settings_browser_code_review_prompt,
             settings::settings_set_browser_code_review_prompt,
+            embedded_terminals::embedded_terminals_list,
+            embedded_terminals::embedded_terminal_start,
+            embedded_terminals::embedded_terminal_write,
+            embedded_terminals::embedded_terminal_resize,
+            embedded_terminals::embedded_terminal_replay,
+            embedded_terminals::embedded_terminal_close,
+            embedded_terminals::embedded_terminal_list_directories,
             ado::ado_pr_threads,
             ado::ado_repo_open_prs,
             ado::ado_pr_detail,
@@ -203,6 +212,7 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 app.state::<system::KeepAwakeState>().shutdown();
                 local_web::shutdown(app);
+                embedded_terminals::shutdown(app);
             }
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 let manager = app.state::<copilot_acp_sessions::SessionManager>();
@@ -229,6 +239,7 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<system::KeepAwakeState>().shutdown();
                 local_web::shutdown(app);
+                embedded_terminals::shutdown(app);
                 tauri::async_runtime::block_on(copilot_acp_sessions::shutdown(app));
             }
         });

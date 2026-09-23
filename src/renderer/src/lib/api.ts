@@ -29,6 +29,15 @@ import type {
   PromptContent
 } from '@shared/native-session'
 import { listen } from '@tauri-apps/api/event'
+import type {
+  EmbeddedDirectoryEntry,
+  EmbeddedTerminal,
+  EmbeddedTerminalOutput,
+  EmbeddedTerminalReplay,
+  EmbeddedTerminalResult,
+  EmbeddedTerminalStartRequest,
+  EmbeddedTerminalUpdate
+} from '@shared/embedded-terminal'
 
 import type { AddRepositoryResult, Repository } from '@shared/repository'
 import type {
@@ -496,6 +505,25 @@ const api = {
       invoke('terminal_sessions_history', { id }),
     onUpdate: (cb: (update: TerminalSessionUpdate) => void): Promise<() => void> =>
       listen<TerminalSessionUpdate>(TERMINAL_SESSIONS_UPDATE_EVENT, (event) => cb(event.payload))
+  },
+  embeddedTerminals: {
+    list: (): Promise<EmbeddedTerminal[]> => invoke('embedded_terminals_list'),
+    start: (request: EmbeddedTerminalStartRequest): Promise<EmbeddedTerminalResult> =>
+      invoke('embedded_terminal_start', { request }),
+    write: (terminalId: string, data: string): Promise<void> =>
+      invoke('embedded_terminal_write', { terminalId, data }),
+    resize: (terminalId: string, cols: number, rows: number): Promise<void> =>
+      invoke('embedded_terminal_resize', { terminalId, cols, rows }),
+    replay: (terminalId: string): Promise<EmbeddedTerminalReplay> =>
+      invoke('embedded_terminal_replay', { terminalId }),
+    close: (terminalId: string): Promise<void> =>
+      invoke('embedded_terminal_close', { terminalId }),
+    listDirectories: (folderPath: string): Promise<EmbeddedDirectoryEntry[]> =>
+      invoke('embedded_terminal_list_directories', { folderPath }),
+    onOutput: (cb: (output: EmbeddedTerminalOutput) => void): Promise<() => void> =>
+      listen<EmbeddedTerminalOutput>('embedded-terminals:output', (event) => cb(event.payload)),
+    onUpdate: (cb: (update: EmbeddedTerminalUpdate) => void): Promise<() => void> =>
+      listen<EmbeddedTerminalUpdate>('embedded-terminals:update', (event) => cb(event.payload))
   },
   tasks: {
     list: (): Promise<Task[]> => invoke('tasks_list'),

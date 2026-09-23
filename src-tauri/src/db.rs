@@ -274,6 +274,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              WHERE key = 'session_launch_mode' AND value = 'sdk';
          UPDATE app_settings SET value = 'external'
              WHERE key = 'session_launch_mode' AND value = 'pty';
+         DELETE FROM terminal_sessions WHERE transport = 'embedded';
          CREATE TABLE IF NOT EXISTS acp_queue_state (
              session_id TEXT PRIMARY KEY,
              payload TEXT NOT NULL
@@ -283,7 +284,7 @@ fn initialize_schema(conn: &Connection) -> AppResult<()> {
              payload TEXT NOT NULL
          );
          DELETE FROM terminal_sessions WHERE transport IN ('pty', 'external');
-         PRAGMA user_version = 13;",
+         PRAGMA user_version = 14;",
     )?;
     let prompt_seeded: bool = tx.query_row(
         "SELECT EXISTS(
@@ -344,7 +345,7 @@ mod tests {
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 13);
+        assert_eq!(version, 14);
 
         let mut statement = conn
             .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")

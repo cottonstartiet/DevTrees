@@ -14,6 +14,7 @@ use crate::{
 pub enum SessionLaunchMode {
     #[serde(alias = "sdk")]
     Acp,
+    Embedded,
     External,
 }
 
@@ -144,6 +145,7 @@ pub(crate) fn read_launch_mode(db: &Connection) -> AppResult<SessionLaunchMode> 
     match value.as_str() {
         "acp" => Ok(SessionLaunchMode::Acp),
         "sdk" => Ok(SessionLaunchMode::Acp),
+        "embedded" => Ok(SessionLaunchMode::Embedded),
         "external" => Ok(SessionLaunchMode::External),
         _ => Err(AppError::msg("The saved Copilot launch mode is invalid.")),
     }
@@ -155,6 +157,7 @@ fn write_launch_mode(db: &Connection, mode: SessionLaunchMode) -> AppResult<()> 
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         [match mode {
             SessionLaunchMode::Acp => "acp",
+            SessionLaunchMode::Embedded => "embedded",
             SessionLaunchMode::External => "external",
         }],
     )?;
@@ -485,7 +488,11 @@ mod tests {
         db.execute_batch("CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
             .unwrap();
         assert!(read_launch_mode(&db).is_err());
-        for mode in [SessionLaunchMode::External, SessionLaunchMode::Acp] {
+        for mode in [
+            SessionLaunchMode::External,
+            SessionLaunchMode::Embedded,
+            SessionLaunchMode::Acp,
+        ] {
             write_launch_mode(&db, mode).unwrap();
             assert_eq!(read_launch_mode(&db).unwrap(), mode);
         }

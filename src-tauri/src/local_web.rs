@@ -677,7 +677,10 @@ async fn start_task(State(runtime): State<Arc<ServerRuntime>>, Path(id): Path<St
                 Some(terminal_sessions::CopilotSessionMode::Plan)
             }
         }
-        Ok(crate::settings::SessionLaunchMode::External) => {
+        Ok(
+            crate::settings::SessionLaunchMode::External
+            | crate::settings::SessionLaunchMode::Embedded,
+        ) => {
             return (
                 StatusCode::CONFLICT,
                 "Remote task start requires In-app Copilot in DevTrees Settings.",

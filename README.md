@@ -42,8 +42,8 @@ Responsiveness regressions use `node --test scripts/task-state.test.mjs scripts/
 The UI check builds the actual renderer components with Vite and runs them in an isolated,
 headless Edge profile, without starting the desktop backend or calling Git/Copilot.
 Set `DEVTREES_TEST_BROWSER` to a Chromium-compatible browser executable if Edge is not
-installed at its default Windows location. It covers popup cleanup, overlapping task
-mutations, repository switching, transcript deltas, and lazy tool-output rendering.
+installed at its default Windows location. It covers popup cleanup, editable branch naming,
+overlapping task mutations, repository switching, transcript deltas, and lazy tool-output rendering.
 Radix's dismissable-layer and focus-scope packages are direct dependencies and Vite
 singletons: do not remove their `resolve.dedupe` entries. Independent copies can leave
 the whole document with `pointer-events: none` after a popup closes.
@@ -62,9 +62,12 @@ on blocking workers, outside the shared session-watch lock during file I/O.
 
 Tasks can target the main working copy, an existing worktree, or a planned worktree
 created when work starts. **In-app chat** runs the installed Copilot CLI through
-ACP v1 over stdio, with one owned process per conversation. React communicates
-only through Tauri commands/events; there is no local agent HTTP server.
-Choose it or **External Copilot terminal** under **Settings > Copilot sessions**.
+ACP v1 over stdio, with one owned process per conversation. **Embedded terminal**
+runs Copilot in an app-owned PowerShell ConPTY rendered with xterm.js, while the
+Sessions plus button can start a plain PowerShell terminal in a configured repository
+or worktree. React communicates only through Tauri commands/events; there is no local
+agent HTTP server. Choose In-app chat, Embedded terminal, or **External Copilot
+terminal** under **Settings > Copilot sessions**.
 New installations default to ACP. An existing SDK preference migrates to ACP;
 an explicit external preference is preserved. Changing this setting never moves
 a running conversation.

@@ -3,6 +3,10 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import { useNativeSessions, type NativeSessionsContextValue } from './use-native-sessions'
 import { notifyUserActionWhenBackground } from '@/lib/desktop-notifications'
+import type {
+  EmbeddedTerminal,
+  EmbeddedTerminalStartRequest
+} from '@shared/embedded-terminal'
 
 import {
   isTerminalSessionFinished,
@@ -17,6 +21,7 @@ import {
 export interface TerminalSessionsContextValue extends NativeSessionsContextValue {
   /** Newest first. Includes finished sessions until the user dismisses them. */
   sessions: TerminalSession[]
+  embeddedTerminals: EmbeddedTerminal[]
   byId: Record<string, TerminalSession | undefined>
   /** Timeline entries per session, ordered by `seq`. Populated by `loadHistory`. */
   entriesById: Record<string, TerminalTimelineEntry[] | undefined>
@@ -35,6 +40,8 @@ export interface TerminalSessionsContextValue extends NativeSessionsContextValue
     req: StartTerminalSessionRequest,
     presentation?: { select?: boolean; navigate?: boolean }
   ) => Promise<TerminalSession | null>
+  startEmbedded: (req: EmbeddedTerminalStartRequest) => Promise<EmbeddedTerminal | null>
+  closeEmbedded: (terminalId: string) => Promise<void>
   /** Bring a running external session's Windows Terminal window to the foreground. */
   focusExternal: (id: string) => Promise<void>
   /** Stop mirroring and remove a session from the list. */
@@ -92,6 +99,9 @@ export function TerminalSessionsProvider({
   suppressNotifications?: boolean
 }): React.JSX.Element {
   const [byId, setById] = React.useState<Record<string, TerminalSession | undefined>>({})
+  const [embeddedById, setEmbeddedById] = React.useState<
+    Record<string, EmbeddedTerminal | undefined>
+  >({})
   const [entriesById, setEntriesById] = React.useState<
     Record<string, TerminalTimelineEntry[] | undefined>
   >({})
@@ -144,6 +154,46 @@ export function TerminalSessionsProvider({
 
   const ingest = React.useCallback(
     (session: TerminalSession, notify: boolean): void => {
+      if (session.transport === 'embedded' && session.terminalId) {
+        if (forgottenRef.current.has(session.id)) return
+        if ((revisionsRef.current[session.id] ?? -1) >= session.revision) return
+        revisionsRef.current[session.id] = session.revision
+        statusRef.current[session.id] = session.status
+        setById((current) => ({ ...current, [session.id]: session }))
+        setEmbeddedById((current) => {
+          const terminal = current[session.terminalId!] ?? {
+            terminalId: session.terminalId!,
+            kind: 'copilot' as const,
+            folderPath: session.folderPath,
+            label: session.label,
+            repository: session.repository,
+            branch: session.branch,
+            taskId: session.taskId,
+            copilotSessionId: session.id,
+            phase: 'running' as const,
+            status: session.status,
+            lastActivity: session.lastActivity,
+            pendingPrompt: session.pendingPrompt,
+            createdAt: session.createdAt,
+            updatedAt: session.updatedAt,
+            exitCode: null,
+            revision: session.revision
+          }
+          return {
+            ...current,
+            [session.terminalId!]: {
+              ...terminal,
+              copilotSessionId: session.id,
+              status: session.status,
+              lastActivity: session.lastActivity,
+              pendingPrompt: session.pendingPrompt,
+              updatedAt: session.updatedAt,
+              revision: Math.max(terminal.revision, session.revision)
+            }
+          }
+        })
+        return
+      }
       if (forgottenRef.current.has(session.id)) return
       if ((revisionsRef.current[session.id] ?? -1) >= session.revision) return
       revisionsRef.current[session.id] = session.revision
@@ -292,6 +342,63 @@ export function TerminalSessionsProvider({
     }
   }, [ingest, mergeEntries])
 
+  React.useEffect(() => {
+    let cancelled = false
+    let stopUpdates = (): void => {}
+    void window.api.embeddedTerminals
+      .onUpdate(({ terminal }) => {
+        if (cancelled) return
+        if (terminal.phase === 'exited') {
+          setEmbeddedById((current) => {
+            const next = { ...current }
+            delete next[terminal.terminalId]
+            return next
+          })
+          setSelectedId((current) => (current === terminal.terminalId ? null : current))
+          return
+        }
+        setEmbeddedById((current) => {
+          const previous = current[terminal.terminalId]
+          const monitored =
+            previous?.copilotSessionId &&
+            previous.copilotSessionId === terminal.copilotSessionId &&
+            previous.status !== 'done'
+          return {
+            ...current,
+            [terminal.terminalId]: monitored
+              ? {
+                  ...terminal,
+                  status: previous.status,
+                  lastActivity: previous.lastActivity,
+                  pendingPrompt: previous.pendingPrompt
+                }
+              : terminal
+          }
+        })
+      })
+      .then(async (stop) => {
+        if (cancelled) {
+          stop()
+          return
+        }
+        stopUpdates = stop
+        const terminals = await window.api.embeddedTerminals.list()
+        if (!cancelled) {
+          setEmbeddedById(
+            Object.fromEntries(terminals.map((terminal) => [terminal.terminalId, terminal]))
+          )
+        }
+      })
+      .catch((error) => {
+        console.error('[sessions] failed to initialize embedded terminals:', error)
+        if (!cancelled) toast.error('Could not load embedded terminals.')
+      })
+    return () => {
+      cancelled = true
+      stopUpdates()
+    }
+  }, [])
+
   const start = React.useCallback(
     async (
       req: StartTerminalSessionRequest,
@@ -307,13 +414,19 @@ export function TerminalSessionsProvider({
         return null
       }
       forgottenRef.current.delete(result.session.id)
-      if (result.session.transport !== 'external') registerNative(result.session.id)
+      if (result.session.transport !== 'external' && result.session.transport !== 'embedded')
+        registerNative(result.session.id)
       else {
         forgetNative(result.session.id)
         clearLocalDetails(result.session.id)
       }
       ingest(result.session, false)
-      if (presentation.select !== false) select(result.session.id)
+      if (presentation.select !== false)
+        select(
+          result.session.transport === 'embedded' && result.session.terminalId
+            ? result.session.terminalId
+            : result.session.id
+        )
       if (presentation.navigate !== false) navigateRef.current?.()
       return result.session
     },
@@ -350,12 +463,52 @@ export function TerminalSessionsProvider({
     }
   }, [])
 
+  const startEmbedded = React.useCallback(
+    async (req: EmbeddedTerminalStartRequest): Promise<EmbeddedTerminal | null> => {
+      const result = await window.api.embeddedTerminals.start(req)
+      if (!result.ok) {
+        toast.error(result.error)
+        return null
+      }
+      setEmbeddedById((current) => ({
+        ...current,
+        [result.terminal.terminalId]: result.terminal
+      }))
+      select(result.terminal.terminalId)
+      navigateRef.current?.()
+      return result.terminal
+    },
+    [select]
+  )
+
+  const closeEmbedded = React.useCallback(
+    async (terminalId: string): Promise<void> => {
+      await window.api.embeddedTerminals.close(terminalId)
+      setEmbeddedById((current) => {
+        const next = { ...current }
+        delete next[terminalId]
+        return next
+      })
+      setSelectedId((current) => (current === terminalId ? null : current))
+    },
+    []
+  )
+
   const sessions = React.useMemo(
     () =>
       Object.values(byId)
         .filter((session): session is TerminalSession => Boolean(session))
+        .filter((session) => session.transport !== 'embedded')
         .sort((a, b) => b.createdAt - a.createdAt),
     [byId]
+  )
+  const embeddedTerminals = React.useMemo(
+    () =>
+      Object.values(embeddedById)
+        .filter((terminal): terminal is EmbeddedTerminal => Boolean(terminal))
+        .filter((terminal) => terminal.phase !== 'exited')
+        .sort((a, b) => b.createdAt - a.createdAt),
+    [embeddedById]
   )
 
   React.useEffect(() => {
@@ -399,6 +552,7 @@ export function TerminalSessionsProvider({
     () => ({
       ...native,
       sessions,
+      embeddedTerminals,
       byId,
       entriesById,
       loadHistory,
@@ -408,12 +562,15 @@ export function TerminalSessionsProvider({
       observationNow,
       select,
       start,
+      startEmbedded,
+      closeEmbedded,
       focusExternal,
       forget
     }),
     [
       native,
       sessions,
+      embeddedTerminals,
       byId,
       entriesById,
       loadHistory,
@@ -423,6 +580,8 @@ export function TerminalSessionsProvider({
       observationNow,
       select,
       start,
+      startEmbedded,
+      closeEmbedded,
       focusExternal,
       forget
     ]

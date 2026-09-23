@@ -719,6 +719,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             transport: "acp".into(),
+            terminal_id: None,
             permission_profile: crate::settings::CopilotPermissionProfile::Default,
             generation: Some("one".into()),
             revision: 0,

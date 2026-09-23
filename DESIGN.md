@@ -230,12 +230,19 @@ A slim bottom bar surfacing repo/branch/PR state and background task progress â€
 
 ### Copilot Session Modes
 
-Settings is the only transport launch control: In-app chat or External Copilot terminal.
+Settings is the transport launch control: In-app chat, Embedded terminal, or External
+Copilot terminal.
 The SQLite-backed preference defaults to ACP for new installations, migrates SDK
-preferences to ACP, and preserves an explicit external choice. It applies to new
-and resumed sessions without moving active runtimes. External sessions use compact status and
-metadata only, without an in-app terminal or transcript. Their rows disappear on
-exit and are not restored after an app restart.
+preferences to ACP, and preserves explicit embedded or external choices. It applies to
+new and resumed sessions without moving active runtimes. Embedded sessions use a black
+xterm surface backed by an app-owned PowerShell ConPTY, remain active while DevTrees is
+hidden to the tray, and terminate on terminal close or actual app exit. External
+sessions use compact status and metadata only, without an in-app terminal or transcript.
+Their rows disappear on exit and are not restored after an app restart.
+
+The Sessions sidebar unifies active ACP chats and embedded terminals. Its plus action
+starts a plain PowerShell terminal in a selected configured repository, worktree, or
+descendant folder. Waiting-input state uses the same amber treatment as Dashboard.
 
 ### Native Copilot Sessions
 

@@ -1,4 +1,4 @@
-export type SessionLaunchMode = 'acp' | 'external'
+export type SessionLaunchMode = 'acp' | 'embedded' | 'external'
 export type CopilotPermissionProfile = 'default' | 'allow-all'
 export type TaskQueueMode = 'automatic' | 'manual'
 
@@ -25,7 +25,9 @@ export type UpdateSavedPromptRequest = CreateSavedPromptRequest & {
 }
 
 export function sessionLaunchModeLabel(mode: SessionLaunchMode): string {
-  return mode === 'external' ? 'External Copilot terminal' : 'In-app chat'
+  if (mode === 'external') return 'External Copilot terminal'
+  if (mode === 'embedded') return 'Embedded terminal'
+  return 'In-app chat'
 }
 
 export function copilotPermissionProfileLabel(profile: CopilotPermissionProfile): string {
