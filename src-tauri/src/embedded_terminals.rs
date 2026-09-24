@@ -113,6 +113,22 @@ pub struct DirectoryEntry {
     pub path: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListDirectoriesRequest {
+    pub repository_path: String,
+    pub root_path: String,
+    pub folder_path: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryListing {
+    pub folder_path: String,
+    pub entries: Vec<DirectoryEntry>,
+    pub skipped_entries: usize,
+}
+
 struct Runtime {
     terminal: Mutex<EmbeddedTerminal>,
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -128,6 +144,7 @@ struct Runtime {
 pub struct EmbeddedTerminalManager {
     runtimes: Mutex<HashMap<String, Arc<Runtime>>>,
     configured_roots: Mutex<Option<(Instant, Vec<PathBuf>)>>,
+    browse_roots: Mutex<HashMap<String, (Instant, PathBuf)>>,
 }
 
 fn canonical(path: &Path) -> AppResult<PathBuf> {
@@ -139,12 +156,30 @@ fn canonical(path: &Path) -> AppResult<PathBuf> {
 }
 
 fn path_key(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    let raw = raw.strip_prefix(r"\\?\").unwrap_or(&raw);
+    let raw = display_path(path);
     if cfg!(windows) {
         raw.to_lowercase()
     } else {
-        raw.to_string()
+        raw
+    }
+}
+
+fn display_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{unc}");
+    }
+    raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string()
+}
+
+fn shell_working_directory(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(display_path(path))
+    }
+    #[cfg(not(windows))]
+    {
+        path.to_path_buf()
     }
 }
 
@@ -229,6 +264,132 @@ fn is_allowed(roots: &[PathBuf], candidate: &Path) -> bool {
     roots.iter().any(|root| contains_path(root, candidate))
 }
 
+fn configured_repository(app: &AppHandle, repository_path: &Path) -> AppResult<bool> {
+    let paths = {
+        let state = app.state::<DbState>();
+        let db = state
+            .0
+            .lock()
+            .map_err(|_| AppError::msg("Database mutex poisoned."))?;
+        let mut statement = db.prepare("SELECT path FROM repositories")?;
+        let paths = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        paths
+    };
+    Ok(paths.into_iter().any(|path| {
+        canonical(Path::new(&path))
+            .map(|configured| path_key(&configured) == path_key(repository_path))
+            .unwrap_or(false)
+    }))
+}
+
+fn browse_root(app: &AppHandle, request: &ListDirectoriesRequest) -> AppResult<PathBuf> {
+    const BROWSE_ROOT_CACHE_TTL: Duration = Duration::from_secs(60);
+
+    let repository = canonical(Path::new(&request.repository_path))?;
+    let root = canonical(Path::new(&request.root_path))?;
+    let cache_key = format!("{}\0{}", path_key(&repository), path_key(&root));
+    let manager = app.state::<EmbeddedTerminalManager>();
+    if let Some((cached_at, cached_root)) = manager
+        .browse_roots
+        .lock()
+        .map_err(|_| AppError::msg("Terminal manager mutex poisoned."))?
+        .get(&cache_key)
+    {
+        if cached_at.elapsed() < BROWSE_ROOT_CACHE_TTL {
+            return Ok(cached_root.clone());
+        }
+    }
+    if !configured_repository(app, &repository)? {
+        return Err(AppError::msg(
+            "The selected repository is no longer configured.",
+        ));
+    }
+    let repository_display = display_path(&repository);
+    let allowed = if path_key(&repository) == path_key(&root) {
+        true
+    } else {
+        let output = crate::git::run_git_blocking(
+            &[
+                "worktree".to_string(),
+                "list".to_string(),
+                "--porcelain".to_string(),
+            ],
+            &repository_display,
+        )
+        .map_err(|error| {
+            AppError::msg(format!(
+                "Could not inspect worktrees for the selected repository: {}",
+                error.message
+            ))
+        })?;
+        output.stdout.lines().any(|line| {
+            line.strip_prefix("worktree ")
+                .and_then(|path| canonical(Path::new(path.trim())).ok())
+                .is_some_and(|worktree| path_key(&worktree) == path_key(&root))
+        })
+    };
+    if !allowed {
+        return Err(AppError::msg(
+            "The selected folder is not a configured repository or worktree.",
+        ));
+    }
+    manager
+        .browse_roots
+        .lock()
+        .map_err(|_| AppError::msg("Terminal manager mutex poisoned."))?
+        .insert(cache_key, (Instant::now(), root.clone()));
+    Ok(root)
+}
+
+#[cfg(windows)]
+fn is_reparse_point(path: &Path) -> AppResult<bool> {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+
+    Ok(fs::symlink_metadata(path)?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+}
+
+#[cfg(not(windows))]
+fn is_reparse_point(path: &Path) -> AppResult<bool> {
+    Ok(fs::symlink_metadata(path)?.file_type().is_symlink())
+}
+
+fn directory_entry(root: &Path, entry: fs::DirEntry) -> AppResult<Option<DirectoryEntry>> {
+    let path = entry.path();
+    let file_type = entry.file_type()?;
+    if is_reparse_point(&path)? {
+        let resolved = canonical(&path)?;
+        if !contains_path(root, &resolved) || !fs::metadata(&resolved)?.is_dir() {
+            return Ok(None);
+        }
+    } else if !file_type.is_dir() {
+        return Ok(None);
+    }
+    Ok(Some(DirectoryEntry {
+        name: entry.file_name().to_string_lossy().to_string(),
+        path: display_path(&path),
+    }))
+}
+
+fn read_directory(root: &Path, folder: &Path) -> AppResult<(Vec<DirectoryEntry>, usize)> {
+    let mut entries = Vec::new();
+    let mut skipped_entries = 0;
+    for result in fs::read_dir(folder)? {
+        match result {
+            Ok(entry) => match directory_entry(root, entry) {
+                Ok(Some(entry)) => entries.push(entry),
+                Ok(None) => {}
+                Err(_) => skipped_entries += 1,
+            },
+            Err(_) => skipped_entries += 1,
+        }
+    }
+    entries.sort_by_cached_key(|entry| entry.name.to_lowercase());
+    Ok((entries, skipped_entries))
+}
+
 fn resolve_shell() -> AppResult<PathBuf> {
     if let Ok(path) = which("pwsh.exe") {
         return Ok(path);
@@ -285,6 +446,7 @@ fn start_runtime(
         return Err(AppError::msg("Invalid terminal dimensions."));
     }
     let folder = validate_folder(app, &request.folder_path)?;
+    let shell_folder = shell_working_directory(&folder);
     let shell = resolve_shell()?;
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -295,7 +457,7 @@ fn start_runtime(
         })
         .map_err(|error| AppError::msg(format!("Could not create the terminal: {error}")))?;
     let mut command = CommandBuilder::new(shell.clone());
-    command.cwd(&folder);
+    command.cwd(&shell_folder);
     command.arg("-NoLogo");
     let windows_powershell = shell.file_name().is_some_and(|name| {
         name.to_string_lossy()
@@ -337,7 +499,7 @@ fn start_runtime(
     let terminal = EmbeddedTerminal {
         terminal_id: uuid::Uuid::new_v4().to_string(),
         kind: kind.to_string(),
-        folder_path: folder.to_string_lossy().to_string(),
+        folder_path: display_path(&folder),
         label: request.label,
         repository: request.repository,
         branch: request.branch,
@@ -637,13 +799,14 @@ pub(crate) fn close_terminal(app: &AppHandle, terminal_id: &str) -> AppResult<()
         .runtimes
         .lock()
         .map_err(|_| AppError::msg("Terminal manager mutex poisoned."))?
-        .remove(terminal_id)
-        .ok_or_else(|| AppError::msg("The terminal is no longer running."))?;
-    if let Ok(mut child) = runtime.child.lock() {
-        let _ = child.kill();
-    }
-    if let Ok(mut scope) = runtime.scope.lock() {
-        scope.take();
+        .remove(terminal_id);
+    if let Some(runtime) = runtime {
+        if let Ok(mut child) = runtime.child.lock() {
+            let _ = child.kill();
+        }
+        if let Ok(mut scope) = runtime.scope.lock() {
+            scope.take();
+        }
     }
     crate::terminal_sessions::detach_embedded_terminal(app, terminal_id);
     Ok(())
@@ -652,38 +815,32 @@ pub(crate) fn close_terminal(app: &AppHandle, terminal_id: &str) -> AppResult<()
 #[tauri::command]
 pub async fn embedded_terminal_list_directories(
     app: AppHandle,
-    folder_path: String,
-) -> AppResult<Vec<DirectoryEntry>> {
-    tauri::async_runtime::spawn_blocking(move || list_directories(&app, &folder_path))
+    request: ListDirectoriesRequest,
+) -> AppResult<DirectoryListing> {
+    tauri::async_runtime::spawn_blocking(move || list_directories(&app, &request))
         .await
         .map_err(|error| AppError::msg(format!("Directory listing task failed: {error}")))?
 }
 
-fn list_directories(app: &AppHandle, folder_path: &str) -> AppResult<Vec<DirectoryEntry>> {
-    let roots = configured_roots(app)?;
-    let folder = canonical(Path::new(folder_path))?;
-    if !is_allowed(&roots, &folder) {
+fn list_directories(
+    app: &AppHandle,
+    request: &ListDirectoriesRequest,
+) -> AppResult<DirectoryListing> {
+    let root = browse_root(app, request)?;
+    let folder = canonical(Path::new(&request.folder_path))?;
+    if !contains_path(&root, &folder) {
         return Err(AppError::msg(
-            "This folder is outside the configured repositories and worktrees.",
+            "This folder is outside the selected repository or worktree.",
         ));
     }
-    let mut entries = fs::read_dir(folder)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let file_type = entry.file_type().ok()?;
-            if !file_type.is_dir() {
-                return None;
-            }
-            let path = canonical(&entry.path()).ok()?;
-            is_allowed(&roots, &path).then_some(())?;
-            Some(DirectoryEntry {
-                name: entry.file_name().to_string_lossy().to_string(),
-                path: path.to_string_lossy().to_string(),
-            })
-        })
-        .collect::<Vec<_>>();
-    entries.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
-    Ok(entries)
+    // Child paths are revalidated by validate_folder before a terminal starts, closing
+    // the race where a normal directory is replaced with a link after this listing.
+    let (entries, skipped_entries) = read_directory(&root, &folder)?;
+    Ok(DirectoryListing {
+        folder_path: display_path(&folder),
+        entries,
+        skipped_entries,
+    })
 }
 
 pub fn shutdown(app: &AppHandle) {
@@ -717,18 +874,88 @@ pub fn shutdown(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::contains_path;
-    use std::path::Path;
+    use super::{contains_path, display_path, read_directory, shell_working_directory};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_directory(name: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after Unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!("devtrees-{name}-{suffix}"))
+    }
 
     #[test]
     fn containment_requires_a_path_boundary() {
-        assert!(contains_path(
-            Path::new(r"C:\repo"),
-            Path::new(r"C:\repo\src")
-        ));
-        assert!(!contains_path(
-            Path::new(r"C:\repo"),
-            Path::new(r"C:\repo-evil")
-        ));
+        let root = Path::new("repo");
+        assert!(contains_path(root, &root.join("src")));
+        assert!(!contains_path(root, Path::new("repo-evil")));
+    }
+
+    #[test]
+    fn containment_uses_windows_case_rules() {
+        if cfg!(windows) {
+            assert!(contains_path(
+                Path::new(r"C:\Repo"),
+                Path::new(r"c:\repo\src")
+            ));
+        } else {
+            assert!(!contains_path(Path::new("/Repo"), Path::new("/repo/src")));
+        }
+    }
+
+    #[test]
+    fn display_path_removes_windows_verbatim_prefixes() {
+        assert_eq!(display_path(Path::new(r"\\?\C:\repo\src")), r"C:\repo\src");
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\server\share\repo")),
+            r"\\server\share\repo"
+        );
+        assert_eq!(display_path(Path::new(r"C:\repo\src")), r"C:\repo\src");
+    }
+
+    #[test]
+    fn shell_working_directory_avoids_windows_verbatim_paths() {
+        if cfg!(windows) {
+            assert_eq!(
+                shell_working_directory(Path::new(r"\\?\C:\repo\src")),
+                Path::new(r"C:\repo\src")
+            );
+            assert_eq!(
+                shell_working_directory(Path::new(r"\\?\UNC\server\share\repo")),
+                Path::new(r"\\server\share\repo")
+            );
+            assert_eq!(
+                shell_working_directory(Path::new(r"C:\repo\src")),
+                Path::new(r"C:\repo\src")
+            );
+        } else {
+            let path = Path::new(r"\\?\C:\repo\src");
+            assert_eq!(shell_working_directory(path), path);
+        }
+    }
+
+    #[test]
+    fn directory_listing_only_returns_sorted_directories() {
+        let root = temp_directory("directory-listing");
+        fs::create_dir_all(root.join("zeta")).expect("create zeta");
+        fs::create_dir_all(root.join("Alpha")).expect("create Alpha");
+        fs::write(root.join("notes.txt"), "not a directory").expect("create file");
+        let canonical_root = fs::canonicalize(&root).expect("canonicalize root");
+
+        let (entries, skipped) =
+            read_directory(&canonical_root, &canonical_root).expect("read directory");
+
+        assert_eq!(skipped, 0);
+        assert_eq!(
+            entries
+                .into_iter()
+                .map(|entry| entry.name)
+                .collect::<Vec<_>>(),
+            vec!["Alpha".to_string(), "zeta".to_string()]
+        );
+        fs::remove_dir_all(root).expect("remove temp directory");
     }
 }

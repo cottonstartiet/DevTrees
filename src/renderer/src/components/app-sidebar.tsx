@@ -408,15 +408,8 @@ export function AppSidebar({
   const [completedSessionsOpen, setCompletedSessionsOpen] = React.useState(false)
   const [terminalLauncherOpen, setTerminalLauncherOpen] = React.useState(false)
   const launchCopilot = useCopilotLauncher()
-  const {
-    sessions,
-    embeddedTerminals,
-    selectedId,
-    select,
-    forget,
-    closeEmbedded,
-    nativeById
-  } = useTerminalSessions()
+  const { sessions, embeddedTerminals, selectedId, select, forget, closeEmbedded, nativeById } =
+    useTerminalSessions()
   const activeSessions = sessions.filter((session) => !isTerminalSessionFinished(session.status))
   const endedSessions = sessions.filter((session) => isTerminalSessionFinished(session.status))
   const selectedSessionIsCompleted = sessions.some(
@@ -560,7 +553,10 @@ export function AppSidebar({
             <SidebarMenuAction
               showOnHover
               title="Close terminal"
-              onClick={() => void closeEmbedded(terminal.terminalId)}
+              onClick={(event) => {
+                event.stopPropagation()
+                void closeEmbedded(terminal.terminalId)
+              }}
             >
               <XIcon />
               <span className="sr-only">Close terminal</span>

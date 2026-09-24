@@ -23,6 +23,10 @@ const TERMINAL_THEME = {
   brightBlack: '#666666'
 } as const
 
+function isStoppedTerminalError(error: unknown): boolean {
+  return String(error).toLowerCase().includes('terminal is no longer running')
+}
+
 export function EmbeddedTerminalView({
   terminal: session
 }: {
@@ -39,7 +43,12 @@ export function EmbeddedTerminalView({
 
   const paste = React.useCallback(async (): Promise<void> => {
     const text = await navigator.clipboard.readText()
-    if (text) await window.api.embeddedTerminals.write(session.terminalId, text)
+    if (!text) return
+    try {
+      await window.api.embeddedTerminals.write(session.terminalId, text)
+    } catch (error) {
+      if (!isStoppedTerminalError(error)) throw error
+    }
   }, [session.terminalId])
 
   React.useEffect(() => {
@@ -63,8 +72,14 @@ export function EmbeddedTerminalView({
     let disposed = false
     let lastSeq = 0
     let stopOutput = (): void => {}
+    let connectionErrorShown = false
+    const reportConnectionError = (error: unknown): void => {
+      if (disposed || isStoppedTerminalError(error) || connectionErrorShown) return
+      connectionErrorShown = true
+      terminal.writeln(`\r\n\x1b[31mTerminal connection failed: ${String(error)}\x1b[0m`)
+    }
     const input = terminal.onData((data) => {
-      void window.api.embeddedTerminals.write(session.terminalId, data)
+      void window.api.embeddedTerminals.write(session.terminalId, data).catch(reportConnectionError)
     })
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true
@@ -91,11 +106,9 @@ export function EmbeddedTerminalView({
     const resize = new ResizeObserver(() => {
       fit.fit()
       if (terminal.cols > 0 && terminal.rows > 0) {
-        void window.api.embeddedTerminals.resize(
-          session.terminalId,
-          terminal.cols,
-          terminal.rows
-        )
+        void window.api.embeddedTerminals
+          .resize(session.terminalId, terminal.cols, terminal.rows)
+          .catch(reportConnectionError)
       }
     })
     resize.observe(host)
@@ -121,7 +134,7 @@ export function EmbeddedTerminalView({
         terminal.focus()
       })
       .catch((error) => {
-        terminal.writeln(`\r\n\x1b[31mTerminal connection failed: ${String(error)}\x1b[0m`)
+        reportConnectionError(error)
       })
 
     return () => {

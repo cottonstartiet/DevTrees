@@ -3,10 +3,7 @@ import * as React from 'react'
 import { toast } from 'sonner'
 import { useNativeSessions, type NativeSessionsContextValue } from './use-native-sessions'
 import { notifyUserActionWhenBackground } from '@/lib/desktop-notifications'
-import type {
-  EmbeddedTerminal,
-  EmbeddedTerminalStartRequest
-} from '@shared/embedded-terminal'
+import type { EmbeddedTerminal, EmbeddedTerminalStartRequest } from '@shared/embedded-terminal'
 
 import {
   isTerminalSessionFinished,
@@ -112,6 +109,7 @@ export function TerminalSessionsProvider({
   const revisionsRef = React.useRef<Record<string, number>>({})
   const externalRevisionsRef = React.useRef<Record<string, number>>({})
   const forgottenRef = React.useRef(new Set<string>())
+  const closingEmbeddedRef = React.useRef(new Set<string>())
   const select = React.useCallback((id: string | null, interactionId?: string): void => {
     setSelectedId(id)
     setSelectedInteractionId(interactionId ?? null)
@@ -151,6 +149,26 @@ export function TerminalSessionsProvider({
     },
     [clearLocalDetails]
   )
+
+  const removeLocalEmbedded = React.useCallback((terminalId: string): void => {
+    setEmbeddedById((current) => {
+      const next = { ...current }
+      delete next[terminalId]
+      return next
+    })
+    setSelectedId((current) => (current === terminalId ? null : current))
+  }, [])
+
+  const restoreEmbeddedTerminals = React.useCallback(async (): Promise<void> => {
+    const terminals = await window.api.embeddedTerminals.list()
+    setEmbeddedById(
+      Object.fromEntries(
+        terminals
+          .filter((terminal) => !closingEmbeddedRef.current.has(terminal.terminalId))
+          .map((terminal) => [terminal.terminalId, terminal])
+      )
+    )
+  }, [])
 
   const ingest = React.useCallback(
     (session: TerminalSession, notify: boolean): void => {
@@ -348,13 +366,9 @@ export function TerminalSessionsProvider({
     void window.api.embeddedTerminals
       .onUpdate(({ terminal }) => {
         if (cancelled) return
+        if (closingEmbeddedRef.current.has(terminal.terminalId)) return
         if (terminal.phase === 'exited') {
-          setEmbeddedById((current) => {
-            const next = { ...current }
-            delete next[terminal.terminalId]
-            return next
-          })
-          setSelectedId((current) => (current === terminal.terminalId ? null : current))
+          removeLocalEmbedded(terminal.terminalId)
           return
         }
         setEmbeddedById((current) => {
@@ -397,7 +411,7 @@ export function TerminalSessionsProvider({
       cancelled = true
       stopUpdates()
     }
-  }, [])
+  }, [removeLocalEmbedded])
 
   const start = React.useCallback(
     async (
@@ -435,7 +449,28 @@ export function TerminalSessionsProvider({
 
   const forget = React.useCallback(
     async (id: string): Promise<void> => {
-      await window.api.terminalSessions.forget(id)
+      const embeddedTerminalId =
+        byId[id]?.transport === 'embedded'
+          ? byId[id]?.terminalId
+          : Object.values(embeddedById).find((terminal) => terminal?.copilotSessionId === id)
+              ?.terminalId
+      if (embeddedTerminalId) {
+        closingEmbeddedRef.current.add(embeddedTerminalId)
+        removeLocalEmbedded(embeddedTerminalId)
+      }
+      try {
+        await window.api.terminalSessions.forget(id)
+      } catch (error) {
+        if (embeddedTerminalId) {
+          closingEmbeddedRef.current.delete(embeddedTerminalId)
+          try {
+            await restoreEmbeddedTerminals()
+          } catch (restoreError) {
+            console.error('[sessions] failed to restore embedded terminals:', restoreError)
+          }
+        }
+        throw error
+      }
       delete externalRevisionsRef.current[id]
       forgottenRef.current.add(id)
       forgetNative(id)
@@ -453,7 +488,7 @@ export function TerminalSessionsProvider({
       })
       setSelectedId((current) => (current === id ? null : current))
     },
-    [forgetNative]
+    [byId, embeddedById, forgetNative, removeLocalEmbedded, restoreEmbeddedTerminals]
   )
 
   const focusExternal = React.useCallback(async (id: string): Promise<void> => {
@@ -483,15 +518,22 @@ export function TerminalSessionsProvider({
 
   const closeEmbedded = React.useCallback(
     async (terminalId: string): Promise<void> => {
-      await window.api.embeddedTerminals.close(terminalId)
-      setEmbeddedById((current) => {
-        const next = { ...current }
-        delete next[terminalId]
-        return next
-      })
-      setSelectedId((current) => (current === terminalId ? null : current))
+      closingEmbeddedRef.current.add(terminalId)
+      removeLocalEmbedded(terminalId)
+      try {
+        await window.api.embeddedTerminals.close(terminalId)
+      } catch (error) {
+        closingEmbeddedRef.current.delete(terminalId)
+        console.error('[sessions] embedded terminal close failed:', error)
+        toast.error('Could not close the embedded terminal.')
+        try {
+          await restoreEmbeddedTerminals()
+        } catch (restoreError) {
+          console.error('[sessions] failed to restore embedded terminals:', restoreError)
+        }
+      }
     },
-    []
+    [removeLocalEmbedded, restoreEmbeddedTerminals]
   )
 
   const sessions = React.useMemo(

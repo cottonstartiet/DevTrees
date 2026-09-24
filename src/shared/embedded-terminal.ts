@@ -56,3 +56,9 @@ export type EmbeddedDirectoryEntry = {
   name: string
   path: string
 }
+
+export type EmbeddedDirectoryListing = {
+  folderPath: string
+  entries: EmbeddedDirectoryEntry[]
+  skippedEntries: number
+}

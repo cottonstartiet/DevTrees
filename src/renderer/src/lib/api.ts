@@ -30,7 +30,7 @@ import type {
 } from '@shared/native-session'
 import { listen } from '@tauri-apps/api/event'
 import type {
-  EmbeddedDirectoryEntry,
+  EmbeddedDirectoryListing,
   EmbeddedTerminal,
   EmbeddedTerminalOutput,
   EmbeddedTerminalReplay,
@@ -516,10 +516,15 @@ const api = {
       invoke('embedded_terminal_resize', { terminalId, cols, rows }),
     replay: (terminalId: string): Promise<EmbeddedTerminalReplay> =>
       invoke('embedded_terminal_replay', { terminalId }),
-    close: (terminalId: string): Promise<void> =>
-      invoke('embedded_terminal_close', { terminalId }),
-    listDirectories: (folderPath: string): Promise<EmbeddedDirectoryEntry[]> =>
-      invoke('embedded_terminal_list_directories', { folderPath }),
+    close: (terminalId: string): Promise<void> => invoke('embedded_terminal_close', { terminalId }),
+    listDirectories: (
+      repositoryPath: string,
+      rootPath: string,
+      folderPath: string
+    ): Promise<EmbeddedDirectoryListing> =>
+      invoke('embedded_terminal_list_directories', {
+        request: { repositoryPath, rootPath, folderPath }
+      }),
     onOutput: (cb: (output: EmbeddedTerminalOutput) => void): Promise<() => void> =>
       listen<EmbeddedTerminalOutput>('embedded-terminals:output', (event) => cb(event.payload)),
     onUpdate: (cb: (update: EmbeddedTerminalUpdate) => void): Promise<() => void> =>
