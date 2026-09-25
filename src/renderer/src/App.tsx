@@ -763,11 +763,6 @@ function AppShell(): React.JSX.Element {
                           !!detailFolderPath && creatingPrFolders.has(detailFolderPath)
                         }
                         isPullRequestStatusResolved={isPullRequestStatusResolved}
-                        onSelectWorktreePath={
-                          activeRepository
-                            ? (path: string) => handleSelectWorktree(activeRepository.id, path)
-                            : undefined
-                        }
                       />
                     )}
                   </div>

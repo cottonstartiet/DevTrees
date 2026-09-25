@@ -33,11 +33,7 @@ import type {
   UnstageFilesRequest,
   UnstageFilesResult,
   WorkingCopyStatusRequest,
-  WorkingCopyStatusResult,
-  WorktreesOverviewRequest,
-  WorktreesOverviewResult,
-  MyBranchesRequest,
-  MyBranchesResult
+  WorkingCopyStatusResult
 } from '@shared/repo'
 
 export function getDefaultBranch(repositoryPath: string): Promise<string | null> {
@@ -107,9 +103,7 @@ export function rebaseOnDefault(req: RebaseOnDefaultRequest): Promise<RebaseOnDe
   return window.api.repo.rebaseOnDefault(req)
 }
 
-export function getUnpushedCommits(
-  req: UnpushedCommitsRequest
-): Promise<UnpushedCommitsResult> {
+export function getUnpushedCommits(req: UnpushedCommitsRequest): Promise<UnpushedCommitsResult> {
   return window.api.repo.unpushedCommits(req)
 }
 
@@ -135,16 +129,6 @@ export function discardAllChanges(req: DiscardAllChangesRequest): Promise<Discar
 
 export function commit(req: CommitRequest): Promise<CommitResult> {
   return window.api.repo.commit(req)
-}
-
-export function getWorktreesOverview(
-  req: WorktreesOverviewRequest
-): Promise<WorktreesOverviewResult> {
-  return window.api.repo.worktreesOverview(req)
-}
-
-export function getMyBranches(req: MyBranchesRequest): Promise<MyBranchesResult> {
-  return window.api.repo.listMyBranches(req)
 }
 
 export function getBranchWebUrl(req: BranchWebUrlRequest): Promise<BranchWebUrlResult> {

@@ -68,8 +68,6 @@ import type {
   LocalReviewFileContentResult,
   LocalReviewFileDiffRequest,
   LocalReviewFileDiffResult,
-  MyBranchesRequest,
-  MyBranchesResult,
   OpenPullRequestRequest,
   OpenPullRequestResult,
   PullResult,
@@ -90,9 +88,7 @@ import type {
   UnstageFilesRequest,
   UnstageFilesResult,
   WorkingCopyStatusRequest,
-  WorkingCopyStatusResult,
-  WorktreesOverviewRequest,
-  WorktreesOverviewResult
+  WorkingCopyStatusResult
 } from '@shared/repo'
 import type {
   PrChangedFilesRequest,
@@ -297,10 +293,6 @@ const api = {
       result('repo_discard_all_changes', { ...req }, (error) => ({ ok: false, error })),
     commit: (req: CommitRequest): Promise<CommitResult> =>
       result('repo_commit', { ...req }, (error) => ({ ok: false, error })),
-    worktreesOverview: (req: WorktreesOverviewRequest): Promise<WorktreesOverviewResult> =>
-      result('repo_worktrees_overview', { ...req }, (error) => ({ ok: false, error })),
-    listMyBranches: (req: MyBranchesRequest): Promise<MyBranchesResult> =>
-      result('repo_list_my_branches', { ...req }, (error) => ({ ok: false, error })),
     branchWebUrl: (req: BranchWebUrlRequest): Promise<BranchWebUrlResult> =>
       result('repo_branch_web_url', { ...req }, () => ({ webUrl: null })),
     detectMergeState: (req: DetectMergeStateRequest): Promise<DetectMergeStateResult> =>

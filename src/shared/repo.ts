@@ -207,42 +207,6 @@ export type DetectMergeStateResult =
     }
   | { ok: false; error: string }
 
-export type WorktreeOverviewRow = {
-  path: string
-  branch: string | null
-  isDetached: boolean
-  isMain: boolean
-  isLocked: boolean
-  isDirty: boolean
-  ahead: number
-  behind: number
-  hasRemote: boolean
-  lastCommitIso: string | null
-  lastCommitSubject: string | null
-}
-
-export type WorktreesOverviewRequest = { repositoryPath: string }
-
-export type WorktreesOverviewResult =
-  | { ok: true; rows: WorktreeOverviewRow[] }
-  | { ok: false; error: string }
-
-export type MyBranchRow = {
-  name: string
-  lastCommitIso: string | null
-  lastCommitSubject: string | null
-  hasLocal: boolean
-  hasRemote: boolean
-  hasWorktree: boolean
-  worktreePath: string | null
-}
-
-export type MyBranchesRequest = { repositoryPath: string }
-
-export type MyBranchesResult =
-  | { ok: true; rows: MyBranchRow[] }
-  | { ok: false; error: string }
-
 export type BranchWebUrlRequest = { folderPath: string; branch: string }
 export type BranchWebUrlResult = { webUrl: string | null }
 
@@ -270,8 +234,6 @@ export const RepoIpcChannels = {
   UnpushedCommits: 'repo:unpushed-commits',
   Push: 'repo:push',
   RebaseOnDefault: 'repo:rebase-on-default',
-  WorktreesOverview: 'repo:list-worktrees-overview',
-  ListMyBranches: 'repo:list-my-branches',
   BranchWebUrl: 'repo:branch-web-url',
   DetectMergeState: 'repo:detect-merge-state'
 } as const

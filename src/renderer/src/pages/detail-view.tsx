@@ -21,8 +21,6 @@ import {
   useWorkingCopyController,
   type WorkingCopyController
 } from '@/components/detail/use-working-copy-controller'
-import { WorktreesOverviewPanel } from '@/components/detail/worktrees-overview-panel'
-import { MyBranchesPanel } from '@/components/detail/my-branches-panel'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -57,7 +55,6 @@ export interface DetailViewProps {
   onPullRequestTabActive?: () => void
   isCreatingPullRequest?: boolean
   isPullRequestStatusResolved?: boolean
-  onSelectWorktreePath?: (worktreePath: string) => void
 }
 
 function deriveKind(props: DetailViewProps): DetailViewSelectionKind {
@@ -105,7 +102,6 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
         <div className="flex shrink-0 items-center gap-3">
           <TabsList>
             <TabsTrigger value="changes">Changes</TabsTrigger>
-            <TabsTrigger value="branches">Branches</TabsTrigger>
             <TabsTrigger value="pull-request">Pull Request</TabsTrigger>
           </TabsList>
           <div className="ml-auto flex items-center gap-1">
@@ -134,14 +130,6 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
           className="min-h-0 min-w-0 flex-1 data-[state=inactive]:hidden"
         >
           <ChangesTab ctrl={ctrl} folderPath={folderPath} />
-        </TabsContent>
-
-        <TabsContent
-          value="branches"
-          forceMount
-          className="min-h-0 min-w-0 flex-1 overflow-y-auto data-[state=inactive]:hidden"
-        >
-          <BranchesTab {...props} kind={kind} />
         </TabsContent>
 
         <TabsContent
@@ -404,37 +392,6 @@ function ChangesTab({ ctrl, folderPath }: ChangesTabProps): React.JSX.Element {
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
       <WorkingCopyStatusView ctrl={ctrl} />
-    </div>
-  )
-}
-
-function BranchesTab({
-  kind,
-  folderPath,
-  repository,
-  onSelectWorktreePath
-}: TabSectionProps): React.JSX.Element {
-  if (!repository) {
-    return (
-      <PlaceholderCard title="Branches" hint="Branch list is available at the repository level." />
-    )
-  }
-  const isRepositoryRoot = kind === 'repository-default' || kind === 'repository-feature'
-
-  return (
-    <div className="grid grid-cols-1 gap-4">
-      {isRepositoryRoot ? (
-        <WorktreesOverviewPanel
-          repositoryPath={repository.path}
-          activeFolderPath={folderPath}
-          onSelectWorktree={onSelectWorktreePath}
-        />
-      ) : null}
-      <MyBranchesPanel
-        repositoryPath={repository.path}
-        activeFolderPath={folderPath}
-        onSelectWorktree={onSelectWorktreePath}
-      />
     </div>
   )
 }
