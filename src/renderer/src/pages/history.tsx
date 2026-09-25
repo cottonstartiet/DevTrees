@@ -234,7 +234,7 @@ export function HistoryPage(): React.JSX.Element {
             </p>
             <p className="text-xs">
               {sessions.length === 0
-                ? 'Sessions started from DevTrees or any terminal will appear here.'
+                ? 'Sessions started from SWE Factory or any terminal will appear here.'
                 : 'Try a different search.'}
             </p>
           </div>

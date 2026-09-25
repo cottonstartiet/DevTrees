@@ -37,7 +37,7 @@ use tauri_plugin_deep_link::DeepLinkExt;
 use db::DbState;
 use terminal_sessions::TerminalSessionMonitor;
 
-/// Build and run the DevTrees Tauri application.
+/// Build and run the SWE Factory Tauri application.
 ///
 /// Plugins mirror the Electron capabilities that survive the migration:
 /// dialog (folder picker), opener (open external URLs / paths / apps), process
@@ -51,7 +51,7 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             if let Err(error) = tray::show_main_window(app) {
-                eprintln!("failed to restore DevTrees from second-instance activation: {error}");
+                eprintln!("failed to restore SWE Factory from second-instance activation: {error}");
             }
         }));
         builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
@@ -205,7 +205,7 @@ pub fn run() {
             copilot_acp_sessions::acp_session_queue,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building DevTrees")
+        .expect("error while building SWE Factory")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 app.state::<system::KeepAwakeState>().shutdown();

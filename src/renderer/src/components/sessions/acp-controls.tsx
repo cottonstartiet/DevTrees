@@ -46,7 +46,7 @@ function fileContent(file: File): Promise<PromptContent> {
     return {
       type: 'resource',
       resource: {
-        uri: `devtrees-attachment:${encodeURIComponent(file.name)}`,
+        uri: `swe-factory-attachment:${encodeURIComponent(file.name)}`,
         mimeType: 'text/plain',
         text
       }
@@ -268,7 +268,7 @@ export function AcpComposer({
               {block.type === 'image'
                 ? `Image ${index + 1}`
                 : block.type === 'resource'
-                  ? block.resource.uri.replace('devtrees-attachment:', '')
+                  ? block.resource.uri.replace('swe-factory-attachment:', '')
                   : 'Context'}
             </span>
             <Button

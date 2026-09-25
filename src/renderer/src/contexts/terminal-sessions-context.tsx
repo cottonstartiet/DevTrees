@@ -351,7 +351,7 @@ export function TerminalSessionsProvider({
       })
       .catch((error) => {
         console.error('[sessions] failed to initialize desktop session updates:', error)
-        if (!cancelled) toast.error('Could not load Copilot sessions. Please restart DevTrees.')
+        if (!cancelled) toast.error('Could not load Copilot sessions. Please restart SWE Factory.')
       })
 
     return () => {

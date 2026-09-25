@@ -19,7 +19,7 @@ pub(crate) enum DesktopNotificationDestination {
 impl DesktopNotificationDestination {
     fn deep_link(self) -> &'static str {
         match self {
-            Self::Dashboard => "devtrees://navigate/dashboard",
+            Self::Dashboard => "swefactory://navigate/dashboard",
         }
     }
 }
@@ -179,7 +179,7 @@ mod tests {
             "<answer> \"now\"",
             DesktopNotificationDestination::Dashboard,
         );
-        assert!(xml.contains(r#"launch="devtrees://navigate/dashboard""#));
+        assert!(xml.contains(r#"launch="swefactory://navigate/dashboard""#));
         assert!(xml.contains("A &amp; B"));
         assert!(xml.contains("&lt;answer&gt; &quot;now&quot;"));
         assert!(!xml.contains("<answer>"));

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::error::{AppError, AppResult};
 
-const DB_FILE: &str = "devtrees.db";
+const DB_FILE: &str = "swe-factory.db";
 const DEFAULT_CODE_REVIEW_PROMPT_ID: &str = "builtin-browser-code-review";
 const DEFAULT_CODE_REVIEW_PROMPT: &str = "Perform an independent code review for the source below.
 
@@ -521,7 +521,8 @@ mod tests {
 
     #[test]
     fn reopening_preserves_repositories_tasks_and_managed_sessions() {
-        let data_dir = std::env::temp_dir().join(format!("devtrees-db-{}", uuid::Uuid::new_v4()));
+        let data_dir =
+            std::env::temp_dir().join(format!("swe-factory-db-{}", uuid::Uuid::new_v4()));
         let conn = init(&data_dir).unwrap();
         conn.execute_batch(
             "INSERT INTO repositories (id, path, name, added_at, path_key)

@@ -40,10 +40,10 @@ reviewButton.addEventListener('click', () => {
   if (!activePage) return
 
   reviewButton.disabled = true
-  reviewButton.textContent = 'Opening DevTrees...'
+  reviewButton.textContent = 'Opening SWE Factory...'
   setStatus('Chrome may ask you to confirm opening the desktop app.')
 
-  const deepLink = new URL('devtrees://tasks/new')
+  const deepLink = new URL('swefactory://tasks/new')
   deepLink.searchParams.set('intent', 'code-review')
   deepLink.searchParams.set('url', activePage.url)
   if (activePage.title) deepLink.searchParams.set('title', activePage.title)

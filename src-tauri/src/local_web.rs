@@ -36,8 +36,8 @@ use crate::{
     worktrees,
 };
 
-const CSRF_HEADER: &str = "x-devtrees-lan";
-const COOKIE_NAME: &str = "devtrees_lan";
+const CSRF_HEADER: &str = "x-swe-factory-lan";
+const COOKIE_NAME: &str = "swe_factory_lan";
 
 #[derive(Default)]
 pub struct LocalWebState(Mutex<Option<RunningServer>>);
@@ -214,7 +214,7 @@ fn assets_dir(app: &AppHandle) -> Result<PathBuf, AppError> {
         return Ok(development);
     }
     Err(AppError::msg(
-        "Remote web assets are missing. Run `yarn build:remote` and restart DevTrees.",
+        "Remote web assets are missing. Run `yarn build:remote` and restart SWE Factory.",
     ))
 }
 
@@ -683,7 +683,7 @@ async fn start_task(State(runtime): State<Arc<ServerRuntime>>, Path(id): Path<St
         ) => {
             return (
                 StatusCode::CONFLICT,
-                "Remote task start requires In-app Copilot in DevTrees Settings.",
+                "Remote task start requires In-app Copilot in SWE Factory Settings.",
             )
                 .into_response()
         }

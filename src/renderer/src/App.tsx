@@ -27,8 +27,8 @@ import { useTaskQueue, type TaskQueueController } from '@/hooks/use-task-queue'
 import { openExternal } from '@/lib/system'
 import {
   createBrowserCodeReviewDraft,
-  parseDevTreesDeepLink,
-  subscribeToDevTreesDeepLinks,
+  parseSweFactoryDeepLink,
+  subscribeToSweFactoryDeepLinks,
   type BrowserCodeReviewDraft
 } from '@/lib/deep-links'
 import { DetailView } from '@/pages/detail-view'
@@ -283,7 +283,7 @@ function AppShell(): React.JSX.Element {
 
   const handleDeepLink = useCallback(async (rawUrl: string): Promise<void> => {
     try {
-      const action = parseDevTreesDeepLink(rawUrl)
+      const action = parseSweFactoryDeepLink(rawUrl)
       if (action.kind === 'navigate') {
         setTaskDialogOpen(false)
         setActiveTaskForDialog(null)
@@ -298,14 +298,14 @@ function AppShell(): React.JSX.Element {
       setTaskDraft(draft)
       setTaskDialogOpen(true)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not open the DevTrees link.')
+      toast.error(error instanceof Error ? error.message : 'Could not open the SWE Factory link.')
     }
   }, [])
 
   useEffect(() => {
     let active = true
     let unlisten: (() => void) | undefined
-    void subscribeToDevTreesDeepLinks((url) => {
+    void subscribeToSweFactoryDeepLinks((url) => {
       if (active) void handleDeepLink(url)
     })
       .then((unsubscribe) => {
@@ -315,7 +315,7 @@ function AppShell(): React.JSX.Element {
       .catch((error) => {
         if (active) {
           toast.error(
-            error instanceof Error ? error.message : 'Could not listen for DevTrees links.'
+            error instanceof Error ? error.message : 'Could not listen for SWE Factory links.'
           )
         }
       })
@@ -346,7 +346,7 @@ function AppShell(): React.JSX.Element {
                       ? activeRepository.name
                       : view === 'repositories'
                         ? 'Repositories'
-                        : 'DevTrees'
+                        : 'SWE Factory'
 
   const repo = useRepoStatus(activeRepository?.path ?? null, view === 'repositories')
 

@@ -17,10 +17,10 @@ test(
   { timeout: 90_000 },
   async (t) => {
     const browser =
-      process.env.DEVTREES_TEST_BROWSER ??
+      process.env.SWE_FACTORY_TEST_BROWSER ??
       'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
     await access(browser)
-    const directory = await mkdtemp(join(tmpdir(), 'devtrees-ui-'))
+    const directory = await mkdtemp(join(tmpdir(), 'swe-factory-ui-'))
     let child
     let socket
     t.after(async () => {

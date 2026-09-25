@@ -1,4 +1,4 @@
-name: DevTrees Build
+name: SWE Factory Build
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 # Prevent two pushes from racing to publish the same release.
 concurrency:
-  group: devtrees-build-${{ github.ref }}
+  group: swe-factory-build-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -102,7 +102,7 @@ jobs:
         run: |
           yarn typecheck:web
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test scripts\auto-reviews.test.mjs scripts\code-review-prompt.test.mjs scripts\session-interactions.test.mjs scripts\session-launch.test.mjs scripts\task-launch.test.mjs
+          node --test scripts\auto-reviews.test.mjs scripts\code-review-prompt.test.mjs scripts\rename-contract.test.mjs scripts\session-interactions.test.mjs scripts\session-launch.test.mjs scripts\task-launch.test.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --manifest-path src-tauri\Cargo.toml --lib --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -150,8 +150,9 @@ jobs:
 
           # Select the exact artifacts for this version so a wrong installer/sig
           # pair can never be uploaded.
-          installer_name="DevTrees_${VERSION}_x64-setup.exe"
-          installer="${bundle_dir}/${installer_name}"
+          bundle_installer_name="SWE Factory_${VERSION}_x64-setup.exe"
+          installer_name="swe-factory_${VERSION}_x64-setup.exe"
+          installer="${bundle_dir}/${bundle_installer_name}"
           signature_file="${installer}.sig"
 
           if [ ! -f "$installer" ]; then
@@ -180,7 +181,7 @@ jobs:
             const fs = require("fs");
             const manifest = {
               version: process.env.VERSION,
-              notes: `DevTrees ${process.env.VERSION}`,
+              notes: `SWE Factory ${process.env.VERSION}`,
               pub_date: new Date().toISOString(),
               platforms: {
                 "windows-x86_64": {
@@ -212,7 +213,7 @@ jobs:
           fi
 
           gh release create "$TAG" \
-            --title "DevTrees $VERSION" \
+            --title "SWE Factory $VERSION" \
             --target "$GITHUB_SHA" \
             --latest \
             dist-release/*-setup.exe \

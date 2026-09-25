@@ -217,7 +217,7 @@ export function TerminalSessionView({ session }: { session: TerminalSession }): 
           <p className="text-muted-foreground text-sm">Respond in the external Copilot terminal.</p>
           <p className="text-muted-foreground max-w-prose text-xs">
             This view shows live status only. It disappears when Copilot ends and is not restored
-            after restarting DevTrees. Closing DevTrees leaves the external terminal running.
+            after restarting SWE Factory. Closing SWE Factory leaves the external terminal running.
           </p>
         </div>
       ) : (

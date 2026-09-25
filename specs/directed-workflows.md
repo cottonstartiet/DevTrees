@@ -6,12 +6,12 @@ Proposed
 
 ## Summary
 
-DevTrees will add a repository-scoped directed workflow system inspired by
+SWE Factory will add a repository-scoped directed workflow system inspired by
 Conductor. Workflow definitions are YAML files discovered under:
 
 ```text
-.github/dt-workflows/**/*.yml
-.github/dt-workflows/**/*.yaml
+.github/swe-factory-workflows/**/*.yml
+.github/swe-factory-workflows/**/*.yaml
 ```
 
 The Tauri backend will parse and validate a documented Conductor-compatible
@@ -31,13 +31,13 @@ The first implementation supports:
 - hash-based trust for workflow files containing local script steps;
 - an interactive React Flow graph with nested workflow drill-down.
 
-DevTrees does not invoke or embed the Conductor executable. Compatibility is
+SWE Factory does not invoke or embed the Conductor executable. Compatibility is
 intentional but bounded. Unsupported Conductor fields must produce validation
 errors instead of being ignored.
 
 ## Motivation
 
-DevTrees already coordinates repositories, worktrees, tasks, and individual
+SWE Factory already coordinates repositories, worktrees, tasks, and individual
 Copilot sessions. A developer can start several independent sessions, but
 cannot describe a repeatable multi-step process such as:
 
@@ -63,7 +63,7 @@ Conductor demonstrates the useful architectural separation:
 - lifecycle events are the source for live visualization and replay;
 - run management is separate from per-run graph detail.
 
-DevTrees should adopt those boundaries while reusing its existing ACP and
+SWE Factory should adopt those boundaries while reusing its existing ACP and
 desktop persistence infrastructure.
 
 ## Goals
@@ -72,7 +72,7 @@ desktop persistence infrastructure.
 2. Show invalid workflow files with actionable source diagnostics.
 3. Launch a workflow against a selected repository worktree with typed inputs.
 4. Execute routing deterministically without using an LLM as the orchestrator.
-5. Reuse DevTrees' existing Copilot ACP session implementation for agent work.
+5. Reuse SWE Factory' existing Copilot ACP session implementation for agent work.
 6. Run several workflows and parallel agent branches safely.
 7. Persist enough state to recover from an app restart at a step boundary.
 8. Show the full workflow topology and live path in an interactive graph.
@@ -84,7 +84,7 @@ desktop persistence infrastructure.
 ## Non-goals
 
 - A drag-and-drop workflow authoring canvas.
-- Editing and round-tripping workflow YAML inside DevTrees.
+- Editing and round-tripping workflow YAML inside SWE Factory.
 - Full compatibility with every current or future Conductor field.
 - Providers other than GitHub Copilot ACP.
 - Running workflow orchestration in the renderer.
@@ -101,7 +101,7 @@ desktop persistence infrastructure.
 
 ### Source-controlled behavior
 
-The repository YAML file is the definition source of truth. DevTrees stores an
+The repository YAML file is the definition source of truth. SWE Factory stores an
 immutable YAML snapshot and hash with each run so history and resume always
 refer to the exact launched definition.
 
@@ -148,10 +148,10 @@ or resume decisions.
 
 ### Discovery root
 
-For every repository stored by DevTrees, scan its working repository path:
+For every repository stored by SWE Factory, scan its working repository path:
 
 ```text
-<repository>\.github\dt-workflows\
+<repository>\.github\swe-factory-workflows\
 ```
 
 The scan is recursive and includes case-insensitive `.yml` and `.yaml`
@@ -176,7 +176,7 @@ content hash so an edit cannot silently inherit old executable trust.
 
 ### Scan behavior
 
-- Missing `.github/dt-workflows` is a normal empty state.
+- Missing `.github/swe-factory-workflows` is a normal empty state.
 - An unreadable directory produces one repository-level diagnostic.
 - An unreadable file remains visible as an invalid catalog item.
 - One invalid file does not prevent other definitions from loading.
@@ -562,7 +562,7 @@ Resume requires:
 
 Resume requeues the run. It does not bypass the global concurrency cap.
 
-If the workflow file changed, the user must launch a new run. DevTrees must not
+If the workflow file changed, the user must launch a new run. SWE Factory must not
 resume old context against new topology.
 
 ## Scheduling and concurrency
@@ -986,7 +986,7 @@ CREATE TABLE workflow_script_trust (
 ```
 
 Store repository/worktree names and paths as launch-time snapshots so history
-remains understandable if a repository is later removed from DevTrees.
+remains understandable if a repository is later removed from SWE Factory.
 
 ### Event transaction
 
@@ -1438,7 +1438,7 @@ Trust does not imply approval of ACP permission prompts.
 ### Empty states
 
 - No repository: direct the user to add one.
-- No workflow directory: explain `.github/dt-workflows`.
+- No workflow directory: explain `.github/swe-factory-workflows`.
 - Empty directory: show the expected extensions and link/open the folder.
 - Invalid workflows only: show diagnostics and external editor action.
 - No runs: keep the definition catalog and launch affordance visible.
@@ -1548,7 +1548,7 @@ commands.
 
 ## Default conformance workflow
 
-`.github/dt-workflows/default.yml` is the first end-to-end acceptance fixture.
+`.github/swe-factory-workflows/default.yml` is the first end-to-end acceptance fixture.
 It covers:
 
 - repository discovery;
@@ -1644,7 +1644,7 @@ Use a fake `WorkflowAgentRuntime` in deterministic tests:
 
 ### End-to-end fixtures
 
-Add fixtures under `.github/dt-workflows/fixtures` or a test-only fixture
+Add fixtures under `.github/swe-factory-workflows/fixtures` or a test-only fixture
 directory for:
 
 - linear workflow;
@@ -1674,7 +1674,7 @@ Deliverables:
 5. Add database schema for runs, events, and trust.
 6. Add Workflows navigation and catalog UI.
 7. Add React Flow/Dagre dependencies and static topology graph.
-8. Render `.github/dt-workflows/default.yml`.
+8. Render `.github/swe-factory-workflows/default.yml`.
 
 Exit criteria:
 
@@ -1794,13 +1794,13 @@ second state library unless the event reducer proves React Context unsuitable.
 | Workflow state         | `src/renderer/src/contexts/workflows-context.tsx`                                                                          |
 | Workflow UI            | `src/renderer/src/components/workflows/**`                                                                                 |
 | Styling                | existing Tailwind tokens and `src/renderer/src/assets/main.css` only for graph-specific global selectors                   |
-| Conformance definition | `.github/dt-workflows/default.yml`                                                                                         |
+| Conformance definition | `.github/swe-factory-workflows/default.yml`                                                                                |
 
 ## Acceptance criteria
 
 The implementation is complete when:
 
-1. DevTrees discovers the default workflow from a registered repository.
+1. SWE Factory discovers the default workflow from a registered repository.
 2. The static graph matches the YAML topology.
 3. A user can select a worktree, accept default inputs, and launch it.
 4. The run starts immediately or enters the durable queue.
@@ -1819,7 +1819,7 @@ The implementation is complete when:
 17. Script workflows require current-hash trust.
 18. Nested and for-each nodes remain uniquely addressable.
 19. Renderer event gaps trigger snapshot reconciliation.
-20. Existing DevTrees repository, task, session, review, and analytics flows
+20. Existing SWE Factory repository, task, session, review, and analytics flows
     continue to work.
 
 ## Deferred compatibility backlog

@@ -129,7 +129,7 @@ export function PrCommentsPanel({
                   })
                 }
                 disabled={!isSupported}
-                aria-label="Review pull request in DevTrees"
+                aria-label="Review pull request in SWE Factory"
               >
                 <FileDiffIcon className="size-3.5" />
               </Button>

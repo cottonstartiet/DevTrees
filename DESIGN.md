@@ -1,5 +1,5 @@
 ---
-name: DevTrees
+name: SWE Factory
 description: A fast, developer-native desktop cockpit for git-worktree development.
 colors:
   ink: 'oklch(0.1443 0.0191 261.1564)'
@@ -68,13 +68,13 @@ components:
     height: '36px'
 ---
 
-# Design System: DevTrees
+# Design System: SWE Factory
 
 ## 1. Overview
 
 **Creative North Star: "The Developer Cockpit"**
 
-DevTrees is an instrument panel for parallel development. Every surface is a
+SWE Factory is an instrument panel for parallel development. Every surface is a
 readout or a control: worktree lists, branch/PR status, session history, launch
 buttons. Like a cockpit, information density is high but never chaotic — the
 developer scans it at a glance, reaches for the right control by reflex, and
@@ -173,7 +173,7 @@ reserved for code, branches, commands, and terminal-oriented content.
 
 ## 4. Elevation
 
-DevTrees uses theme-specific elevation while preserving one semantic shadow
+SWE Factory uses theme-specific elevation while preserving one semantic shadow
 scale. Chalk is **flat by default with tonal layering**: depth comes from
 stepping background lightness (base → sidebar → card → popover), with only a
 crisp control edge. Enterprise retains those tonal steps and adds soft,
@@ -235,7 +235,7 @@ Copilot terminal.
 The SQLite-backed preference defaults to ACP for new installations, migrates SDK
 preferences to ACP, and preserves explicit embedded or external choices. It applies to
 new and resumed sessions without moving active runtimes. Embedded sessions use a black
-xterm surface backed by an app-owned PowerShell ConPTY, remain active while DevTrees is
+xterm surface backed by an app-owned PowerShell ConPTY, remain active while SWE Factory is
 hidden to the tray, and terminate on terminal close or actual app exit. External
 sessions use compact status and metadata only, without an in-app terminal or transcript.
 Their rows disappear on exit and are not restored after an app restart.

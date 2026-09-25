@@ -1,5 +1,5 @@
 /**
- * Copilot CLI sessions shown in DevTrees.
+ * Copilot CLI sessions shown in SWE Factory.
  *
  * Native sessions use SDK callbacks. External sessions expose transient status
  * observed from the CLI event log, without an in-app transcript.

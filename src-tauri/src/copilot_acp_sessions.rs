@@ -961,7 +961,7 @@ async fn run_inner(
             *connected_owner.connection.lock().map_err(protocol_error)? = Some(cx.clone());
             let initialize: acp::InitializeRequest = serde_json::from_value(json!({
                 "protocolVersion": 1,
-                "clientInfo": {"name":"DevTrees","version": env!("CARGO_PKG_VERSION")},
+                "clientInfo": {"name":"SWE Factory","version": env!("CARGO_PKG_VERSION")},
                 "clientCapabilities": {
                     "fs":{"readTextFile":false,"writeTextFile":false},
                     "terminal":false, "elicitation":{"form":{},"url":{}}
@@ -1245,7 +1245,7 @@ pub async fn start(
     req: StartTerminalSessionRequest,
 ) -> AppResult<TerminalSessionResult> {
     if app.state::<SessionManager>().exiting.load(Ordering::SeqCst) {
-        return Err(error("DevTrees is shutting down."));
+        return Err(error("SWE Factory is shutting down."));
     }
     installed_cli()?;
     let id = req
@@ -1292,8 +1292,9 @@ pub async fn start(
         if manager.exiting.load(Ordering::SeqCst) {
             drop(sessions);
             owner.finished.store(true, Ordering::SeqCst);
-            owner.fail("Session startup was cancelled because DevTrees is shutting down.".into());
-            return Err(error("DevTrees is shutting down."));
+            owner
+                .fail("Session startup was cancelled because SWE Factory is shutting down.".into());
+            return Err(error("SWE Factory is shutting down."));
         }
         sessions.insert(id, owner.clone());
     }

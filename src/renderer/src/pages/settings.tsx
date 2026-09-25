@@ -306,7 +306,7 @@ function SavedPromptsSettings(): React.JSX.Element {
             Saved prompts
           </h1>
           <p className="text-muted-foreground max-w-2xl text-sm">
-            Keep reusable agent instructions in DevTrees and choose which one starts browser code
+            Keep reusable agent instructions in SWE Factory and choose which one starts browser code
             reviews.
           </p>
         </div>
@@ -678,14 +678,16 @@ function AppearanceSettings(): React.JSX.Element {
         <h1 id="appearance-settings-title" className="text-base font-semibold tracking-tight">
           Appearance
         </h1>
-        <p className="text-muted-foreground text-sm">Choose how DevTrees looks on this device.</p>
+        <p className="text-muted-foreground text-sm">
+          Choose how SWE Factory looks on this device.
+        </p>
       </div>
 
       <div className="flex flex-col gap-3 border-t pt-5">
         <div className="flex flex-col gap-1">
           <h2 className="text-sm font-medium">Color theme</h2>
           <p id="color-theme-help" className="text-muted-foreground text-xs">
-            Choose the palette used across DevTrees.
+            Choose the palette used across SWE Factory.
           </p>
         </div>
         <div
@@ -831,7 +833,7 @@ function CopilotSessionSettings(): React.JSX.Element {
           Copilot
         </h1>
         <p className="text-muted-foreground text-sm">
-          Configure how DevTrees opens Copilot sessions.
+          Configure how SWE Factory opens Copilot sessions.
         </p>
       </div>
 
@@ -842,9 +844,10 @@ function CopilotSessionSettings(): React.JSX.Element {
           </h2>
           <p id="session-launch-help" className="text-muted-foreground max-w-xl text-xs leading-5">
             Running sessions stay where they are. End a session before resuming it in a different
-            mode. Embedded sessions run in app-owned PowerShell terminals and end when DevTrees
-            exits. External sessions show live status only while DevTrees is open. In-app sessions
-            use the permission profile below plus project approvals already saved by Copilot CLI.
+            mode. Embedded sessions run in app-owned PowerShell terminals and end when SWE Factory
+            exits. External sessions show live status only while SWE Factory is open. In-app
+            sessions use the permission profile below plus project approvals already saved by
+            Copilot CLI.
           </p>
         </div>
         <div

@@ -619,11 +619,11 @@ fn ensure_attachment_git_exclude(folder_path: &str) -> AppResult<()> {
     if let Some(parent) = exclude.parent() {
         fs::create_dir_all(parent)?;
     }
-    let marker = ".devtrees/attachments/\n";
+    let marker = ".swe-factory/attachments/\n";
     let existing = fs::read_to_string(&exclude).unwrap_or_default();
     if !existing
         .lines()
-        .any(|line| line.trim() == ".devtrees/attachments/")
+        .any(|line| line.trim() == ".swe-factory/attachments/")
     {
         use std::io::Write;
         let mut file = fs::OpenOptions::new()
@@ -687,7 +687,7 @@ pub fn prepare_task_attachments(
     }
 
     let materialized_dir = PathBuf::from(folder_path)
-        .join(".devtrees")
+        .join(".swe-factory")
         .join("attachments")
         .join(task_id);
     if materialized_dir.exists() {
@@ -1178,7 +1178,7 @@ pub async fn tasks_delete(
         }
     }
     let materialized = PathBuf::from(worktree_path)
-        .join(".devtrees")
+        .join(".swe-factory")
         .join("attachments")
         .join(&id);
     if materialized.exists() {

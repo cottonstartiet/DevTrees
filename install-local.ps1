@@ -26,7 +26,7 @@ if (-not $cargo) {
 }
 
 if (-not $windowsTerminal) {
-  Write-Warning 'Windows Terminal (wt.exe) was not found. DevTrees will install, but terminal launches will be unavailable.'
+  Write-Warning 'Windows Terminal (wt.exe) was not found. SWE Factory will install, but terminal launches will be unavailable.'
 }
 
 if (-not $copilot) {
@@ -47,7 +47,7 @@ if (Test-Path -LiteralPath $bundleDirectory) {
 
 # A file avoids Yarn/shell quote handling corrupting the JSON argument.
 $localConfigPath = Join-Path ([System.IO.Path]::GetTempPath()) (
-  "devtrees-tauri-local-$([System.Guid]::NewGuid().ToString('N')).json"
+  "swe-factory-tauri-local-$([System.Guid]::NewGuid().ToString('N')).json"
 )
 Set-Content -LiteralPath $localConfigPath `
   -Value '{"bundle":{"createUpdaterArtifacts":false}}' `

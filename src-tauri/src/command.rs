@@ -111,7 +111,7 @@ mod tests {
                 "command::tests::subprocess_fixture",
                 "--nocapture",
             ])
-            .env("DEVTREES_PROCESS_FIXTURE", mode);
+            .env("SWE_FACTORY_PROCESS_FIXTURE", mode);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn subprocess_fixture() {
-        match std::env::var("DEVTREES_PROCESS_FIXTURE").as_deref() {
+        match std::env::var("SWE_FACTORY_PROCESS_FIXTURE").as_deref() {
             Ok("pipes") => {
                 std::io::stdout().write_all(&vec![b'a'; 200_000]).unwrap();
                 std::io::stderr().write_all(&vec![b'b'; 200_000]).unwrap();
@@ -131,7 +131,7 @@ mod tests {
             Ok("descendant") => {
                 let child = fixture("sleep").spawn().unwrap();
                 std::fs::write(
-                    std::env::var("DEVTREES_PROCESS_PID_FILE").unwrap(),
+                    std::env::var("SWE_FACTORY_PROCESS_PID_FILE").unwrap(),
                     child.id().to_string(),
                 )
                 .unwrap();
@@ -145,7 +145,7 @@ mod tests {
                     .spawn()
                     .unwrap();
                 std::fs::write(
-                    std::env::var("DEVTREES_PROCESS_PID_FILE").unwrap(),
+                    std::env::var("SWE_FACTORY_PROCESS_PID_FILE").unwrap(),
                     child.id().to_string(),
                 )
                 .unwrap();
@@ -155,7 +155,7 @@ mod tests {
                 std::fs::write(
                     format!(
                         "{}.done",
-                        std::env::var("DEVTREES_PROCESS_PID_FILE").unwrap()
+                        std::env::var("SWE_FACTORY_PROCESS_PID_FILE").unwrap()
                     ),
                     "finished",
                 )
@@ -190,10 +190,10 @@ mod tests {
     #[test]
     fn completed_command_preserves_detached_helpers() {
         let path =
-            std::env::temp_dir().join(format!("devtrees-helper-{}.pid", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("swe-factory-helper-{}.pid", uuid::Uuid::new_v4()));
         let done = path.with_extension("pid.done");
         let mut command = fixture("detached");
-        command.env("DEVTREES_PROCESS_PID_FILE", &path);
+        command.env("SWE_FACTORY_PROCESS_PID_FILE", &path);
         assert!(output(&mut command).unwrap().status.success());
         let deadline = Instant::now() + Duration::from_secs(3);
         while !done.exists() && Instant::now() < deadline {
@@ -211,9 +211,9 @@ mod tests {
     #[test]
     fn timeout_terminates_descendant_holding_output_pipe() {
         let path =
-            std::env::temp_dir().join(format!("devtrees-timeout-{}.pid", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("swe-factory-timeout-{}.pid", uuid::Uuid::new_v4()));
         let mut command = fixture("descendant");
-        command.env("DEVTREES_PROCESS_PID_FILE", &path);
+        command.env("SWE_FACTORY_PROCESS_PID_FILE", &path);
         let error = output_with_timeout(&mut command, Duration::from_secs(2)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         let pid: u32 = std::fs::read_to_string(&path).unwrap().parse().unwrap();

@@ -3,7 +3,7 @@ export async function remoteRequest<T>(path: string, init: RequestInit = {}): Pr
   const response = await fetch(path, {
     ...init,
     headers: {
-      ...(method === 'GET' ? {} : { 'content-type': 'application/json', 'x-devtrees-lan': '1' }),
+      ...(method === 'GET' ? {} : { 'content-type': 'application/json', 'x-swe-factory-lan': '1' }),
       ...init.headers
     }
   })

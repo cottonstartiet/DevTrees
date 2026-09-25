@@ -113,7 +113,7 @@ function PairingGate({ children }: { children: React.ReactNode }): React.JSX.Ele
         )}
         <div>
           <h1 className="text-base font-semibold">
-            {state === 'pairing' ? 'Connecting to DevTrees' : 'Scan the QR code again'}
+            {state === 'pairing' ? 'Connecting to SWE Factory' : 'Scan the QR code again'}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {state === 'pairing'
@@ -230,7 +230,7 @@ function Dashboard({
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 p-4 sm:p-6">
       <section>
         <h2 className="text-base font-semibold">Activity</h2>
-        <p className="text-sm text-muted-foreground">Live work from the DevTrees host.</p>
+        <p className="text-sm text-muted-foreground">Live work from the SWE Factory host.</p>
       </section>
       <section className="overflow-hidden rounded-lg border bg-card">
         <div className="flex items-center justify-between border-b px-4 py-3">
@@ -545,7 +545,7 @@ function Tasks({
             ) : null}
             {repositories.length === 0 && !repositoriesLoading && !repositoryError ? (
               <p className="text-sm text-muted-foreground sm:col-span-2">
-                Add a repository in DevTrees on your desktop first.
+                Add a repository in SWE Factory on your desktop first.
               </p>
             ) : null}
             {repositoryError ? (
@@ -991,7 +991,7 @@ function AppContent(): React.JSX.Element {
   React.useEffect(() => {
     queueMicrotask(() => {
       void refresh().catch((loadError) =>
-        setError(loadError instanceof Error ? loadError.message : 'Could not load DevTrees.')
+        setError(loadError instanceof Error ? loadError.message : 'Could not load SWE Factory.')
       )
     })
     let socket: WebSocket | null = null
@@ -1042,7 +1042,7 @@ function AppContent(): React.JSX.Element {
       <div className="flex h-svh flex-col bg-background text-foreground">
         <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
           <div className="min-w-0 flex-1">
-            <h1 className="text-sm font-semibold">DevTrees</h1>
+            <h1 className="text-sm font-semibold">SWE Factory</h1>
             <p className="text-xs text-muted-foreground">
               {nav.find((item) => item.view === view)?.label}
             </p>

@@ -20,7 +20,7 @@ eye on Azure DevOps pull-request status and Copilot CLI history along the way.
 
 ## Product Purpose
 
-DevTrees is a desktop control center for git-worktree-based development. It
+SWE Factory is a desktop control center for git-worktree-based development. It
 manages worktrees across workspaces, surfaces Azure DevOps pull-request details,
 reads GitHub Copilot CLI history, and launches external tooling. Success looks
 like a developer moving between parallel tasks in seconds, always seeing true
@@ -37,7 +37,7 @@ reflex: quick, precise, and confident, never chatty or hand-holdy.
 ## Anti-references
 
 - **Heavy enterprise apps / IDEs** (Jira-style ceremony, dense config panels,
-  nested settings, modal-heavy workflows). DevTrees is a focused utility, not a
+  nested settings, modal-heavy workflows). SWE Factory is a focused utility, not a
   platform.
 - **Consumer chat apps** (bubbly, conversational-first UI, oversized avatars,
   playful rounded everything). The AI is a tool surface, not a chat companion.

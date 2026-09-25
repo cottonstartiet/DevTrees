@@ -51,7 +51,8 @@ pub async fn run_gh_with_body(
     body: String,
 ) -> Result<GhOutput, GhError> {
     tauri::async_runtime::spawn_blocking(move || {
-        let path = std::env::temp_dir().join(format!("devtrees-gh-{}.json", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("swe-factory-gh-{}.json", uuid::Uuid::new_v4()));
         if let Err(err) = std::fs::write(&path, body.as_bytes()) {
             return Err(GhError::Failed {
                 stdout: String::new(),

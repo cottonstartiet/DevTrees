@@ -4,9 +4,9 @@ use super::*;
 fn windows_attachment_paths_become_encoded_file_uris() {
     assert_eq!(
         encode_file_uri(std::path::Path::new(
-            r"C:\Users\Jane Doe\repo\.devtrees\attachments\spec file.docx"
+            r"C:\Users\Jane Doe\repo\.swe-factory\attachments\spec file.docx"
         )),
-        "file:///C:/Users/Jane%20Doe/repo/.devtrees/attachments/spec%20file.docx"
+        "file:///C:/Users/Jane%20Doe/repo/.swe-factory/attachments/spec%20file.docx"
     );
 }
 
@@ -147,7 +147,7 @@ fn acp_live_round_trip() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
         let folder =
-            std::env::temp_dir().join(format!("devtrees-acp-smoke-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("swe-factory-acp-smoke-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&folder).unwrap();
         let mut command = tokio::process::Command::new(installed_cli().unwrap());
         command

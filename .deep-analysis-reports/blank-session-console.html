@@ -228,7 +228,9 @@
     <main class="container">
       <header class="report-header">
         <h1>Why new sessions open a blank console</h1>
-        <p class="meta">6 September 2026 | DevTrees Windows desktop | Session-start regression</p>
+        <p class="meta">
+          6 September 2026 | SWE Factory Windows desktop | Session-start regression
+        </p>
       </header>
       <section class="card">
         <h2>Executive summary</h2>
@@ -237,7 +239,7 @@
           <code>copilot --acp</code> without <code>CREATE_NO_WINDOW</code>. Windows can therefore
           allocate a console for the child process. Its standard input and output are pipes, and
           standard error is discarded, so that console has nothing to display. The conversation is
-          meant to appear inside DevTrees, not in this console.
+          meant to appear inside SWE Factory, not in this console.
         </p>
         <p>
           An existing, uncommitted working-tree change already adds the missing flag. This
@@ -363,7 +365,7 @@
             <tr>
               <td>Observed process chain during investigation</td>
               <td>
-                <code>devtrees.exe</code> PID 27556 owned <code>"copilot" --acp</code> PID 31208,
+                <code>swe-factory.exe</code> PID 27556 owned <code>"copilot" --acp</code> PID 31208,
                 which owned <code>conhost.exe</code> PID 49812. This supports the console-allocation
                 diagnosis; no UI screenshot was taken.
               </td>
@@ -418,8 +420,8 @@
           this regression.
         </p>
         <p>
-          Expected behavior after delivery: new and resumed sessions remain interactive inside
-          DevTrees without an additional blank console window. An installed-app launch after
+          Expected behavior after delivery: new and resumed sessions remain interactive inside SWE
+          Factory without an additional blank console window. An installed-app launch after
           rebuilding is still needed to establish the end-to-end outcome.
         </p>
       </section>

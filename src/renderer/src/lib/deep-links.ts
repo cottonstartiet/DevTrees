@@ -17,7 +17,7 @@ export type AppNavigationAction = {
   view: 'dashboard'
 }
 
-export type DevTreesDeepLinkAction = BrowserCodeReviewAction | AppNavigationAction
+export type SWEFactoryDeepLinkAction = BrowserCodeReviewAction | AppNavigationAction
 
 export type BrowserCodeReviewDraft = BrowserCodeReviewAction & {
   id: string
@@ -54,16 +54,16 @@ export function repositoryNameFromSourceUrl(source: URL): string | null {
   return null
 }
 
-export function parseDevTreesDeepLink(rawUrl: string): DevTreesDeepLinkAction {
+export function parseSweFactoryDeepLink(rawUrl: string): SWEFactoryDeepLinkAction {
   let deepLink: URL
   try {
     deepLink = new URL(rawUrl)
   } catch {
-    throw new Error('DevTrees received an invalid link.')
+    throw new Error('SWE Factory received an invalid link.')
   }
 
-  if (deepLink.protocol !== 'devtrees:') {
-    throw new Error('This DevTrees link is not supported.')
+  if (deepLink.protocol !== 'swefactory:') {
+    throw new Error('This SWE Factory link is not supported.')
   }
 
   if (deepLink.hostname === 'navigate') {
@@ -75,7 +75,7 @@ export function parseDevTreesDeepLink(rawUrl: string): DevTreesDeepLinkAction {
       deepLink.password !== '' ||
       deepLink.port !== ''
     ) {
-      throw new Error('This DevTrees navigation link is not supported.')
+      throw new Error('This SWE Factory navigation link is not supported.')
     }
     return { kind: 'navigate', view: 'dashboard' }
   }
@@ -85,7 +85,7 @@ export function parseDevTreesDeepLink(rawUrl: string): DevTreesDeepLinkAction {
     deepLink.pathname !== '/new' ||
     deepLink.searchParams.get('intent') !== 'code-review'
   ) {
-    throw new Error('This DevTrees link is not supported.')
+    throw new Error('This SWE Factory link is not supported.')
   }
 
   const rawSourceUrl = deepLink.searchParams.get('url') ?? ''
@@ -153,7 +153,7 @@ export function createBrowserCodeReviewDraft(
   }
 }
 
-export async function subscribeToDevTreesDeepLinks(
+export async function subscribeToSweFactoryDeepLinks(
   onUrl: (url: string) => void
 ): Promise<() => void> {
   const receivedWhileStarting = new Set<string>()

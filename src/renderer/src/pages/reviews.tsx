@@ -241,7 +241,7 @@ function PrRow({ pr, folderPath }: { pr: RepoPr; folderPath: string }): React.JS
         type="button"
         onClick={openInApp}
         className="focus-visible:ring-ring/50 min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-3"
-        title={`Review PR #${pr.id} in DevTrees`}
+        title={`Review PR #${pr.id} in SWE Factory`}
       >
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-xs font-medium">{pr.title}</span>
@@ -262,7 +262,7 @@ function PrRow({ pr, folderPath }: { pr: RepoPr; folderPath: string }): React.JS
             size="icon"
             className="h-7 w-7"
             onClick={openInApp}
-            aria-label={`Review PR #${pr.id} in DevTrees`}
+            aria-label={`Review PR #${pr.id} in SWE Factory`}
           >
             <FileDiffIcon className="size-3.5" />
           </Button>

@@ -1021,7 +1021,7 @@ mod tests {
             .stage_prompt(
                 "one".into(),
                 vec![json!({"type":"resource","resource":{
-                    "uri":"devtrees-attachment:file.txt","text":"x".repeat(100_000)
+                    "uri":"swe-factory-attachment:file.txt","text":"x".repeat(100_000)
                 }})],
                 false,
             )

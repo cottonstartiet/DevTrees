@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
   "generatedAt": "2026-09-10T13:00:32+05:30",
-  "title": "Design System: DevTrees",
+  "title": "Design System: SWE Factory",
   "extensions": {
     "colorMeta": {
       "primary": {
@@ -48,8 +48,8 @@
     },
     "themes": {
       "default": "chalk",
-      "storageKey": "devtrees-color-theme",
-      "modeStorageKey": "devtrees-theme",
+      "storageKey": "swe-factory-color-theme",
+      "modeStorageKey": "swe-factory-theme",
       "options": {
         "chalk": {
           "displayName": "Chalk",
@@ -134,7 +134,7 @@
   ],
   "narrative": {
     "northStar": "The Developer Cockpit",
-    "overview": "DevTrees is an instrument panel for parallel development. Every surface is a readout or a control: worktree lists, branch/PR status, session history, launch buttons. Information density is high but never chaotic; the developer scans it at a glance and reaches for the right control by reflex. Built on shadcn/ui (new-york) with selectable Chalk and Enterprise palettes, each supporting light and dark modes, color stays functional while elevation follows the active theme.",
+    "overview": "SWE Factory is an instrument panel for parallel development. Every surface is a readout or a control: worktree lists, branch/PR status, session history, launch buttons. Information density is high but never chaotic; the developer scans it at a glance and reaches for the right control by reflex. Built on shadcn/ui (new-york) with selectable Chalk and Enterprise palettes, each supporting light and dark modes, color stays functional while elevation follows the active theme.",
     "keyCharacteristics": [
       "Two restrained palettes: Chalk and Enterprise, coordinated across light and dark",
       "Compact 36px controls and 0.875rem body text with theme-specific radii",

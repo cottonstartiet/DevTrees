@@ -1,8 +1,8 @@
-# DevTrees
+# SWE Factory
 
 A desktop application built with **Tauri 2**, **Rust**, **TypeScript**, **Vite**, **React** and **shadcn/ui** (new-york). It manages git worktrees across workspaces, surfaces Azure DevOps pull-request details, reads GitHub Copilot CLI history, and launches external tooling (VS Code, Windows Terminal, the Copilot CLI). It ships with auto-update against GitHub Releases.
 
-DevTrees runs in its own desktop window. The React renderer communicates directly
+SWE Factory runs in its own desktop window. The React renderer communicates directly
 with Rust through Tauri commands and events; there is no browser-hosted app or
 local HTTP/WebSocket API server.
 
@@ -41,7 +41,7 @@ and `node --test scripts/auto-reviews.test.mjs scripts/code-review-prompt.test.m
 Responsiveness regressions use `node --test scripts/task-state.test.mjs scripts/ui-regressions.test.mjs`.
 The UI check builds the actual renderer components with Vite and runs them in an isolated,
 headless Edge profile, without starting the desktop backend or calling Git/Copilot.
-Set `DEVTREES_TEST_BROWSER` to a Chromium-compatible browser executable if Edge is not
+Set `SWE_FACTORY_TEST_BROWSER` to a Chromium-compatible browser executable if Edge is not
 installed at its default Windows location. It covers popup cleanup, editable branch naming,
 overlapping task mutations, repository switching, transcript deltas, and lazy tool-output rendering.
 Radix's dismissable-layer and focus-scope packages are direct dependencies and Vite
@@ -79,7 +79,7 @@ Commands are sent as one text block without attachments. Unadvertised commands
 are blocked rather than accidentally sent to the model. The deliberate literal
 message option adds an explanatory text prefix so it cannot execute as a slash
 command. Settings provides an explicit external **Sign in** action. In-app
-sessions use the defaults already configured in Copilot CLI; DevTrees does not
+sessions use the defaults already configured in Copilot CLI; SWE Factory does not
 override reasoning, tools, modes or MCP servers.
 
 Permissions use the exact option IDs, labels and scopes provided by Copilot.
@@ -116,7 +116,7 @@ Errors, cancellation, refusal and limit stops pause it.
 Queued items survive app restarts, always paused. Resuming a conversation does
 not resume its queue. A prompt interrupted after dispatch is marked
 **delivery-unknown**: review history and remove it explicitly before resuming.
-DevTrees does not automatically retry potentially delivered prompts or approvals.
+SWE Factory does not automatically retry potentially delivered prompts or approvals.
 Removing a session row preserves its queue and Copilot's saved conversation.
 Use the queue's explicit clear/remove controls to discard retained content.
 
@@ -128,7 +128,7 @@ until removed. Live transcripts retain at most 500 entries and approximately
 transcript is checkpointed after turns and on shutdown. Copilot's own saved
 history/replay remains the continuation source and contains older agent output.
 Rich tool updates, diffs, resources, images, plans, agent-provided reasoning and
-usage are rendered when emitted; DevTrees does not fabricate absent metrics.
+usage are rendered when emitted; SWE Factory does not fabricate absent metrics.
 
 To change a conversation's mode, **End session** in native chat (or end Copilot in
 its external terminal), change Settings, and resume the conversation. Pending
@@ -136,14 +136,14 @@ questions and in-flight tool calls do not transfer. Resume uses the same saved
 conversation ID without replaying the initial prompt. Active owners are rejected
 rather than starting a second controller.
 
-External mode opens the installed Copilot CLI in Windows Terminal. DevTrees shows
+External mode opens the installed Copilot CLI in Windows Terminal. SWE Factory shows
 live status and attention messages only, not a terminal viewport or transcript.
 Respond in the external terminal. Status observation can lag; unavailable status
 is shown explicitly. External rows disappear when Copilot ends, and external
 watches are not persisted or restored after an app restart. A renderer reconnect
 within the same app run restores current live status.
 
-Switching pages keeps native and external sessions running. Closing DevTrees ends
+Switching pages keeps native and external sessions running. Closing SWE Factory ends
 its managed ACP runtimes but leaves external terminals running. Native conversations
 can be resumed after reopening. Global **History** and **Analytics** continue to
 read CLI history independently, including external sessions; removing a live status
@@ -164,7 +164,7 @@ Initialization is bounded to 45 seconds, and creating/loading a conversation to
 reservation; it never automatically retries the initial instruction.
 Native mode resolves `copilot.exe` (`copilot` elsewhere) from PATH, or an explicit
 `COPILOT_CLI_PATH`. End users do not install Rust: the client is compiled
-into DevTrees. No Copilot executable is bundled or automatically downloaded.
+into SWE Factory. No Copilot executable is bundled or automatically downloaded.
 
 Coverage follows the installed server's advertised commands and capabilities,
 not every interactive-terminal feature. The supported baseline exposes new/load,
@@ -172,7 +172,7 @@ paginated list, close, prompts/cancel, permissions and elicitation.
 Unadvertised fork, delete, logout and additional-root operations are not exposed.
 Terminal-only `/undo`, `/tasks`, `/settings` and similar commands are not invented
 as ACP operations. App History, diffs and Settings remain independent UI actions.
-DevTrees does not advertise client filesystem or terminal execution callbacks:
+SWE Factory does not advertise client filesystem or terminal execution callbacks:
 the local agent owns its tools. External terminals are status-only, not remotely
 controllable through the ACP client.
 
@@ -217,11 +217,11 @@ The desktop app uses a version-4 SQLite schema: repositories, tasks, terminal
 sessions, durable ACP queues and bounded ACP transcripts. Earlier records are
 migrated in place without losing history or task associations. Queue payloads
 can contain submitted file contents; they stay in the app data directory, not
-the repository, and are not encrypted by DevTrees. Permission/form answers are
+the repository, and are not encrypted by SWE Factory. Permission/form answers are
 not persisted in the queue. There are no
 legacy JSON imports.
-On Windows, its database is `%APPDATA%\com.ritekode.devtrees\devtrees.db`.
-The previous prototype's `%APPDATA%\devtrees` data is left untouched and is not loaded,
+On Windows, its database is `%APPDATA%\com.ritekode.swefactory\swe-factory.db`.
+The previous prototype's `%APPDATA%\swe-factory` data is left untouched and is not loaded,
 so the first launch starts with no repositories, tasks, or tracked sessions.
 Anything added in this version is saved normally across subsequent launches.
 
@@ -235,7 +235,7 @@ Updates use Tauri's updater plugin against GitHub Releases. The app checks
 exists it offers **Restart & update**. Download and installation start only when
 the user accepts.
 
-Releasing is automated by `.github/workflows/devtrees-build.yml`: on a push to
+Releasing is automated by `.github/workflows/swe-factory-build.yml`: on a push to
 `main` that bumps `package.json`'s version above every existing `v*` tag, it
 builds and **signs** the installer, generates `latest.json`, and publishes the
 installer + `.sig` + `latest.json` to a GitHub Release via the `gh` CLI.
@@ -265,7 +265,7 @@ src/
 src-tauri/
 ├─ src/
 │  ├─ lib.rs                   # builder, plugins, command registration
-│  ├─ db.rs                    # rusqlite (devtrees.db, initial schema)
+│  ├─ db.rs                    # rusqlite (swe-factory.db, initial schema)
 │  ├─ workspaces.rs worktrees.rs repo.rs ado.rs az.rs
 │  ├─ system.rs                # external launchers + app info
 │  └─ copilot_history.rs       # read-only Copilot CLI store reader

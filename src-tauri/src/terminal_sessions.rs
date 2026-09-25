@@ -1931,7 +1931,7 @@ pub fn init(app: &AppHandle) -> AppResult<()> {
             {
                 watch.session.status = TerminalSessionStatus::Done;
                 watch.session.pending_prompt = None;
-                watch.session.last_activity = "DevTrees closed the managed session".to_string();
+                watch.session.last_activity = "SWE Factory closed the managed session".to_string();
                 watch.session.updated_at = now_ms();
                 watch.session.revision += 1;
                 persist(app, &watch.session, watch.cursor, watch.seq);
@@ -2588,8 +2588,8 @@ fn start_acp_session(
                     "elicitation": { "form": {}, "url": {} }
                 },
                 "clientInfo": {
-                    "name": "DevTrees",
-                    "title": "DevTrees",
+                    "name": "SWE Factory",
+                    "title": "SWE Factory",
                     "version": env!("CARGO_PKG_VERSION")
                 }
             }
@@ -2750,7 +2750,7 @@ pub async fn terminal_sessions_start(
         .exiting
         .load(std::sync::atomic::Ordering::SeqCst)
     {
-        return Err(AppError::msg("DevTrees is shutting down."));
+        return Err(AppError::msg("SWE Factory is shutting down."));
     }
     if !PathBuf::from(&req.folder_path).is_dir() {
         return Err(AppError::msg(
@@ -2972,12 +2972,12 @@ mod tests {
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into(),
                 size_bytes: 42,
                 path: PathBuf::from(
-                    r"C:\repo\.devtrees\attachments\task\attachment-Requirements_doc.docx",
+                    r"C:\repo\.swe-factory\attachments\task\attachment-Requirements_doc.docx",
                 ),
             }],
         };
         let prompt = external_initial_prompt(&req, &req.folder_path);
-        assert!(prompt.contains("@.devtrees/attachments/task/attachment-Requirements_doc.docx"));
+        assert!(prompt.contains("@.swe-factory/attachments/task/attachment-Requirements_doc.docx"));
         assert!(prompt.contains("(Requirements doc.docx)"));
     }
 
@@ -3028,7 +3028,8 @@ mod tests {
 
     #[test]
     fn external_observation_tracks_status_without_retaining_transcripts() {
-        let dir = std::env::temp_dir().join(format!("devtrees-external-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("swe-factory-external-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let lock = dir.join(format!("inuse.{}.lock", std::process::id()));
         fs::write(&lock, "").unwrap();
@@ -3060,7 +3061,8 @@ mod tests {
 
     #[test]
     fn missing_external_logs_do_not_imply_a_live_process_exited() {
-        let dir = std::env::temp_dir().join(format!("devtrees-external-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("swe-factory-external-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let lock = dir.join(format!("inuse.{}.lock", std::process::id()));
         fs::write(&lock, "").unwrap();
@@ -3091,7 +3093,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn no_window_child_has_no_console_window_and_preserves_piped_output() {
-        const PROBE_ENV: &str = "DEVTREES_TEST_NO_WINDOW_CHILD";
+        const PROBE_ENV: &str = "SWE_FACTORY_TEST_NO_WINDOW_CHILD";
         if std::env::var_os(PROBE_ENV).is_some() {
             #[link(name = "kernel32")]
             unsafe extern "system" {
@@ -3348,7 +3350,7 @@ mod tests {
 
     #[test]
     fn resume_cursor_excludes_old_questions_and_preserves_line_identity() {
-        let dir = std::env::temp_dir().join(format!("devtrees-resume-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("swe-factory-resume-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("events.jsonl");
         fs::write(&path, "\n{\"type\":\"tool.execution_start\",\"data\":{\"toolName\":\"ask_user\",\"toolCallId\":\"old\"}}\n").unwrap();
@@ -3371,7 +3373,7 @@ mod tests {
     #[test]
     fn status_read_errors_and_truncation_are_not_successful_empty_observations() {
         let dir =
-            std::env::temp_dir().join(format!("devtrees-log-errors-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("swe-factory-log-errors-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("events.jsonl");
         let mut cursor = 0;
@@ -3390,7 +3392,7 @@ mod tests {
 
     #[test]
     fn tail_only_returns_complete_lines_and_resumes_from_the_cursor() {
-        let dir = std::env::temp_dir().join(format!("devtrees-tail-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("swe-factory-tail-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("events.jsonl");
         fs::write(&path, "{\"a\":1}\n{\"b\":2}\n{\"partial\"").unwrap();
@@ -3413,7 +3415,7 @@ mod tests {
     /// writes, through the same tail + interpret path the poller uses.
     #[test]
     fn replaying_a_real_cli_log_ends_idle_after_the_turn() {
-        let dir = std::env::temp_dir().join(format!("devtrees-replay-{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("swe-factory-replay-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("events.jsonl");
         let log = concat!(

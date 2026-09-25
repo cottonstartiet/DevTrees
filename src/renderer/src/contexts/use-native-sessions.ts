@@ -18,10 +18,7 @@ import {
 } from '@shared/terminal-session'
 
 function target(session: TerminalSession): TerminalTarget {
-  if (
-    !session.generation ||
-    (session.transport !== 'acp' && session.transport !== 'sdk')
-  )
+  if (!session.generation || (session.transport !== 'acp' && session.transport !== 'sdk'))
     throw new Error('This is not a connected native session.')
   return { id: session.id, generation: session.generation }
 }
@@ -139,11 +136,7 @@ export function useNativeSessions(
         stop = unsubscribe
         const list = await window.api.terminalSessions.list()
         for (const session of list) {
-          if (
-            active &&
-            isNativeSession(session) &&
-            !isTerminalSessionFinished(session.status)
-          ) {
+          if (active && isNativeSession(session) && !isTerminalSessionFinished(session.status)) {
             try {
               await refreshNative(session)
             } catch (error) {
@@ -165,7 +158,7 @@ export function useNativeSessions(
         if (active)
           setNativeErrors((current) => ({
             ...current,
-            connection: `Native controls could not connect: ${nativeError(error)} Restart DevTrees to reconnect.`
+            connection: `Native controls could not connect: ${nativeError(error)} Restart SWE Factory to reconnect.`
           }))
       })
     return () => {
@@ -183,11 +176,7 @@ export function useNativeSessions(
       try {
         for (const session of Object.values(known.current)) {
           if (!active) break
-          if (
-            !session ||
-            !isNativeSession(session) ||
-            isTerminalSessionFinished(session.status)
-          )
+          if (!session || !isNativeSession(session) || isTerminalSessionFinished(session.status))
             continue
           try {
             await refreshNative(session)

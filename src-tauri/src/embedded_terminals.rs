@@ -884,7 +884,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system time should be after Unix epoch")
             .as_nanos();
-        std::env::temp_dir().join(format!("devtrees-{name}-{suffix}"))
+        std::env::temp_dir().join(format!("swe-factory-{name}-{suffix}"))
     }
 
     #[test]

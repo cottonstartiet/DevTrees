@@ -97,13 +97,17 @@ export function LocalWebDialog({
           <div className="space-y-4">
             {qrData ? (
               <div className="flex justify-center rounded-lg border bg-white p-4">
-                <img src={qrData} alt="QR code for the DevTrees local web UI" className="size-56" />
+                <img
+                  src={qrData}
+                  alt="QR code for the SWE Factory local web UI"
+                  className="size-56"
+                />
               </div>
             ) : null}
             <div className="rounded-md border bg-muted/40 p-3">
               <p className="break-all font-mono text-xs">{status.url}</p>
               <p className="mt-2 text-xs text-muted-foreground">
-                Keep DevTrees running. Access ends when this server stops or DevTrees exits.
+                Keep SWE Factory running. Access ends when this server stops or SWE Factory exits.
               </p>
             </div>
             <div className="flex gap-2">
@@ -137,8 +141,8 @@ export function LocalWebDialog({
             <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3">
               <RadioTowerIcon className="mt-0.5 size-4 shrink-0" />
               <p className="text-xs text-muted-foreground">
-                DevTrees will choose a private network address and available port. The pairing code
-                is temporary and changes each time the server starts.
+                SWE Factory will choose a private network address and available port. The pairing
+                code is temporary and changes each time the server starts.
               </p>
             </div>
             <Button

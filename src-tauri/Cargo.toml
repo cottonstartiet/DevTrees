@@ -1,14 +1,14 @@
 [package]
-name = "devtrees"
+name = "swe-factory"
 version = "0.96.0"
-description = "DevTrees"
-authors = ["DevTrees"]
+description = "SWE Factory"
+authors = ["SWE Factory"]
 edition = "2021"
 rust-version = "1.94"
 
 # The library target is what the Tauri desktop entrypoint links against.
 [lib]
-name = "devtrees_lib"
+name = "swe_factory_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

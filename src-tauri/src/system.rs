@@ -13,7 +13,7 @@ use crate::error::AppResult;
 
 // Friendly product name shown in the UI. Kept separate from the package name so the
 // displayed name can be capitalized independently of the data directory.
-const APP_DISPLAY_NAME: &str = "DevTrees";
+const APP_DISPLAY_NAME: &str = "SWE Factory";
 
 /// `{ ok: true } | { ok: false, error }` — mirrors the Electron `LaunchResult`.
 #[derive(Serialize)]
@@ -165,7 +165,7 @@ fn start_worker(
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
     let (done_tx, done_rx) = mpsc::sync_channel(1);
     let thread = thread::Builder::new()
-        .name("devtrees-keep-awake".to_string())
+        .name("swe-factory-keep-awake".to_string())
         .spawn(move || {
             let activation = set_execution_state(true);
             let active = activation.is_ok();
@@ -349,7 +349,7 @@ fn copilot_terminal_title(session_id: &str) -> Result<String, &'static str> {
     if !is_valid_copilot_session_id(session_id) {
         return Err("Invalid Copilot session id.");
     }
-    Ok(format!("DevTrees Copilot {session_id}"))
+    Ok(format!("SWE Factory Copilot {session_id}"))
 }
 
 fn copilot_terminal_args(
@@ -466,7 +466,7 @@ pub(crate) fn focus_copilot_terminal(session_id: &str) -> LaunchResult {
         }
         if SetForegroundWindow(search.found) == 0 {
             return LaunchResult::err(
-                "Windows did not allow DevTrees to focus the Copilot terminal.",
+                "Windows did not allow SWE Factory to focus the Copilot terminal.",
             );
         }
     }
@@ -662,7 +662,7 @@ mod tests {
         let id = "00112233-4455-6677-8899-aabbccddeeff";
         assert_eq!(
             copilot_terminal_title(id).unwrap(),
-            "DevTrees Copilot 00112233-4455-6677-8899-aabbccddeeff"
+            "SWE Factory Copilot 00112233-4455-6677-8899-aabbccddeeff"
         );
         assert!(copilot_terminal_title("bad;title").is_err());
 
@@ -676,7 +676,7 @@ mod tests {
                 "-d",
                 r"C:\repo",
                 "--title",
-                "DevTrees Copilot 00112233-4455-6677-8899-aabbccddeeff",
+                "SWE Factory Copilot 00112233-4455-6677-8899-aabbccddeeff",
                 "--suppressApplicationTitle",
                 "powershell",
                 "-NoExit",

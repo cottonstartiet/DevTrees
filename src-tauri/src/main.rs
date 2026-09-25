@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    devtrees_lib::run()
+    swe_factory_lib::run()
 }

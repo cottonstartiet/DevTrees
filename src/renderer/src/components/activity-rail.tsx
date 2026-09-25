@@ -97,8 +97,8 @@ function KeepAwakeButton({
   const tooltip = pending
     ? 'Checking automatic sleep state'
     : enabled
-      ? 'Automatic sleep is blocked until turned off or DevTrees exits'
-      : 'Prevent automatic sleep while DevTrees is open'
+      ? 'Automatic sleep is blocked until turned off or SWE Factory exits'
+      : 'Prevent automatic sleep while SWE Factory is open'
 
   return (
     <Tooltip>

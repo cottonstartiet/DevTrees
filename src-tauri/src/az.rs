@@ -44,7 +44,8 @@ pub async fn run_az(args: Vec<String>) -> Result<AzOutput, AzError> {
 /// is removed once the command returns.
 pub async fn run_az_with_body(args: Vec<String>, body: String) -> Result<AzOutput, AzError> {
     tauri::async_runtime::spawn_blocking(move || {
-        let path = std::env::temp_dir().join(format!("devtrees-az-{}.json", uuid::Uuid::new_v4()));
+        let path =
+            std::env::temp_dir().join(format!("swe-factory-az-{}.json", uuid::Uuid::new_v4()));
         if let Err(err) = std::fs::write(&path, body.as_bytes()) {
             return Err(AzError::Failed {
                 stdout: String::new(),

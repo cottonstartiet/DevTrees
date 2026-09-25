@@ -6,7 +6,7 @@ Proposed
 
 ## Summary
 
-DevTrees currently uses the Azure CLI and Azure DevOps extension for Azure
+SWE Factory currently uses the Azure CLI and Azure DevOps extension for Azure
 DevOps pull-request reads and writes. The integration is functionally correct,
 but common review workflows start several `git` and `az` child processes and
 repeat the same remote, identity, PR, and iteration lookups.
@@ -14,7 +14,7 @@ repeat the same remote, identity, PR, and iteration lookups.
 This specification reduces latency by:
 
 - caching stable Azure DevOps context in the Tauri process;
-- requesting only the PR fields consumed by DevTrees;
+- requesting only the PR fields consumed by SWE Factory;
 - resolving PR base and head commits once;
 - fetching missing PR commits into the local Git object database;
 - using local Git for changed files, textual diffs, and file contents;
@@ -158,7 +158,7 @@ used by `RepoPr` categorization and display:
 
 Continue to pass explicit organization, project, repository, active status, and
 maximum result count. Do not depend on global `az devops configure` defaults,
-because DevTrees can contain repositories from different organizations and
+because SWE Factory can contain repositories from different organizations and
 projects.
 
 Resolve `az account show` once per application process. Identity lookup is
@@ -242,12 +242,12 @@ git diff --numstat -z -M <baseSha> <headSha>
 
 Map Git status to the existing contract:
 
-| Git status                  | DevTrees change type |
-| --------------------------- | -------------------- |
-| `A`                         | `add`                |
-| `D`                         | `delete`             |
-| `R*`                        | `rename`             |
-| Other tracked modifications | `edit`               |
+| Git status                  | SWE Factory change type |
+| --------------------------- | ----------------------- |
+| `A`                         | `add`                   |
+| `D`                         | `delete`                |
+| `R*`                        | `rename`                |
+| Other tracked modifications | `edit`                  |
 
 For renames, set `previousPath` to the old path and `path` to the new path.
 Treat `-` values in `--numstat` as binary. Set binary addition and deletion

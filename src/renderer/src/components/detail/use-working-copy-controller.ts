@@ -284,7 +284,7 @@ export function useWorkingCopyController({
       ? 'Working copy status is unavailable.'
       : entries.length === 0
         ? 'Working tree is clean.'
-        : 'Review working-copy changes in DevTrees.'
+        : 'Review working-copy changes in SWE Factory.'
 
   const handleReviewChanges = React.useCallback((): void => {
     if (reviewChangesDisabled || !folderPath) return

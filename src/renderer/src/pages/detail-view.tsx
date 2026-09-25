@@ -81,7 +81,7 @@ export function DetailView(props: DetailViewProps): React.JSX.Element {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
         <p className="text-muted-foreground text-sm">
-          Welcome to DevTrees. Add a repository from the sidebar to get started.
+          Welcome to SWE Factory. Add a repository from the sidebar to get started.
         </p>
       </div>
     )

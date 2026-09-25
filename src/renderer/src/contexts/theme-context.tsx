@@ -5,8 +5,8 @@ export type Theme = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
 export type ColorTheme = 'chalk' | 'enterprise'
 
-export const THEME_STORAGE_KEY = 'devtrees-theme'
-export const COLOR_THEME_STORAGE_KEY = 'devtrees-color-theme'
+export const THEME_STORAGE_KEY = 'swe-factory-theme'
+export const COLOR_THEME_STORAGE_KEY = 'swe-factory-color-theme'
 export const DEFAULT_COLOR_THEME: ColorTheme = 'chalk'
 
 const DARK_QUERY = '(prefers-color-scheme: dark)'

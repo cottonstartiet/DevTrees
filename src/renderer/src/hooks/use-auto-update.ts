@@ -11,7 +11,7 @@ import { toast } from 'sonner'
  *
  * On Windows `downloadAndInstall()` runs the NSIS installer and terminates the
  * running process, so any code after it is not guaranteed to execute; the
- * installer (passive mode) applies the update and relaunches DevTrees. We still
+ * installer (passive mode) applies the update and relaunches SWE Factory. We still
  * call `relaunch()` as a best-effort fallback in case control returns.
  *
  * The updater only works in a packaged build with a configured endpoint, so any
@@ -37,7 +37,7 @@ export function useAutoUpdate(): void {
             onClick: () => {
               void (async () => {
                 const toastId = toast.loading(
-                  `Installing update ${update.version}. DevTrees will restart…`
+                  `Installing update ${update.version}. SWE Factory will restart…`
                 )
                 try {
                   await update.downloadAndInstall()
