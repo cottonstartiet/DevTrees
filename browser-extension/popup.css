@@ -122,19 +122,8 @@ button[hidden] {
   display: none;
 }
 
-button.secondary {
-  border-color: var(--border);
-  background: transparent;
-  color: var(--foreground);
-}
-
 button:hover:not(:disabled) {
   opacity: 0.9;
-}
-
-button.secondary:hover:not(:disabled) {
-  background: var(--surface);
-  opacity: 1;
 }
 
 button:focus-visible {

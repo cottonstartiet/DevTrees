@@ -1,6 +1,6 @@
 [package]
 name = "swe-factory"
-version = "0.96.0"
+version = "0.96.1"
 description = "SWE Factory"
 authors = ["SWE Factory"]
 edition = "2021"

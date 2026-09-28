@@ -19,11 +19,15 @@ test('SWE Factory uses the canonical application identifiers', async () => {
       read('browser-extension/popup.js')
     ])
 
-  assert.equal(JSON.parse(packageJson).name, 'swe-factory')
+  const packageManifest = JSON.parse(packageJson)
+  assert.equal(packageManifest.name, 'swe-factory')
   assert.match(cargoToml, /^name = "swe-factory"$/m)
   assert.match(cargoToml, /^name = "swe_factory_lib"$/m)
 
   const tauri = JSON.parse(tauriConfig)
+  const cargoVersion = cargoToml.match(/^version = "([^"]+)"$/m)?.[1]
+  assert.equal(tauri.version, packageManifest.version)
+  assert.equal(cargoVersion, packageManifest.version)
   assert.equal(tauri.productName, 'SWE Factory')
   assert.equal(tauri.identifier, 'com.ritekode.swefactory')
   assert.deepEqual(tauri.plugins['deep-link'].desktop.schemes, ['swefactory'])

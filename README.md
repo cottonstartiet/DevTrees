@@ -35,7 +35,7 @@ yarn build        # tauri build (signed NSIS installer + updater artifacts)
 
 Validate the Rust backend with `cargo build` / `cargo clippy` from `src-tauri/`.
 Session regression checks use `cargo test --manifest-path src-tauri/Cargo.toml --lib`
-and `node --test scripts/auto-reviews.test.mjs scripts/code-review-prompt.test.mjs scripts/session-launch.test.mjs scripts/session-interactions.test.mjs scripts/task-launch.test.mjs`
+and `node --test scripts/auto-reviews.test.mjs scripts/browser-extension-deep-link.test.mjs scripts/code-review-prompt.test.mjs scripts/session-launch.test.mjs scripts/session-interactions.test.mjs scripts/task-launch.test.mjs`
 (session routing/status contracts and native interaction state; no browser server).
 
 Responsiveness regressions use `node --test scripts/task-state.test.mjs scripts/ui-regressions.test.mjs`.

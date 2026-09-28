@@ -1,6 +1,6 @@
 {
   "name": "swe-factory",
-  "version": "0.96.0",
+  "version": "0.96.1",
   "private": true,
   "description": "SWE Factory — a Tauri desktop app built with Rust, TypeScript, Vite, React and shadcn/ui.",
   "author": "www.ritekode.com",
