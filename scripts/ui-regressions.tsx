@@ -208,7 +208,8 @@ async function globalNewTaskShortcut(): Promise<void> {
     path: 'C:\\repo',
     name: 'Repo',
     addedAt: 0,
-    remoteKind: 'github'
+    remoteKind: 'github',
+    remoteUrl: null
   }
   let openCount = 0
   mockApi({
@@ -297,7 +298,8 @@ async function taskSaveShortcut(): Promise<void> {
     path: 'C:\\repo',
     name: 'Repo',
     addedAt: 0,
-    remoteKind: 'github'
+    remoteKind: 'github',
+    remoteUrl: null
   }
   mockApi({
     tasks: {
@@ -473,14 +475,16 @@ async function taskMainBranchDefault(): Promise<void> {
       path: 'C:\\repo-a',
       name: 'Repo A',
       addedAt: 0,
-      remoteKind: 'github'
+      remoteKind: 'github',
+      remoteUrl: null
     },
     {
       id: 'repo-b',
       path: 'C:\\repo-b',
       name: 'Repo B',
       addedAt: 1,
-      remoteKind: 'github'
+      remoteKind: 'github',
+      remoteUrl: null
     }
   ]
   mockApi({
@@ -560,7 +564,8 @@ async function worktreeDropdownPlacement(): Promise<Record<string, unknown>> {
     path: 'C:\\repo',
     name: 'Repo',
     addedAt: 0,
-    remoteKind: 'github'
+    remoteKind: 'github',
+    remoteUrl: null
   }
   const worktrees: Worktree[] = Array.from({ length: 40 }, (_, index) => ({
     path: `C:\\repo.worktrees\\worktree-${index + 1}`,
@@ -691,7 +696,8 @@ async function editableBranchName(): Promise<void> {
     path: 'C:\\repo',
     name: 'Repo',
     addedAt: 0,
-    remoteKind: 'other'
+    remoteKind: 'other',
+    remoteUrl: null
   }
   const worktree: Worktree = {
     path: 'C:\\repo\\Fix branch modal',
@@ -1706,7 +1712,6 @@ async function reviewWorkspaceModes(): Promise<void> {
         ensureFileDiff={ensureFileDiff}
         fileContentFor={fileContentFor}
         ensureFileContent={ensureFileContent}
-        onClose={() => undefined}
       />
     </ThemeProvider>
   )
@@ -1725,6 +1730,9 @@ async function reviewWorkspaceModes(): Promise<void> {
       !fixture.container.querySelector('.markdown-preview'),
       'Markdown preview opened by default'
     )
+    const workspace = fixture.container.firstElementChild
+    assert(workspace?.classList.contains('h-full'), 'Review workspace did not fill its window')
+    assert(!workspace?.classList.contains('fixed'), 'Review workspace still used modal positioning')
 
     const changedFilesTree = fixture.container.querySelector(
       '[role="tree"][aria-label="Changed files"]'
@@ -1775,7 +1783,7 @@ async function reviewWorkspaceModes(): Promise<void> {
     fixture.container.querySelector<HTMLButtonElement>('button[title="src"]')?.click()
     await until(() => Boolean(fixture.container.querySelector('button[title="src/app.ts"]')))
 
-    button('Preview')?.click()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }))
     await until(() => Boolean(fixture.container.querySelector('.markdown-preview')))
     assert(
       !fixture.container.querySelector('[aria-label="Diff layout"]'),
@@ -1795,6 +1803,23 @@ async function reviewWorkspaceModes(): Promise<void> {
     assert(
       !fixture.container.querySelector('[aria-label="View mode"]'),
       'Source file exposed Markdown view modes'
+    )
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', bubbles: true }))
+    await until(() =>
+      Boolean(
+        fixture.container
+          .querySelector('button[title="src/components/button.tsx"]')
+          ?.getAttribute('aria-selected') === 'true'
+      )
+    )
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', bubbles: true }))
+    await until(() =>
+      Boolean(
+        fixture.container
+          .querySelector('button[title="src/app.ts"]')
+          ?.getAttribute('aria-selected') === 'true'
+      )
     )
   } finally {
     fixture.dispose()

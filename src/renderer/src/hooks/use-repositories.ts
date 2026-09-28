@@ -20,6 +20,8 @@ import {
 
 export interface UseRepositoriesResult {
   repositories: Repository[]
+  loadStatus: 'loading' | 'ready' | 'error'
+  loadError: string | null
   worktreesByRepositoryId: Record<string, Worktree[]>
   activeId: string | null
   deletingWorktreePaths: ReadonlySet<string>
@@ -40,6 +42,8 @@ export interface UseRepositoriesResult {
 
 export function useRepositories(): UseRepositoriesResult {
   const [repositories, setRepositories] = React.useState<Repository[]>([])
+  const [loadStatus, setLoadStatus] = React.useState<'loading' | 'ready' | 'error'>('loading')
+  const [loadError, setLoadError] = React.useState<string | null>(null)
   const [worktreesByRepositoryId, setWorktreesByRepositoryId] = React.useState<
     Record<string, Worktree[]>
   >({})
@@ -66,15 +70,35 @@ export function useRepositories(): UseRepositoriesResult {
 
   React.useEffect(() => {
     let cancelled = false
+    let settled = false
+    const timeout = window.setTimeout(() => {
+      if (!cancelled && !settled) {
+        settled = true
+        setLoadStatus('error')
+        setLoadError('Timed out while loading configured repositories.')
+      }
+    }, 10_000)
+
     listRepositories()
       .then((list) => {
-        if (!cancelled) setRepositories(list)
+        if (cancelled || settled) return
+        settled = true
+        window.clearTimeout(timeout)
+        setRepositories(list)
+        setLoadStatus('ready')
+        setLoadError(null)
       })
       .catch((err) => {
+        if (cancelled || settled) return
+        settled = true
+        window.clearTimeout(timeout)
         console.error('[repositories] failed to load list:', err)
+        setLoadStatus('error')
+        setLoadError(err instanceof Error ? err.message : 'Could not load configured repositories.')
       })
     return () => {
       cancelled = true
+      window.clearTimeout(timeout)
     }
   }, [])
 
@@ -328,6 +352,8 @@ export function useRepositories(): UseRepositoriesResult {
 
   return {
     repositories,
+    loadStatus,
+    loadError,
     worktreesByRepositoryId,
     activeId,
     deletingWorktreePaths,

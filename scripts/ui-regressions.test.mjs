@@ -64,6 +64,9 @@ test(
         outDir: directory,
         emptyOutDir: false,
         sourcemap: false,
+        rollupOptions: {
+          input: resolve('scripts', 'ui-regressions.tsx')
+        },
         lib: {
           entry: resolve('scripts', 'ui-regressions.tsx'),
           name: 'UiRegressions',

@@ -1,5 +1,10 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from 'react'
+import {
+  createThemeSyncSource,
+  publishThemeSync,
+  subscribeThemeSync
+} from '@/lib/theme-sync'
 
 export type Theme = 'light' | 'dark' | 'system'
 export type ResolvedTheme = 'light' | 'dark'
@@ -109,6 +114,7 @@ interface ThemeProviderProps {
 }
 
 export function ThemeProvider({ children }: ThemeProviderProps): React.JSX.Element {
+  const [syncSource] = React.useState(createThemeSyncSource)
   const [theme, setThemeState] = React.useState<Theme>(() => getStoredTheme())
   const [colorTheme, setColorThemeState] = React.useState<ColorTheme>(() => getStoredColorTheme())
   const [resolvedTheme, setResolvedTheme] = React.useState<ResolvedTheme>(() =>
@@ -121,13 +127,34 @@ export function ThemeProvider({ children }: ThemeProviderProps): React.JSX.Eleme
     applyTheme(resolved)
     setThemeState(next)
     setResolvedTheme(resolved)
-  }, [])
+    publishThemeSync({ source: syncSource, theme: next })
+  }, [syncSource])
 
   const setColorTheme = React.useCallback((next: ColorTheme): void => {
     setStoredColorTheme(next)
     applyColorTheme(next)
     setColorThemeState(next)
-  }, [])
+    publishThemeSync({ source: syncSource, colorTheme: next })
+  }, [syncSource])
+
+  React.useEffect(
+    () =>
+      subscribeThemeSync(syncSource, (next) => {
+        if (next.theme !== undefined) {
+          setStoredTheme(next.theme)
+          const resolved = resolveTheme(next.theme)
+          applyTheme(resolved)
+          setThemeState(next.theme)
+          setResolvedTheme(resolved)
+        }
+        if (next.colorTheme !== undefined) {
+          setStoredColorTheme(next.colorTheme)
+          applyColorTheme(next.colorTheme)
+          setColorThemeState(next.colorTheme)
+        }
+      }),
+    [syncSource]
+  )
 
   // Keep the applied class in sync with the current selection (idempotent under
   // StrictMode) and react to OS changes while in 'system' mode. resolvedTheme

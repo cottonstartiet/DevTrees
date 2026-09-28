@@ -41,7 +41,6 @@ export interface ReviewWorkspaceProps {
   ensureFileDiff: (path: string) => void
   fileContentFor: (path: string | null) => ReviewFileEntry<PrFileContent>
   ensureFileContent: (path: string) => void
-  onClose: () => void
   reloadToken?: unknown
   comments?: ReviewCommentCapabilities
   truncatedMessage?: string
@@ -65,7 +64,6 @@ function ReviewWorkspaceContent({
   ensureFileDiff,
   fileContentFor,
   ensureFileContent,
-  onClose,
   reloadToken,
   comments,
   truncatedMessage
@@ -149,11 +147,6 @@ function ReviewWorkspaceContent({
         target?.tagName === 'TEXTAREA' ||
         target?.isContentEditable === true
 
-      if (event.key === 'Escape' && !isTyping) {
-        event.preventDefault()
-        onClose()
-        return
-      }
       if (isTyping || event.ctrlKey || event.metaKey || event.altKey) return
 
       if (event.key === 'j') {
@@ -173,10 +166,10 @@ function ReviewWorkspaceContent({
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [moveSelection, onClose, isMarkdown, isDiagramOpen, selectedPath, viewMode])
+  }, [moveSelection, isMarkdown, isDiagramOpen, selectedPath, viewMode])
 
   return (
-    <div className="bg-background fixed inset-0 z-50 flex flex-col">
+    <div className="bg-background flex h-full min-h-0 w-full flex-col">
       {header}
 
       {error ? (

@@ -45,6 +45,12 @@ export default defineConfig({
   build: {
     outDir: resolve(__dirname, 'dist-web'),
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'src/renderer/index.html'),
+        review: resolve(__dirname, 'src/renderer/review.html')
+      }
+    },
     // WebView2 on Windows 10/11 supports modern ES; align with Tauri defaults.
     target: 'esnext',
     minify: process.env.TAURI_ENV_DEBUG ? false : 'esbuild',

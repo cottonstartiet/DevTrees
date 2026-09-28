@@ -21,6 +21,7 @@ pub struct Repository {
     pub added_at: i64,
     /// "github" | "ado" | "other"
     pub remote_kind: String,
+    pub remote_url: Option<String>,
 }
 
 /// Discriminated-union result matching the Electron `AddRepositoryResult`
@@ -124,24 +125,31 @@ pub fn classify_remote_url(url: &str) -> &'static str {
     "other"
 }
 
-fn detect_remote_kind(folder_path: &str) -> String {
+fn detect_remote(folder_path: &str) -> (String, Option<String>) {
     match run_git_blocking(
         &["remote".into(), "get-url".into(), "origin".into()],
         folder_path,
     ) {
-        Ok(out) => classify_remote_url(out.stdout.trim()).to_string(),
-        Err(_) => "other".to_string(),
+        Ok(out) => {
+            let remote_url = out.stdout.trim().to_string();
+            (
+                classify_remote_url(&remote_url).to_string(),
+                (!remote_url.is_empty()).then_some(remote_url),
+            )
+        }
+        Err(_) => ("other".to_string(), None),
     }
 }
 
 fn enrich(base: BaseRepository) -> Repository {
-    let remote_kind = detect_remote_kind(&base.path);
+    let (remote_kind, remote_url) = detect_remote(&base.path);
     Repository {
         id: base.id,
         path: base.path,
         name: base.name,
         added_at: base.added_at,
         remote_kind,
+        remote_url,
     }
 }
 

@@ -14,7 +14,7 @@ import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { Separator } from '@/components/ui/separator'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
-import { PrReviewProvider } from '@/contexts/pr-review-context'
+import { PrReviewProvider, usePrReviewWorkspace } from '@/contexts/pr-review-context'
 import { TasksProvider } from '@/contexts/tasks-context'
 import { TaskBoardProvider, useTaskBoard } from '@/contexts/task-board-context'
 import { ThemeProvider } from '@/contexts/theme-context'
@@ -28,8 +28,11 @@ import { openExternal } from '@/lib/system'
 import {
   createBrowserCodeReviewDraft,
   parseSweFactoryDeepLink,
+  pullRequestIdentityFromRemoteUrl,
+  pullRequestRemoteIdentitiesMatch,
   subscribeToSweFactoryDeepLinks,
-  type BrowserCodeReviewDraft
+  type BrowserCodeReviewDraft,
+  type BrowserPullRequestReviewAction
 } from '@/lib/deep-links'
 import { DetailView } from '@/pages/detail-view'
 import { DashboardPage } from '@/pages/dashboard'
@@ -96,6 +99,7 @@ function TaskQueueBridge({
 
 function AppShell(): React.JSX.Element {
   useAutoUpdate()
+  const { openPrReview } = usePrReviewWorkspace()
   const [view, setView] = useState<AppView>('dashboard')
   const [activeWorktreePath, setActiveWorktreePath] = useState<string | null>(null)
   const [reviewsRepositoryId, setReviewsRepositoryId] = useState<string | null>(null)
@@ -115,6 +119,8 @@ function AppShell(): React.JSX.Element {
 
   const {
     repositories,
+    loadStatus: repositoryLoadStatus,
+    loadError: repositoryLoadError,
     worktreesByRepositoryId,
     activeId: activeRepositoryId,
     deletingWorktreePaths,
@@ -260,6 +266,9 @@ function AppShell(): React.JSX.Element {
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [activeTaskForDialog, setActiveTaskForDialog] = useState<Task | null>(null)
   const [taskDraft, setTaskDraft] = useState<BrowserCodeReviewDraft | null>(null)
+  const [pendingBrowserPrReview, setPendingBrowserPrReview] =
+    useState<BrowserPullRequestReviewAction | null>(null)
+  const handledBrowserPrReviewRef = useRef<BrowserPullRequestReviewAction | null>(null)
 
   const handleOpenAddTaskDialog = useCallback((): void => {
     setActiveTaskForDialog(null)
@@ -291,6 +300,13 @@ function AppShell(): React.JSX.Element {
         setView(action.view)
         return
       }
+      if (action.kind === 'browser-pull-request-review') {
+        setTaskDialogOpen(false)
+        setActiveTaskForDialog(null)
+        setTaskDraft(null)
+        setPendingBrowserPrReview(action)
+        return
+      }
       const savedPrompt = await window.api.settings.browserCodeReviewPrompt()
       const draft = createBrowserCodeReviewDraft(action, savedPrompt.details)
       setView('tasks')
@@ -301,6 +317,73 @@ function AppShell(): React.JSX.Element {
       toast.error(error instanceof Error ? error.message : 'Could not open the SWE Factory link.')
     }
   }, [])
+
+  useEffect(() => {
+    if (
+      !pendingBrowserPrReview ||
+      pendingBrowserPrReview === handledBrowserPrReviewRef.current ||
+      repositoryLoadStatus === 'loading'
+    ) {
+      return
+    }
+
+    handledBrowserPrReviewRef.current = pendingBrowserPrReview
+    const targetLabel = [
+      pendingBrowserPrReview.organization,
+      pendingBrowserPrReview.project,
+      pendingBrowserPrReview.repositoryName
+    ]
+      .filter(Boolean)
+      .join('/')
+
+    if (repositoryLoadStatus === 'error') {
+      toast.error(
+        repositoryLoadError
+          ? `Could not open ${targetLabel}: ${repositoryLoadError}`
+          : `Could not open ${targetLabel} because configured repositories failed to load.`
+      )
+      return
+    }
+
+    const matches = repositories.filter((repository) => {
+      if (repository.remoteKind !== pendingBrowserPrReview.provider || !repository.remoteUrl) {
+        return false
+      }
+      const remoteIdentity = pullRequestIdentityFromRemoteUrl(repository.remoteUrl)
+      return (
+        remoteIdentity !== null &&
+        pullRequestRemoteIdentitiesMatch(pendingBrowserPrReview, remoteIdentity)
+      )
+    })
+
+    if (matches.length === 0) {
+      toast.error(
+        `No configured repository matches ${targetLabel}. Add the repository to SWE Factory first.`
+      )
+      return
+    }
+    if (matches.length > 1) {
+      toast.error(
+        `More than one configured repository matches ${targetLabel}: ${matches
+          .map((repository) => repository.path)
+          .join(', ')}`
+      )
+      return
+    }
+
+    openPrReview({
+      folderPath: matches[0].path,
+      remoteKind: pendingBrowserPrReview.provider,
+      pullRequestId: pendingBrowserPrReview.pullRequestId,
+      title: pendingBrowserPrReview.pageTitle || undefined
+    })
+  }, [
+    openPrReview,
+    pendingBrowserPrReview,
+    repositories,
+    repositoryLoadError,
+    repositoryLoadStatus
+  ])
 
   useEffect(() => {
     let active = true

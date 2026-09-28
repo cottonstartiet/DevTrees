@@ -1,6 +1,6 @@
 :root {
   color-scheme: light dark;
-  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  font-family: ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
   --background: oklch(1 0 0);
   --surface: oklch(0.97 0 0);
   --foreground: oklch(0.145 0 0);
@@ -112,8 +112,29 @@ button {
     box-shadow 150ms;
 }
 
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+button[hidden] {
+  display: none;
+}
+
+button.secondary {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--foreground);
+}
+
 button:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+button.secondary:hover:not(:disabled) {
+  background: var(--surface);
+  opacity: 1;
 }
 
 button:focus-visible {
@@ -130,7 +151,7 @@ button:disabled {
   min-height: 1.05rem;
 }
 
-.status[data-error="true"] {
+.status[data-error='true'] {
   color: oklch(0.5 0.2 27);
 }
 
@@ -146,7 +167,7 @@ button:disabled {
     --focus: oklch(0.8 0 0 / 45%);
   }
 
-  .status[data-error="true"] {
+  .status[data-error='true'] {
     color: oklch(0.75 0.15 27);
   }
 }

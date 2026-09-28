@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "review-windows",
+  "description": "Scoped IPC access for dedicated pull request and local review windows.",
+  "windows": ["review-*"],
+  "permissions": [
+    "core:app:default",
+    "core:event:default",
+    "core:window:allow-close",
+    "core:window:allow-set-title"
+  ]
+}

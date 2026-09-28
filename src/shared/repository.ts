@@ -6,6 +6,7 @@ export type Repository = {
   name: string
   addedAt: number
   remoteKind: RepositoryRemoteKind
+  remoteUrl: string | null
 }
 
 export type AddRepositoryErrorCode = 'cancelled' | 'not-a-git-repo' | 'already-added' | 'unknown'

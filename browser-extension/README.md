@@ -1,6 +1,8 @@
 # SWE Factory browser extension
 
-The Chrome extension sends the active browser page to the installed SWE Factory desktop app and opens a prefilled code-review task.
+The Chrome extension sends the active browser page to the installed SWE Factory desktop app. It
+can create a code-review task from any HTTP(S) page or open supported pull requests directly in
+SWE Factory's manual review workspace.
 
 ## Install in Chrome
 
@@ -12,13 +14,29 @@ The Chrome extension sends the active browser page to the installed SWE Factory 
 
 The extension works with normal HTTP and HTTPS pages. Chrome-protected pages, including `chrome://` pages and the Chrome Web Store, do not expose their page URL to extensions.
 
-## Start a code review
+## Browser actions
 
 1. Open the pull request, issue, or source page to review.
-2. Open the SWE Factory extension and choose **Start code review**.
-3. Confirm Chrome's external-app prompt if it appears.
-4. SWE Factory opens Tasks and displays an Add task dialog containing the page context and the prompt assigned to browser code reviews.
-5. Confirm the repository and worktree to create the task and start the code review.
+2. Open the SWE Factory extension.
+3. Choose an action:
+   - **Start code review** creates a prefilled code-review task from any HTTP(S) page.
+   - **Review in app** appears on supported GitHub and Azure DevOps pull-request pages and opens
+     the existing manual diff, comments, and voting workspace directly.
+4. Confirm Chrome's external-app prompt if it appears.
+
+**Review in app** supports:
+
+- `https://github.com/<owner>/<repository>/pull/<id>`
+- `https://dev.azure.com/<organization>/<project>/_git/<repository>/pullrequest/<id>`
+- `https://<organization>.visualstudio.com/<project>/_git/<repository>/pullrequest/<id>`
+
+The matching repository must already be configured in SWE Factory. Matching uses the repository's
+origin remote identity, not its local folder name. SWE Factory reports an error instead of guessing
+when no repository matches or more than one configured entry points at the same remote.
+
+For **Start code review**, SWE Factory opens Tasks and displays an Add task dialog containing the
+page context and the prompt assigned to browser code reviews. Confirm the repository and worktree
+to create the task and start the code review.
 
 No task or Copilot session starts until the task dialog is submitted. After submission, SWE Factory
 starts the review directly in autopilot mode instead of opening a plan-mode task.
@@ -41,6 +59,12 @@ Desktop deep links are registered by an installed build. For local Windows devel
 
 ```text
 swefactory://tasks/new?intent=code-review&url=https%3A%2F%2Fgithub.com%2Fowner%2Frepository%2Fpull%2F1&title=Example%20pull%20request
+```
+
+To open the same pull request directly in the manual review workspace:
+
+```text
+swefactory://reviews/pull-request?url=https%3A%2F%2Fgithub.com%2Fowner%2Frepository%2Fpull%2F1&title=Example%20pull%20request
 ```
 
 The integration uses the operating-system protocol handler and Tauri events; it does not run a local HTTP or WebSocket service.

@@ -10,18 +10,28 @@ import { ReviewWorkspace } from '@/components/pr-review/review-workspace'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useLocalReview, type LocalReviewTarget } from '@/hooks/use-local-review'
+import { initialReviewWindowTitle } from '@/lib/review-window'
 import { cn } from '@/lib/utils'
 
 export interface LocalReviewPageProps {
   target: LocalReviewTarget
   onClose: () => void
+  onTitleChange?: (title: string) => void
 }
 
 /** Read-only review of the selected folder's aggregate working-copy changes against HEAD. */
-export function LocalReviewPage({ target, onClose }: LocalReviewPageProps): React.JSX.Element {
+export function LocalReviewPage({
+  target,
+  onClose,
+  onTitleChange
+}: LocalReviewPageProps): React.JSX.Element {
   const review = useLocalReview(target)
   const folderName = basename(target.folderPath)
   const identity = target.branchLabel?.trim() || 'Current branch'
+
+  React.useEffect(() => {
+    onTitleChange?.(initialReviewWindowTitle({ kind: 'local', ...target }))
+  }, [onTitleChange, target])
 
   const header = (
     <header className="flex shrink-0 items-center gap-3 border-b px-3 py-2">
@@ -30,7 +40,7 @@ export function LocalReviewPage({ target, onClose }: LocalReviewPageProps): Reac
         size="icon"
         className="h-7 w-7"
         onClick={onClose}
-        aria-label="Close review (Esc)"
+        aria-label="Close review"
       >
         <XIcon className="size-4" />
       </Button>
@@ -78,7 +88,6 @@ export function LocalReviewPage({ target, onClose }: LocalReviewPageProps): Reac
       ensureFileDiff={review.ensureFileDiff}
       fileContentFor={review.fileContentFor}
       ensureFileContent={review.ensureFileContent}
-      onClose={onClose}
       reloadToken={review.refreshRevision}
       truncatedMessage="Diff truncated — open the file in your editor for the full change."
     />

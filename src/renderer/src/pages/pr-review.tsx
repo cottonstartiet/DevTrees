@@ -21,13 +21,15 @@ export interface PrReviewPageProps {
   /** Fallback title shown until the PR detail arrives. */
   initialTitle?: string
   onClose: () => void
+  onTitleChange?: (title: string) => void
 }
 
 /** Provider-backed full-screen review workspace with comments, voting, and browser actions. */
 export function PrReviewPage({
   target,
   initialTitle,
-  onClose
+  onClose,
+  onTitleChange
 }: PrReviewPageProps): React.JSX.Element {
   const review = usePrReview(target)
   const {
@@ -67,6 +69,10 @@ export function PrReviewPage({
   const title = detail?.title ?? initialTitle ?? `Pull request #${target.pullRequestId}`
   const webUrl = detail?.webUrl
 
+  React.useEffect(() => {
+    if (detail?.title) onTitleChange?.(detail.title)
+  }, [detail?.title, onTitleChange])
+
   const header = (
     <header className="flex shrink-0 items-center gap-3 border-b px-3 py-2">
       <Button
@@ -74,7 +80,7 @@ export function PrReviewPage({
         size="icon"
         className="h-7 w-7"
         onClick={onClose}
-        aria-label="Close review (Esc)"
+        aria-label="Close review"
       >
         <XIcon className="size-4" />
       </Button>
@@ -141,7 +147,6 @@ export function PrReviewPage({
       ensureFileDiff={ensureFileDiff}
       fileContentFor={(path) => fileContentFor(path, 'head')}
       ensureFileContent={(path) => ensureFileContent(path, 'head')}
-      onClose={onClose}
       comments={{
         threads,
         onCreateThread: handleCreateThread,

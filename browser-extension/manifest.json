@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SWE Factory",
   "description": "Send browser context to the SWE Factory desktop app.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "permissions": ["activeTab"],
   "action": {
     "default_title": "SWE Factory actions",
