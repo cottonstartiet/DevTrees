@@ -5,11 +5,15 @@ import {
   Clock3Icon,
   CircleCheckIcon,
   ExternalLinkIcon,
+  FileDiffIcon,
   GitPullRequestIcon,
   Loader2Icon,
-  RefreshCwIcon
+  RefreshCwIcon,
+  SparklesIcon
 } from 'lucide-react'
+import { toast } from 'sonner'
 
+import { DashboardAnalytics } from '@/components/analytics/dashboard-analytics'
 import { DashboardCard } from '@/components/detail/dashboard-card'
 import { MarkdownBody } from '@/components/pr-review/markdown-body'
 import { NativeSessionControls } from '@/components/sessions/session-interaction'
@@ -19,10 +23,15 @@ import {
   TERMINAL_SESSION_STATUS_TONE
 } from '@/components/sessions/terminal-session-status'
 import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDashboard } from '@/contexts/dashboard-context'
+import { usePrReviewWorkspace } from '@/contexts/pr-review-context'
 import { useTaskBoard } from '@/contexts/task-board-context'
 import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
+import type { DashboardAuthoredPr } from '@/hooks/use-dashboard-pr-reviews'
 import type { AutoReviewStatus } from '@/lib/auto-reviews'
+import { useCopilotLauncher } from '@/lib/copilot-launch'
+import { buildPrCommentsPrompt } from '@/lib/copilot-pr-prompt'
 import { sessionNavigationId } from '@/lib/task-session-routing'
 import { cn } from '@/lib/utils'
 import {
@@ -76,6 +85,124 @@ function autoReviewLabel(status: AutoReviewStatus): string {
   }
 }
 
+function AuthoredPrRow({ item }: { item: DashboardAuthoredPr }): React.JSX.Element {
+  const [isLaunching, setIsLaunching] = React.useState(false)
+  const launchCopilot = useCopilotLauncher()
+  const { openPrReview } = usePrReviewWorkspace()
+
+  const openInApp = (): void => {
+    openPrReview({
+      folderPath: item.repository.path,
+      remoteKind: item.pr.provider,
+      pullRequestId: item.pr.id,
+      title: item.pr.title
+    })
+  }
+
+  const unavailableReason = item.worktreeLookupFailed
+    ? 'Could not inspect local worktrees for this repository.'
+    : `Check out ${item.pr.sourceRef} in a worktree to address comments with Copilot.`
+
+  const handleAddressComments = async (): Promise<void> => {
+    if (isLaunching || !item.sourceWorktree) return
+    setIsLaunching(true)
+    try {
+      const result = await launchCopilot({
+        folderPath: item.sourceWorktree.path,
+        prompt: buildPrCommentsPrompt({
+          folderPath: item.sourceWorktree.path,
+          provider: item.pr.provider,
+          pullRequestId: item.pr.id,
+          prTitle: item.pr.title,
+          prWebUrl: item.pr.webUrl
+        }),
+        label: `Address PR #${item.pr.id} comments`,
+        branch: item.sourceWorktree.branch ?? item.pr.sourceRef,
+        repository: item.repository.name
+      })
+      if (result.ok) {
+        toast.success('Copilot session started.')
+      } else {
+        toast.error(`Could not start Copilot session: ${result.error}`)
+      }
+    } catch (error) {
+      toast.error(
+        `Could not start Copilot session: ${error instanceof Error ? error.message : 'unknown error'}`
+      )
+    } finally {
+      setIsLaunching(false)
+    }
+  }
+
+  return (
+    <li className="hover:bg-accent/60 flex items-center gap-2 px-3 py-2 transition-colors">
+      <span className="bg-muted text-muted-foreground shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px]">
+        #{item.pr.id}
+      </span>
+      <button
+        type="button"
+        onClick={openInApp}
+        className="focus-visible:ring-ring/50 min-w-0 flex-1 rounded-sm text-left focus-visible:outline-none focus-visible:ring-3"
+        title={`Review PR #${item.pr.id} in SWE Factory`}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-xs font-medium">{item.pr.title}</span>
+          {item.pr.isDraft ? (
+            <span className="bg-muted text-muted-foreground shrink-0 rounded-full px-1.5 py-0.5 text-[10px]">
+              Draft
+            </span>
+          ) : null}
+        </span>
+        <span className="text-muted-foreground block truncate text-[10px]">
+          {item.repository.name} · {item.pr.sourceRef} → {item.pr.targetRef}
+        </span>
+      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={openInApp}
+            aria-label={`Review PR #${item.pr.id} in SWE Factory`}
+          >
+            <FileDiffIcon className="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Review in app</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="inline-flex"
+            tabIndex={item.sourceWorktree ? undefined : 0}
+            aria-label={item.sourceWorktree ? undefined : unavailableReason}
+          >
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={() => void handleAddressComments()}
+              disabled={!item.sourceWorktree || isLaunching}
+              aria-busy={isLaunching}
+              aria-label={`Address comments on PR #${item.pr.id} with Copilot`}
+            >
+              {isLaunching ? (
+                <Loader2Icon className="size-3.5 animate-spin" />
+              ) : (
+                <SparklesIcon className="size-3.5" />
+              )}
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          {item.sourceWorktree ? 'Address comments with Copilot' : unavailableReason}
+        </TooltipContent>
+      </Tooltip>
+    </li>
+  )
+}
+
 function nativeSessionCompletedTask(
   session: TerminalSession,
   snapshot: NativeSnapshot | undefined
@@ -104,14 +231,8 @@ export function DashboardPage({
   onNavigateToReviews: (repositoryId?: string) => void
   onDoneTask: (task: Task) => Promise<void>
 }): React.JSX.Element {
-  const {
-    sessions,
-    embeddedTerminals,
-    nativeById,
-    select,
-    focusExternal,
-    observationNow
-  } = useTerminalSessions()
+  const { sessions, embeddedTerminals, nativeById, select, focusExternal, observationNow } =
+    useTerminalSessions()
   const { tasks } = useTaskBoard()
   const completingTaskIdsRef = React.useRef(new Set<string>())
   const [completingTaskIds, setCompletingTaskIds] = React.useState<ReadonlySet<string>>(
@@ -146,7 +267,7 @@ export function DashboardPage({
       ),
     [interactionById]
   )
-  const { items, errors, isLoading, refresh } = useDashboard()
+  const { assignedItems, authoredItems, errors, isLoading, refresh } = useDashboard()
   const liveSessions = React.useMemo(
     () =>
       [
@@ -390,11 +511,11 @@ export function DashboardPage({
         </DashboardCard>
 
         <DashboardCard
-          title="Assigned reviews"
+          title="Pull requests"
           description={
-            isLoading && items.length === 0
+            isLoading && assignedItems.length === 0 && authoredItems.length === 0
               ? 'Checking configured repositories…'
-              : `${items.length} pull request${items.length === 1 ? '' : 's'} awaiting your review`
+              : `${authoredItems.length} created by you · ${assignedItems.length} awaiting your review`
           }
           actions={
             <Button
@@ -403,8 +524,8 @@ export function DashboardPage({
               className="size-7"
               onClick={() => void refresh()}
               disabled={isLoading}
-              aria-label="Refresh assigned pull requests"
-              title="Refresh assigned pull requests"
+              aria-label="Refresh pull requests"
+              title="Refresh pull requests"
             >
               <RefreshCwIcon className={cn('size-3.5', isLoading && 'animate-spin')} />
             </Button>
@@ -416,7 +537,32 @@ export function DashboardPage({
               <p className="text-destructive line-clamp-2 text-xs">{errors.join(' · ')}</p>
             </div>
           ) : null}
-          {items.length === 0 ? (
+          <div className="flex items-baseline gap-2">
+            <h4 className="text-xs font-semibold">Created by me</h4>
+            <span className="text-muted-foreground text-[10px]">
+              {authoredItems.length} open pull request{authoredItems.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          {authoredItems.length === 0 ? (
+            <p className="text-muted-foreground bg-background/60 rounded-md border px-3 py-3 text-xs italic">
+              No open pull requests created by you.
+            </p>
+          ) : (
+            <div className="bg-background/60 overflow-hidden rounded-md border">
+              <ul className="divide-y">
+                {authoredItems.map((item) => (
+                  <AuthoredPrRow key={item.key} item={item} />
+                ))}
+              </ul>
+            </div>
+          )}
+          <div className="mt-1 flex items-baseline gap-2">
+            <h4 className="text-xs font-semibold">Assigned to me</h4>
+            <span className="text-muted-foreground text-[10px]">
+              {assignedItems.length} awaiting your review
+            </span>
+          </div>
+          {assignedItems.length === 0 ? (
             <button
               type="button"
               onClick={() => onNavigateToReviews()}
@@ -439,7 +585,7 @@ export function DashboardPage({
           ) : (
             <div className="bg-background/60 overflow-hidden rounded-md border">
               <ul className="divide-y">
-                {items.map((item) => {
+                {assignedItems.map((item) => {
                   const isPending =
                     item.autoReviewStatus === 'checking' || item.autoReviewStatus === 'launching'
                   return (
@@ -480,17 +626,26 @@ export function DashboardPage({
                   )
                 })}
               </ul>
-              <button
-                type="button"
-                onClick={() => onNavigateToReviews()}
-                className="text-muted-foreground hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-center justify-center gap-1 border-t px-3 py-2 text-[10px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-3"
-              >
-                Open all reviews
-                <ChevronRightIcon className="size-3" />
-              </button>
             </div>
           )}
+          <button
+            type="button"
+            onClick={() => onNavigateToReviews()}
+            className="text-muted-foreground hover:bg-accent/60 focus-visible:ring-ring/50 flex w-full items-center justify-center gap-1 rounded-md border px-3 py-2 text-[10px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-3"
+          >
+            Open all reviews
+            <ChevronRightIcon className="size-3" />
+          </button>
         </DashboardCard>
+
+        <div className="pt-2">
+          <h3 className="text-base font-semibold tracking-tight">Analytics</h3>
+          <p className="text-muted-foreground text-xs">
+            Copilot CLI usage across all repositories for the last 7 days.
+          </p>
+        </div>
+
+        <DashboardAnalytics />
       </div>
     </div>
   )

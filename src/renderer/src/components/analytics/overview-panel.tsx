@@ -1,27 +1,8 @@
-import { useId } from 'react'
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis
-} from 'recharts'
-
 import type { CopilotAnalyticsSummary } from '@shared/copilot-analytics'
 import { baseName } from '@/lib/utils'
+import { UsageOverTimeChart } from './charts'
 import { UsageBreakdowns } from './usage-breakdowns'
-import {
-  change,
-  chartTick,
-  chartTooltipStyle,
-  credits,
-  duration,
-  number,
-  ratio,
-  SOURCE_LABELS
-} from './format'
+import { change, credits, duration, number, ratio, SOURCE_LABELS } from './format'
 import { Explanation, Metric, Section } from './shared'
 
 export function OverviewPanel({
@@ -31,7 +12,6 @@ export function OverviewPanel({
 }): React.JSX.Element {
   const { totals, previous, coverage } = summary
   const hasCredits = totals.creditRecords > 0
-  const fillId = useId()
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-y px-1 py-2 md:grid-cols-3 xl:grid-cols-6">
@@ -75,80 +55,7 @@ export function OverviewPanel({
         title="Usage over time"
         description="User turns (solid) and active sessions (dashed). Model calls are separate usage records, not extra user turns."
       >
-        <div
-          className="h-60"
-          role="img"
-          aria-label={`Daily activity: ${totals.turns} turns across ${totals.activeDays} active days`}
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={summary.daily} margin={{ left: -16, right: 12, top: 8 }}>
-              <defs>
-                <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="var(--color-chart-1)" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="var(--color-chart-1)" stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid vertical={false} stroke="var(--color-border)" />
-              <XAxis
-                dataKey="date"
-                tick={chartTick}
-                tickFormatter={(value: string) => value.slice(5)}
-                minTickGap={30}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis tick={chartTick} allowDecimals={false} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={chartTooltipStyle} />
-              <Area
-                type="monotone"
-                dataKey="turns"
-                name="User turns"
-                stroke="var(--color-chart-1)"
-                fill={`url(#${fillId})`}
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-              />
-              <Area
-                type="monotone"
-                dataKey="sessions"
-                name="Sessions"
-                stroke="var(--color-chart-2)"
-                fill="transparent"
-                strokeDasharray="4 4"
-                dot={false}
-                isAnimationActive={false}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-        <details className="text-xs">
-          <summary className="cursor-pointer rounded py-1 text-muted-foreground focus-visible:ring-3 focus-visible:ring-ring">
-            View daily data
-          </summary>
-          <div className="max-h-64 overflow-auto">
-            <table className="w-full text-left tabular-nums">
-              <thead>
-                <tr className="border-b">
-                  <th className="py-2">Date</th>
-                  <th>Turns</th>
-                  <th>Sessions</th>
-                  <th>Recorded CLI credits</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.daily.map((day) => (
-                  <tr key={day.date} className="border-b last:border-0">
-                    <td className="py-2">{day.date}</td>
-                    <td>{number(day.turns)}</td>
-                    <td>{day.sessions}</td>
-                    <td>{hasCredits ? credits(day.costNanoAiu) : '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </details>
+        <UsageOverTimeChart summary={summary} />
       </Section>
 
       <UsageBreakdowns summary={summary} />

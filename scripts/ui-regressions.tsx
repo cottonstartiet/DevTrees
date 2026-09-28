@@ -21,16 +21,21 @@ import { alignSplitRows, type DiffDisplayRow } from '@/components/pr-review/diff
 import { DiffView } from '@/components/pr-review/diff-view'
 import { ReviewWorkspace } from '@/components/pr-review/review-workspace'
 import { CreateBranchDialog } from '@/components/create-branch-dialog'
+import { ActivityRail } from '@/components/activity-rail'
+import { AppSidebar } from '@/components/app-sidebar'
 import { GlobalTaskShortcut } from '@/components/global-task-shortcut'
 import { TaskCard } from '@/components/task-card'
 import { TaskColumn } from '@/components/task-column'
 import { TaskDetailDialog } from '@/components/task-detail-dialog'
 import { TerminalTimeline } from '@/components/sessions/terminal-timeline'
+import { SidebarProvider } from '@/components/ui/sidebar'
 import { TasksProvider } from '@/contexts/tasks-context'
 import { TaskBoardProvider, useTaskBoard } from '@/contexts/task-board-context'
+import { TerminalSessionsProvider } from '@/contexts/terminal-sessions-context'
 import { ThemeProvider } from '@/contexts/theme-context'
 import { useNativeSessions } from '@/contexts/use-native-sessions'
 import { useRepoStatus } from '@/hooks/use-repo-status'
+import { collectRepositoryWorkingTreePaths } from '@/hooks/use-repository-dirty-state'
 import { openTaskSession } from '@/lib/task-session-routing'
 import { TasksBoardLayout } from '@/pages/tasks'
 import { RemoteTimelineEntry } from '../src/remote/src/session-timeline-entry'
@@ -108,6 +113,17 @@ function mount(element: React.ReactNode) {
 }
 function mockApi(api: unknown): void {
   Object.defineProperty(window, 'api', { configurable: true, value: api })
+}
+
+function setFormValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const prototype =
+    element instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype
+  const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+  assert(setter, 'Form control value setter was unavailable')
+  setter.call(element, value)
+  element.dispatchEvent(new Event('input', { bubbles: true }))
 }
 
 async function popupLifecycles(): Promise<void> {
@@ -287,6 +303,199 @@ async function globalNewTaskShortcut(): Promise<void> {
     await delay()
     assert(openCount === 1, 'Ctrl+N replaced an already-open task draft')
     assert(document.querySelector<HTMLInputElement>('#task-title') === title, 'Task form remounted')
+  } finally {
+    fixture.dispose()
+  }
+}
+
+async function taskDraftPersistence(): Promise<void> {
+  const repository: Repository = {
+    id: 'repo',
+    path: 'C:\\repo',
+    name: 'Repo',
+    addedAt: 0,
+    remoteKind: 'github',
+    remoteUrl: null
+  }
+  const attachment = {
+    id: 'attachment-1',
+    name: 'requirements.txt',
+    mimeType: 'text/plain',
+    sizeBytes: 128
+  }
+  const discardedStages: string[] = []
+  mockApi({
+    tasks: {
+      pickAttachments: () => Promise.resolve({ ok: true, attachments: [attachment] }),
+      discardAttachmentStage: ({ stageId }: { stageId: string }) => {
+        discardedStages.push(stageId)
+        return Promise.resolve()
+      }
+    }
+  })
+
+  let controls!: { open: (open: boolean) => void }
+  let createSucceeds = false
+  let createCalls = 0
+  let lastCreate:
+    | {
+        intent: string
+        title: string
+        description: string
+        pendingWorktreeName: string | null
+        attachments: { id: string }[]
+      }
+    | undefined
+
+  function Harness(): React.JSX.Element {
+    const [open, setOpen] = React.useState(true)
+    React.useLayoutEffect(() => {
+      controls = { open: setOpen }
+    }, [])
+    return (
+      <TaskDetailDialog
+        open={open}
+        onOpenChange={setOpen}
+        task={null}
+        repositories={[repository]}
+        worktreesByRepositoryId={{ [repository.id]: [] }}
+        onCreate={(input) => {
+          createCalls += 1
+          lastCreate = input
+          return Promise.resolve(createSucceeds)
+        }}
+        onUpdate={() => Promise.resolve(true)}
+        onDelete={() => Promise.resolve()}
+      />
+    )
+  }
+
+  const fixture = mount(<Harness />)
+  try {
+    await until(() => Boolean(document.querySelector('[role="dialog"]')))
+    const title = document.querySelector<HTMLInputElement>('#task-title')
+    const description = document.querySelector<HTMLTextAreaElement>('#task-description')
+    assert(title && description, 'Task draft controls did not render')
+    setFormValue(title, 'Persist this task')
+    setFormValue(description, 'Keep every field after an accidental dismissal.')
+
+    const worktreeTrigger = document.querySelector<HTMLElement>(
+      '[aria-labelledby="task-worktree-label"]'
+    )
+    assert(worktreeTrigger, 'Task worktree selector did not render')
+    worktreeTrigger.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        pointerType: 'mouse'
+      })
+    )
+    await until(() => Boolean(document.querySelector('[role="listbox"]')))
+    const newWorktreeOption = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="option"]')
+    ).find((option) => option.textContent?.includes('Create new worktree'))
+    assert(newWorktreeOption, 'Create-new-worktree option did not render')
+    newWorktreeOption.dispatchEvent(
+      new PointerEvent('pointermove', { bubbles: true, pointerType: 'mouse' })
+    )
+    newWorktreeOption.dispatchEvent(
+      new PointerEvent('pointerup', {
+        bubbles: true,
+        button: 0,
+        pointerType: 'mouse'
+      })
+    )
+    const newWorktreeName = await (async () => {
+      await until(() =>
+        Boolean(document.querySelector<HTMLInputElement>('input[placeholder="feature-x"]'))
+      )
+      return document.querySelector<HTMLInputElement>('input[placeholder="feature-x"]')!
+    })()
+    setFormValue(newWorktreeName, 'persisted-worktree')
+
+    const attachButton = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.includes('Attach files')
+    )
+    assert(attachButton, 'Attach files action did not render')
+    attachButton.click()
+    await until(() => document.body.textContent?.includes(attachment.name) === true)
+
+    controls.open(false)
+    await until(() => !document.querySelector('[role="dialog"]'))
+    assert(discardedStages.length === 0, 'Closing the task dialog discarded its attachment stage')
+    controls.open(true)
+    await until(() => Boolean(document.querySelector('[role="dialog"]')))
+    assert(
+      document.querySelector<HTMLInputElement>('#task-title')?.value === 'Persist this task',
+      'Task title draft was not restored'
+    )
+    assert(
+      document.querySelector<HTMLTextAreaElement>('#task-description')?.value ===
+        'Keep every field after an accidental dismissal.',
+      'Task description draft was not restored'
+    )
+    assert(
+      document.querySelector<HTMLInputElement>('input[placeholder="feature-x"]')?.value ===
+        'persisted-worktree',
+      'New worktree draft was not restored'
+    )
+    assert(
+      document.body.textContent?.includes(attachment.name),
+      'Task attachment draft was not restored'
+    )
+
+    const createButton = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Create task'
+    )
+    assert(createButton, 'Create task action did not render')
+    createButton.click()
+    await until(() => createCalls === 1)
+    assert(document.querySelector('[role="dialog"]'), 'Failed task creation closed the dialog')
+    controls.open(false)
+    await until(() => !document.querySelector('[role="dialog"]'))
+    controls.open(true)
+    await until(() => Boolean(document.querySelector('[role="dialog"]')))
+    assert(
+      document.querySelector<HTMLInputElement>('#task-title')?.value === 'Persist this task',
+      'Failed task creation cleared the draft'
+    )
+
+    createSucceeds = true
+    const retryButton = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent?.trim() === 'Create task'
+    )
+    assert(retryButton, 'Create task retry action did not render')
+    retryButton.click()
+    await until(() => !document.querySelector('[role="dialog"]'))
+    assert(createCalls === 2, 'Successful task creation did not retry exactly once')
+    assert(lastCreate?.intent === 'task', 'Task draft intent changed before creation')
+    assert(lastCreate?.title === 'Persist this task', 'Created task lost its title draft')
+    assert(
+      lastCreate?.description === 'Keep every field after an accidental dismissal.',
+      'Created task lost its description draft'
+    )
+    assert(
+      lastCreate?.pendingWorktreeName === 'persisted-worktree',
+      'Created task lost its worktree draft'
+    )
+    assert(lastCreate?.attachments.length === 1, 'Created task lost its attachment draft')
+
+    controls.open(true)
+    await until(() => Boolean(document.querySelector('[role="dialog"]')))
+    assert(
+      document.querySelector<HTMLInputElement>('#task-title')?.value === '',
+      'Successful task creation did not clear the title draft'
+    )
+    assert(
+      !document.body.textContent?.includes(attachment.name),
+      'Successful task creation did not clear the attachment draft'
+    )
+    assert(
+      document
+        .querySelector('[aria-labelledby="task-worktree-label"]')
+        ?.textContent?.includes('Main branch'),
+      'Successful task creation did not restore the default run target'
+    )
   } finally {
     fixture.dispose()
   }
@@ -1826,11 +2035,236 @@ async function reviewWorkspaceModes(): Promise<void> {
   }
 }
 
+async function repositoryAccordionPersistence(): Promise<void> {
+  const storageKey = 'swe-factory-collapsed-repository-ids'
+  const repositories: Repository[] = [
+    {
+      id: 'repo-a',
+      path: 'C:\\repo-a',
+      name: 'Repository A',
+      addedAt: 0,
+      remoteKind: 'github',
+      remoteUrl: null
+    },
+    {
+      id: 'repo-b',
+      path: 'C:\\repo-b',
+      name: 'Repository B',
+      addedAt: 1,
+      remoteKind: 'github',
+      remoteUrl: null
+    }
+  ]
+  const worktree = (repository: Repository): Worktree => ({
+    path: `${repository.path}.worktrees\\feature`,
+    branch: 'feature/persist-accordion',
+    head: 'a'.repeat(40),
+    isDetached: false,
+    isMain: false,
+    isLocked: false
+  })
+
+  mockApi({
+    terminalSessions: {
+      onUpdate: async () => () => undefined,
+      list: async () => [],
+      history: async () => []
+    },
+    embeddedTerminals: {
+      onUpdate: async () => () => undefined,
+      list: async () => []
+    },
+    nativeSessions: {
+      onUpdate: async () => () => undefined
+    }
+  })
+  window.localStorage.removeItem(storageKey)
+
+  const renderSidebar = (): React.JSX.Element => (
+    <TerminalSessionsProvider>
+      <SidebarProvider>
+        <AppSidebar
+          activeView="repositories"
+          onSelectView={() => undefined}
+          repositories={repositories}
+          activeRepositoryId={null}
+          activeWorktreePath={null}
+          worktreesByRepositoryId={Object.fromEntries(
+            repositories.map((repository) => [repository.id, [worktree(repository)]])
+          )}
+          deletingWorktreePaths={new Set()}
+          onAddRepository={() => undefined}
+          onSelectRepository={() => undefined}
+          onRemoveRepository={() => undefined}
+          onReorderRepositories={() => undefined}
+          onCreateWorktree={() => undefined}
+          onSelectWorktree={() => undefined}
+          onDeleteWorktree={() => undefined}
+        />
+      </SidebarProvider>
+    </TerminalSessionsProvider>
+  )
+  const triggers = (container: ParentNode): HTMLButtonElement[] =>
+    Array.from(container.querySelectorAll<HTMLButtonElement>('button[title="Toggle worktrees"]'))
+
+  let fixture = mount(renderSidebar())
+  try {
+    await until(() => triggers(fixture.container).length === 2)
+    const [first, second] = triggers(fixture.container)
+    assert(
+      first.getAttribute('aria-expanded') === 'true',
+      'First repository was not open initially'
+    )
+    assert(
+      second.getAttribute('aria-expanded') === 'true',
+      'Second repository was not open initially'
+    )
+
+    first.click()
+    await until(() => triggers(fixture.container)[0]?.getAttribute('aria-expanded') === 'false')
+    assert(
+      triggers(fixture.container)[1]?.getAttribute('aria-expanded') === 'true',
+      'Collapsing one repository changed another repository'
+    )
+    await until(() => window.localStorage.getItem(storageKey) === '["repo-a"]')
+
+    fixture.root.render(renderSidebar())
+    await until(() => triggers(fixture.container)[0]?.getAttribute('aria-expanded') === 'false')
+  } finally {
+    fixture.dispose()
+  }
+
+  fixture = mount(renderSidebar())
+  try {
+    await until(() => triggers(fixture.container).length === 2)
+    const [first, second] = triggers(fixture.container)
+    assert(
+      first.getAttribute('aria-expanded') === 'false',
+      'Collapsed repository was not restored after remount'
+    )
+    assert(
+      second.getAttribute('aria-expanded') === 'true',
+      'Uncollapsed repository was not restored independently'
+    )
+
+    first.click()
+    await until(() => triggers(fixture.container)[0]?.getAttribute('aria-expanded') === 'true')
+    await until(() => window.localStorage.getItem(storageKey) === '[]')
+  } finally {
+    fixture.dispose()
+    window.localStorage.removeItem(storageKey)
+  }
+}
+
+async function repositoryDirtyRailIndicator(): Promise<void> {
+  const repositories: Repository[] = [
+    {
+      id: 'repo-a',
+      path: 'C:\\repo-a',
+      name: 'Repository A',
+      addedAt: 0,
+      remoteKind: 'github',
+      remoteUrl: null
+    },
+    {
+      id: 'repo-b',
+      path: 'C:\\repo-b',
+      name: 'Repository B',
+      addedAt: 1,
+      remoteKind: 'github',
+      remoteUrl: null
+    }
+  ]
+  const paths = collectRepositoryWorkingTreePaths(repositories, {
+    'repo-a': [
+      {
+        path: 'c:/repo-a',
+        branch: 'main',
+        head: 'a'.repeat(40),
+        isDetached: false,
+        isMain: true,
+        isLocked: false
+      },
+      {
+        path: 'C:\\repo-a.worktrees\\feature',
+        branch: 'feature/dirty',
+        head: 'b'.repeat(40),
+        isDetached: false,
+        isMain: false,
+        isLocked: false
+      }
+    ]
+  })
+  assert(paths.length === 3, 'Repository and worktree paths were not deduplicated on Windows')
+
+  mockApi({
+    system: {
+      getKeepAwake: async () => ({ ok: true, enabled: false }),
+      setKeepAwake: async () => ({ ok: true, enabled: false })
+    },
+    terminalSessions: {
+      onUpdate: async () => () => undefined,
+      list: async () => [],
+      history: async () => []
+    },
+    embeddedTerminals: {
+      onUpdate: async () => () => undefined,
+      list: async () => []
+    },
+    nativeSessions: {
+      onUpdate: async () => () => undefined
+    }
+  })
+
+  const renderRail = (dirtyWorkingTreeCount: number): React.JSX.Element => (
+    <TerminalSessionsProvider>
+      <SidebarProvider>
+        <ActivityRail
+          activeView="dashboard"
+          onSelect={() => undefined}
+          dirtyWorkingTreeCount={dirtyWorkingTreeCount}
+        />
+      </SidebarProvider>
+    </TerminalSessionsProvider>
+  )
+
+  const fixture = mount(renderRail(2))
+  try {
+    await until(() =>
+      Boolean(
+        fixture.container.querySelector(
+          'button[aria-label="Repos, 2 working trees have uncommitted changes"]'
+        )
+      )
+    )
+    const reposButton = fixture.container.querySelector<HTMLButtonElement>(
+      'button[aria-label^="Repos,"]'
+    )
+    assert(reposButton, 'Repos button did not expose dirty state accessibly')
+    assert(
+      reposButton.querySelector('[data-status-indicator]'),
+      'Repos button did not render the dirty-state dot'
+    )
+
+    fixture.root.render(renderRail(0))
+    await until(() => Boolean(fixture.container.querySelector('button[aria-label="Repos"]')))
+    assert(
+      !fixture.container
+        .querySelector<HTMLButtonElement>('button[aria-label="Repos"]')
+        ?.querySelector('[data-status-indicator]'),
+      'Repos dirty-state dot remained after the count cleared'
+    )
+  } finally {
+    fixture.dispose()
+  }
+}
+
 window.uiRegressions = (async () => {
   const reports: Report[] = []
   for (const [name, run] of [
     ['popup input lock recovery', popupLifecycles],
     ['global new task shortcut', globalNewTaskShortcut],
+    ['task draft persistence', taskDraftPersistence],
     ['task save shortcut', taskSaveShortcut],
     ['task main branch default', taskMainBranchDefault],
     ['worktree dropdown placement', worktreeDropdownPlacement],
@@ -1845,7 +2279,9 @@ window.uiRegressions = (async () => {
     ['bounded transcript rendering', transcriptWork],
     ['remote session timeline compaction', remoteSessionTimelineCompaction],
     ['diff viewer layouts', diffViewerLayouts],
-    ['review workspace modes', reviewWorkspaceModes]
+    ['review workspace modes', reviewWorkspaceModes],
+    ['repository accordion persistence', repositoryAccordionPersistence],
+    ['repository dirty rail indicator', repositoryDirtyRailIndicator]
   ] as const) {
     try {
       const metrics = await run()

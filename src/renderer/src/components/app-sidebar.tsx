@@ -153,6 +153,31 @@ const SESSION_DOT_CLASS: Record<TerminalSessionStatus, string> = {
   error: 'text-destructive'
 }
 
+const COLLAPSED_REPOSITORY_IDS_STORAGE_KEY = 'swe-factory-collapsed-repository-ids'
+
+function readCollapsedRepositoryIds(): Set<string> {
+  try {
+    const stored = window.localStorage.getItem(COLLAPSED_REPOSITORY_IDS_STORAGE_KEY)
+    if (stored === null) return new Set()
+
+    const parsed: unknown = JSON.parse(stored)
+    if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === 'string')) {
+      return new Set()
+    }
+    return new Set(parsed)
+  } catch {
+    return new Set()
+  }
+}
+
+function persistCollapsedRepositoryIds(ids: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(COLLAPSED_REPOSITORY_IDS_STORAGE_KEY, JSON.stringify([...ids]))
+  } catch {
+    // Persistence is best-effort; the current renderer state still remains usable.
+  }
+}
+
 function worktreeLabel(path: string): string {
   const idx = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
   return idx < 0 ? path : path.slice(idx + 1)
@@ -167,10 +192,12 @@ function worktreeSubtitle(wt: Worktree): string | null {
 interface SortableRepositoryItemProps {
   ws: Repository
   worktrees: Worktree[]
+  open: boolean
   activeView: AppView
   activeRepositoryId: string | null
   activeWorktreePath: string | null
   deletingWorktreePaths: ReadonlySet<string>
+  onOpenChange: (open: boolean) => void
   onSelectRepository: (id: string) => void
   onCreateWorktree: (repository: Repository) => void
   onRemoveRepository: (id: string) => void
@@ -183,10 +210,12 @@ interface SortableRepositoryItemProps {
 function SortableRepositoryItem({
   ws,
   worktrees,
+  open,
   activeView,
   activeRepositoryId,
   activeWorktreePath,
   deletingWorktreePaths,
+  onOpenChange,
   onSelectRepository,
   onCreateWorktree,
   onRemoveRepository,
@@ -207,7 +236,7 @@ function SortableRepositoryItem({
 
   return (
     <SidebarMenuItem ref={setNodeRef} style={style} className={cn(isDragging && 'z-50 opacity-80')}>
-      <Collapsible defaultOpen className="group/collapsible">
+      <Collapsible open={open} onOpenChange={onOpenChange} className="group/collapsible">
         <SidebarMenuAction
           {...attributes}
           {...listeners}
@@ -405,6 +434,9 @@ export function AppSidebar({
   onSelectWorktree,
   onDeleteWorktree
 }: AppSidebarProps): React.JSX.Element {
+  const [collapsedRepositoryIds, setCollapsedRepositoryIds] = React.useState(
+    readCollapsedRepositoryIds
+  )
   const [completedSessionsOpen, setCompletedSessionsOpen] = React.useState(false)
   const [terminalLauncherOpen, setTerminalLauncherOpen] = React.useState(false)
   const launchCopilot = useCopilotLauncher()
@@ -415,6 +447,19 @@ export function AppSidebar({
   const selectedSessionIsCompleted = sessions.some(
     (session) => session.id === selectedId && isTerminalSessionFinished(session.status)
   )
+
+  React.useEffect(() => {
+    persistCollapsedRepositoryIds(collapsedRepositoryIds)
+  }, [collapsedRepositoryIds])
+
+  const handleRepositoryOpenChange = React.useCallback((id: string, open: boolean): void => {
+    setCollapsedRepositoryIds((current) => {
+      const next = new Set(current)
+      if (open) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
 
   const handleStartCopilotSession = React.useCallback(
     async (wt: Worktree, repository?: string): Promise<void> => {
@@ -604,10 +649,12 @@ export function AppSidebar({
                           key={ws.id}
                           ws={ws}
                           worktrees={worktreesByRepositoryId[ws.id] ?? []}
+                          open={!collapsedRepositoryIds.has(ws.id)}
                           activeView={activeView}
                           activeRepositoryId={activeRepositoryId}
                           activeWorktreePath={activeWorktreePath}
                           deletingWorktreePaths={deletingWorktreePaths}
+                          onOpenChange={(open) => handleRepositoryOpenChange(ws.id, open)}
                           onSelectRepository={onSelectRepository}
                           onCreateWorktree={onCreateWorktree}
                           onRemoveRepository={onRemoveRepository}

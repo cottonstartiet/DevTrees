@@ -30,7 +30,12 @@ import { Textarea } from '@/components/ui/textarea'
 import { TASK_STATUS_LABELS } from '@/contexts/task-board-context'
 import { discardTaskAttachmentStage, pickTaskAttachments } from '@/lib/tasks'
 import type { Repository } from '@shared/repository'
-import type { Task, TaskAttachmentSelection, TaskStatus } from '@shared/task'
+import type {
+  Task,
+  TaskAttachmentSelection,
+  TaskIntent,
+  TaskStatus
+} from '@shared/task'
 import type { Worktree } from '@shared/worktree'
 
 const VALID_WORKTREE_NAME = /^[A-Za-z0-9._-]+$/
@@ -62,11 +67,13 @@ export interface TaskDetailDialogProps {
   worktreesByRepositoryId: Record<string, Worktree[]>
   initialDraft?: {
     id: string
+    kind?: TaskIntent
     title: string
     description: string
     repositoryName: string | null
   } | null
   onCreate: (input: {
+    intent: TaskIntent
     title: string
     description: string
     repository: Repository
@@ -90,26 +97,23 @@ export interface TaskDetailDialogProps {
   onDelete: (task: Task) => Promise<void>
 }
 
-type TaskFormProps = Omit<TaskDetailDialogProps, 'open'>
+interface TaskCreateDraft {
+  intent: TaskIntent
+  title: string
+  description: string
+  repositoryId: string
+  repositoryNameHint: string | null
+  worktreeSelection: string
+  newWorktreeName: string
+  attachmentStageId: string
+  attachments: TaskAttachmentSelection[]
+}
 
-/**
- * The actual form. Mounted fresh (via a `key` on the caller) each time the dialog opens for a
- * given task/create flow, so its local state can simply initialize from props instead of being
- * reset from an effect.
- */
-function TaskDetailForm({
-  onOpenChange,
-  task,
-  repositories,
-  worktreesByRepositoryId,
-  initialDraft,
-  onCreate,
-  onUpdate,
-  onDelete
-}: TaskFormProps): React.JSX.Element {
-  const isEdit = task != null
-
-  const matchedDraftRepositories = initialDraft?.repositoryName
+function createEmptyTaskDraft(
+  repositories: Repository[],
+  initialDraft?: TaskDetailDialogProps['initialDraft']
+): TaskCreateDraft {
+  const matchedRepositories = initialDraft?.repositoryName
     ? repositories.filter(
         (repository) =>
           repository.name.localeCompare(initialDraft.repositoryName!, undefined, {
@@ -117,28 +121,76 @@ function TaskDetailForm({
           }) === 0
       )
     : []
-  const [title, setTitle] = React.useState(task?.title ?? initialDraft?.title ?? '')
+  const repositoryId = initialDraft
+    ? matchedRepositories.length === 1
+      ? matchedRepositories[0].id
+      : ''
+    : (repositories[0]?.id ?? '')
+
+  return {
+    intent: initialDraft?.kind ?? 'task',
+    title: initialDraft?.title ?? '',
+    description: initialDraft?.description ?? '',
+    repositoryId,
+    repositoryNameHint: initialDraft?.repositoryName ?? null,
+    worktreeSelection: repositoryId ? MAIN_BRANCH_VALUE : '',
+    newWorktreeName: '',
+    attachmentStageId: crypto.randomUUID(),
+    attachments: []
+  }
+}
+
+type TaskFormProps = Omit<TaskDetailDialogProps, 'open'> & {
+  createDraft: TaskCreateDraft
+  onCreateDraftChange: (draft: TaskCreateDraft) => void
+}
+
+/**
+ * The actual form. Create values are mirrored into the dialog-owned draft before this component
+ * unmounts; edit values remain scoped to the selected persisted task.
+ */
+function TaskDetailForm({
+  onOpenChange,
+  task,
+  repositories,
+  worktreesByRepositoryId,
+  createDraft,
+  onCreateDraftChange,
+  onCreate,
+  onUpdate,
+  onDelete
+}: TaskFormProps): React.JSX.Element {
+  const isEdit = task != null
+
+  const matchedDraftRepositories = createDraft.repositoryNameHint
+    ? repositories.filter(
+        (repository) =>
+          repository.name.localeCompare(createDraft.repositoryNameHint!, undefined, {
+            sensitivity: 'accent'
+          }) === 0
+      )
+    : []
+  const [title, setTitleState] = React.useState(task?.title ?? createDraft.title)
   const [description, setDescription] = React.useState(
-    task?.description ?? initialDraft?.description ?? ''
+    task?.description ?? createDraft.description
   )
-  const initialRepositoryId =
-    task?.repositoryId ??
-    (initialDraft
-      ? matchedDraftRepositories.length === 1
-        ? matchedDraftRepositories[0].id
-        : ''
-      : (repositories[0]?.id ?? ''))
+  const initialRepositoryId = task?.repositoryId ?? createDraft.repositoryId
   const [repositoryId, setRepositoryId] = React.useState<string>(initialRepositoryId)
   const initialSelection = task?.pendingWorktreeName
     ? NEW_WORKTREE_VALUE
     : task && task.worktreePath === task.repositoryPath
       ? MAIN_BRANCH_VALUE
-      : (task?.worktreePath ?? (initialRepositoryId ? MAIN_BRANCH_VALUE : ''))
+      : (task?.worktreePath ?? createDraft.worktreeSelection)
   const [worktreeSelection, setWorktreeSelection] = React.useState<string>(initialSelection)
-  const [newWorktreeName, setNewWorktreeName] = React.useState(task?.pendingWorktreeName ?? '')
-  const [attachmentStageId] = React.useState(() => crypto.randomUUID())
-  const [attachments, setAttachments] = React.useState<TaskAttachmentSelection[]>(() =>
-    (task?.attachments ?? []).map((attachment) => ({ ...attachment, staged: false }))
+  const [newWorktreeName, setNewWorktreeNameState] = React.useState(
+    task?.pendingWorktreeName ?? createDraft.newWorktreeName
+  )
+  const [editAttachmentStageId] = React.useState(() => crypto.randomUUID())
+  const attachmentStageId = isEdit ? editAttachmentStageId : createDraft.attachmentStageId
+  const [attachments, setAttachmentsState] = React.useState<TaskAttachmentSelection[]>(() =>
+    task
+      ? task.attachments.map((attachment) => ({ ...attachment, staged: false }))
+      : createDraft.attachments
   )
   const [attachmentError, setAttachmentError] = React.useState<string | null>(null)
   const [attaching, setAttaching] = React.useState(false)
@@ -151,17 +203,46 @@ function TaskDetailForm({
   const [busy, setBusy] = React.useState(false)
   const formRef = React.useRef<HTMLFormElement>(null)
 
-  React.useEffect(
-    () => () => {
+  React.useEffect(() => {
+    if (!isEdit) return
+    return () => {
       void discardTaskAttachmentStage({ stageId: attachmentStageId })
-    },
-    [attachmentStageId]
-  )
+    }
+  }, [attachmentStageId, isEdit])
+
+  const updateCreateDraft = (patch: Partial<TaskCreateDraft>): void => {
+    if (!isEdit) onCreateDraftChange({ ...createDraft, ...patch })
+  }
+
+  const setTitle = (value: string): void => {
+    setTitleState(value)
+    updateCreateDraft({ title: value })
+  }
+
+  const setDescriptionValue = (value: string): void => {
+    setDescription(value)
+    updateCreateDraft({ description: value })
+  }
+
+  const setNewWorktreeName = (value: string): void => {
+    setNewWorktreeNameState(value)
+    updateCreateDraft({ newWorktreeName: value })
+  }
+
+  const setAttachments = (
+    update:
+      | TaskAttachmentSelection[]
+      | ((current: TaskAttachmentSelection[]) => TaskAttachmentSelection[])
+  ): void => {
+    const next = typeof update === 'function' ? update(attachments) : update
+    setAttachmentsState(next)
+    updateCreateDraft({ attachments: next })
+  }
 
   const effectiveRepositoryId =
     repositoryId ||
     (!isEdit
-      ? initialDraft
+      ? createDraft.repositoryNameHint
         ? matchedDraftRepositories.length === 1
           ? matchedDraftRepositories[0].id
           : ''
@@ -188,6 +269,12 @@ function TaskDetailForm({
     setRepositoryId(id)
     setWorktreeSelection(id ? MAIN_BRANCH_VALUE : '')
     setNewWorktreeName('')
+    updateCreateDraft({
+      repositoryId: id,
+      repositoryNameHint: null,
+      worktreeSelection: id ? MAIN_BRANCH_VALUE : '',
+      newWorktreeName: ''
+    })
     setEditedFields((current) => ({
       ...current,
       worktree: false,
@@ -197,6 +284,7 @@ function TaskDetailForm({
 
   const handleWorktreeSelectionChange = (selection: string): void => {
     setWorktreeSelection(selection)
+    updateCreateDraft({ worktreeSelection: selection })
     setEditedFields((current) => ({
       ...current,
       worktree: true,
@@ -260,6 +348,7 @@ function TaskDetailForm({
         if (!updated) return
       } else {
         const created = await onCreate({
+          intent: createDraft.intent,
           title: title.trim(),
           description,
           repository,
@@ -396,7 +485,7 @@ function TaskDetailForm({
             id="task-description"
             disabled={readOnly}
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => setDescriptionValue(e.target.value)}
             placeholder="Add more context for this task…"
             rows={4}
             className="h-full max-w-full min-h-16 min-w-0 flex-1 field-sizing-fixed resize-y [overflow-wrap:anywhere]"
@@ -567,15 +656,57 @@ function TaskDetailForm({
 }
 
 export function TaskDetailDialog(props: TaskDetailDialogProps): React.JSX.Element {
-  const { open, onOpenChange, task, initialDraft } = props
+  const { open, onOpenChange, task, initialDraft, repositories, onCreate } = props
+  const [createDraft, setCreateDraft] = React.useState<TaskCreateDraft>(() =>
+    createEmptyTaskDraft(repositories, initialDraft)
+  )
+  const [createDraftVersion, setCreateDraftVersion] = React.useState(0)
+  const initialDraftIdRef = React.useRef(initialDraft?.id ?? null)
+  const createDraftRef = React.useRef(createDraft)
+
+  React.useEffect(() => {
+    createDraftRef.current = createDraft
+  }, [createDraft])
+
+  React.useEffect(() => {
+    if (!initialDraft || initialDraft.id === initialDraftIdRef.current) return
+    initialDraftIdRef.current = initialDraft.id
+    const previousStageId = createDraftRef.current.attachmentStageId
+    setCreateDraft(createEmptyTaskDraft(repositories, initialDraft))
+    setCreateDraftVersion((current) => current + 1)
+    void discardTaskAttachmentStage({ stageId: previousStageId })
+  }, [initialDraft, repositories])
+
+  React.useEffect(
+    () => () => {
+      void discardTaskAttachmentStage({ stageId: createDraftRef.current.attachmentStageId })
+    },
+    []
+  )
 
   const handleOpenChange = (nextOpen: boolean): void => {
     onOpenChange(nextOpen)
   }
 
+  const handleCreate: TaskDetailDialogProps['onCreate'] = async (input) => {
+    const created = await onCreate(input)
+    if (!created) return false
+    setCreateDraft(createEmptyTaskDraft(repositories))
+    setCreateDraftVersion((current) => current + 1)
+    return true
+  }
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      {open ? <TaskDetailForm key={task?.id ?? initialDraft?.id ?? 'new'} {...props} /> : null}
+      {open ? (
+        <TaskDetailForm
+          key={task?.id ?? `new:${createDraftVersion}`}
+          {...props}
+          createDraft={createDraft}
+          onCreateDraftChange={setCreateDraft}
+          onCreate={handleCreate}
+        />
+      ) : null}
     </Dialog>
   )
 }

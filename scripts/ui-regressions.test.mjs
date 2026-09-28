@@ -165,6 +165,6 @@ test(
       if (report.metrics) t.diagnostic(`${report.name}: ${JSON.stringify(report.metrics)}`)
       assert.equal(report.error, undefined, `${report.name}: ${report.error}`)
     }
-    assert.equal(reports.length, 17)
+    assert.equal(reports.length, 20)
   }
 )

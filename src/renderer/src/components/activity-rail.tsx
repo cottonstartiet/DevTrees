@@ -41,20 +41,17 @@ function RailButton({
   Icon,
   activeView,
   onSelect,
-  attentionCount = 0
+  indicatorLabel
 }: {
   view: AppView
   label: string
   Icon: typeof GaugeIcon
   activeView: AppView
   onSelect: (view: AppView) => void
-  attentionCount?: number
+  indicatorLabel?: string
 }): React.JSX.Element {
   const active = view === activeView
-  const accessibleLabel =
-    attentionCount > 0
-      ? `${label}, ${attentionCount} running ${attentionCount === 1 ? 'session needs' : 'sessions need'} your action`
-      : label
+  const accessibleLabel = indicatorLabel ? `${label}, ${indicatorLabel}` : label
   return (
     <button
       type="button"
@@ -73,9 +70,10 @@ function RailButton({
       ) : null}
       <span className="relative">
         <Icon className="size-5" />
-        {attentionCount > 0 ? (
+        {indicatorLabel ? (
           <span
             aria-hidden="true"
+            data-status-indicator
             className="ring-sidebar absolute -top-1 -right-1 size-2.5 rounded-full bg-amber-500 ring-2"
           />
         ) : null}
@@ -133,10 +131,12 @@ function KeepAwakeButton({
 
 export function ActivityRail({
   activeView,
-  onSelect
+  onSelect,
+  dirtyWorkingTreeCount
 }: {
   activeView: AppView
   onSelect: (view: AppView) => void
+  dirtyWorkingTreeCount: number
 }): React.JSX.Element {
   const { sessions, embeddedTerminals, nativeById } = useTerminalSessions()
   const [keepAwakeEnabled, setKeepAwakeEnabled] = React.useState(false)
@@ -152,6 +152,18 @@ export function ActivityRail({
       embeddedTerminals.filter((terminal) => terminal.status === 'waiting-input').length,
     [embeddedTerminals, nativeById, sessions]
   )
+  const dashboardIndicatorLabel =
+    sessionsNeedingAction > 0
+      ? `${sessionsNeedingAction} running ${
+          sessionsNeedingAction === 1 ? 'session needs' : 'sessions need'
+        } your action`
+      : undefined
+  const repositoriesIndicatorLabel =
+    dirtyWorkingTreeCount > 0
+      ? `${dirtyWorkingTreeCount} working ${
+          dirtyWorkingTreeCount === 1 ? 'tree has' : 'trees have'
+        } uncommitted changes`
+      : undefined
 
   React.useEffect(() => {
     let cancelled = false
@@ -189,7 +201,13 @@ export function ActivityRail({
             {...item}
             activeView={activeView}
             onSelect={onSelect}
-            attentionCount={item.view === 'dashboard' ? sessionsNeedingAction : 0}
+            indicatorLabel={
+              item.view === 'dashboard'
+                ? dashboardIndicatorLabel
+                : item.view === 'repositories'
+                  ? repositoriesIndicatorLabel
+                  : undefined
+            }
           />
         ))}
       </div>
