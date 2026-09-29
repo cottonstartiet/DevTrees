@@ -73,6 +73,7 @@ import { useTerminalSessions } from '@/contexts/terminal-sessions-context'
 import { isTerminalSessionFinished, type TerminalSessionStatus } from '@shared/terminal-session'
 import { nativeSessionNeedsUserAction } from '@shared/native-session'
 import { TerminalLauncherDialog } from '@/components/sessions/terminal-launcher-dialog'
+import { normalizeWorkingTreePath } from '@/hooks/use-repository-dirty-state'
 
 function GithubIcon({ className }: { className?: string }): React.JSX.Element {
   return (
@@ -125,6 +126,7 @@ interface AppSidebarProps {
   activeRepositoryId: string | null
   activeWorktreePath: string | null
   worktreesByRepositoryId: Record<string, Worktree[]>
+  dirtyWorkingTreePaths: ReadonlySet<string>
   deletingWorktreePaths: ReadonlySet<string>
   onAddRepository: () => void
   onSelectRepository: (id: string) => void
@@ -189,9 +191,22 @@ function worktreeSubtitle(wt: Worktree): string | null {
   return null
 }
 
+function DirtyStateIndicator(): React.JSX.Element {
+  return (
+    <span
+      role="img"
+      aria-label="Uncommitted changes"
+      title="Uncommitted changes"
+      data-status-indicator="dirty"
+      className="size-2 shrink-0 rounded-full bg-amber-500"
+    />
+  )
+}
+
 interface SortableRepositoryItemProps {
   ws: Repository
   worktrees: Worktree[]
+  dirtyWorkingTreePaths: ReadonlySet<string>
   open: boolean
   activeView: AppView
   activeRepositoryId: string | null
@@ -210,6 +225,7 @@ interface SortableRepositoryItemProps {
 function SortableRepositoryItem({
   ws,
   worktrees,
+  dirtyWorkingTreePaths,
   open,
   activeView,
   activeRepositoryId,
@@ -233,6 +249,7 @@ function SortableRepositoryItem({
   }
   const isWsRowActive =
     activeView === 'repositories' && activeRepositoryId === ws.id && !activeWorktreePath
+  const repositoryIsDirty = dirtyWorkingTreePaths.has(normalizeWorkingTreePath(ws.path))
 
   return (
     <SidebarMenuItem ref={setNodeRef} style={style} className={cn(isDragging && 'z-50 opacity-80')}>
@@ -269,7 +286,8 @@ function SortableRepositoryItem({
           className={cn(worktrees.length > 0 && 'pl-7 group-data-[collapsible=icon]:!pl-2')}
         >
           {repositoryIcon(ws.remoteKind)}
-          <span>{ws.name}</span>
+          <span className="min-w-0 flex-1 truncate">{ws.name}</span>
+          {repositoryIsDirty ? <DirtyStateIndicator /> : null}
         </SidebarMenuButton>
 
         <SidebarMenuAction
@@ -311,6 +329,7 @@ function SortableRepositoryItem({
                   activeRepositoryId === ws.id &&
                   activeWorktreePath === wt.path
                 const isDeleting = deletingWorktreePaths.has(wt.path)
+                const isDirty = dirtyWorkingTreePaths.has(normalizeWorkingTreePath(wt.path))
                 const subtitle = worktreeSubtitle(wt)
                 const tooltip = isDeleting
                   ? `Deleting ${wt.path}…`
@@ -346,7 +365,10 @@ function SortableRepositoryItem({
                               <GitBranchIcon />
                             )}
                             <div className="flex min-w-0 flex-1 flex-col leading-tight">
-                              <span className="truncate">{worktreeLabel(wt.path)}</span>
+                              <span className="flex min-w-0 items-center gap-1.5">
+                                <span className="truncate">{worktreeLabel(wt.path)}</span>
+                                {isDirty ? <DirtyStateIndicator /> : null}
+                              </span>
                               {subtitle ? (
                                 <span className="truncate text-[10px] text-sidebar-foreground/70">
                                   {subtitle}
@@ -425,6 +447,7 @@ export function AppSidebar({
   activeRepositoryId,
   activeWorktreePath,
   worktreesByRepositoryId,
+  dirtyWorkingTreePaths,
   deletingWorktreePaths,
   onAddRepository,
   onSelectRepository,
@@ -649,6 +672,7 @@ export function AppSidebar({
                           key={ws.id}
                           ws={ws}
                           worktrees={worktreesByRepositoryId[ws.id] ?? []}
+                          dirtyWorkingTreePaths={dirtyWorkingTreePaths}
                           open={!collapsedRepositoryIds.has(ws.id)}
                           activeView={activeView}
                           activeRepositoryId={activeRepositoryId}

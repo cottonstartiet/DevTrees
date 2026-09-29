@@ -135,7 +135,7 @@ function AppShell(): React.JSX.Element {
     checkWorktreeStatus,
     refreshWorktreesFor
   } = useRepositories()
-  const dirtyWorkingTreeCount = useRepositoryDirtyState(repositories, worktreesByRepositoryId)
+  const dirtyWorkingTreePaths = useRepositoryDirtyState(repositories, worktreesByRepositoryId)
 
   const handleSelectRepository = useCallback(
     (id: string): void => {
@@ -724,11 +724,7 @@ function AppShell(): React.JSX.Element {
             <SidebarProvider className="flex h-svh flex-col">
               <GlobalTaskShortcut onNewTask={handleOpenAddTaskDialog} />
               <div className="flex min-h-0 w-full flex-1">
-                <ActivityRail
-                  activeView={view}
-                  onSelect={setView}
-                  dirtyWorkingTreeCount={dirtyWorkingTreeCount}
-                />
+                <ActivityRail activeView={view} onSelect={setView} />
                 {view === 'repositories' || view === 'reviews' || view === 'sessions' ? (
                   <AppSidebar
                     activeView={view}
@@ -739,6 +735,7 @@ function AppShell(): React.JSX.Element {
                     }
                     activeWorktreePath={view === 'repositories' ? activeWorktreePath : null}
                     worktreesByRepositoryId={worktreesByRepositoryId}
+                    dirtyWorkingTreePaths={dirtyWorkingTreePaths}
                     deletingWorktreePaths={deletingWorktreePaths}
                     onAddRepository={handleAddRepository}
                     onSelectRepository={

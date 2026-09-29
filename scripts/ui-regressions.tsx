@@ -35,7 +35,10 @@ import { TerminalSessionsProvider } from '@/contexts/terminal-sessions-context'
 import { ThemeProvider } from '@/contexts/theme-context'
 import { useNativeSessions } from '@/contexts/use-native-sessions'
 import { useRepoStatus } from '@/hooks/use-repo-status'
-import { collectRepositoryWorkingTreePaths } from '@/hooks/use-repository-dirty-state'
+import {
+  collectRepositoryWorkingTreePaths,
+  normalizeWorkingTreePath
+} from '@/hooks/use-repository-dirty-state'
 import { openTaskSession } from '@/lib/task-session-routing'
 import { TasksBoardLayout } from '@/pages/tasks'
 import { RemoteTimelineEntry } from '../src/remote/src/session-timeline-entry'
@@ -2092,6 +2095,7 @@ async function repositoryAccordionPersistence(): Promise<void> {
           worktreesByRepositoryId={Object.fromEntries(
             repositories.map((repository) => [repository.id, [worktree(repository)]])
           )}
+          dirtyWorkingTreePaths={new Set()}
           deletingWorktreePaths={new Set()}
           onAddRepository={() => undefined}
           onSelectRepository={() => undefined}
@@ -2156,7 +2160,7 @@ async function repositoryAccordionPersistence(): Promise<void> {
   }
 }
 
-async function repositoryDirtyRailIndicator(): Promise<void> {
+async function repositoryDirtySidebarIndicators(): Promise<void> {
   const repositories: Repository[] = [
     {
       id: 'repo-a',
@@ -2175,7 +2179,7 @@ async function repositoryDirtyRailIndicator(): Promise<void> {
       remoteUrl: null
     }
   ]
-  const paths = collectRepositoryWorkingTreePaths(repositories, {
+  const worktreesByRepositoryId: Record<string, Worktree[]> = {
     'repo-a': [
       {
         path: 'c:/repo-a',
@@ -2193,8 +2197,10 @@ async function repositoryDirtyRailIndicator(): Promise<void> {
         isMain: false,
         isLocked: false
       }
-    ]
-  })
+    ],
+    'repo-b': []
+  }
+  const paths = collectRepositoryWorkingTreePaths(repositories, worktreesByRepositoryId)
   assert(paths.length === 3, 'Repository and worktree paths were not deduplicated on Windows')
 
   mockApi({
@@ -2216,46 +2222,99 @@ async function repositoryDirtyRailIndicator(): Promise<void> {
     }
   })
 
-  const renderRail = (dirtyWorkingTreeCount: number): React.JSX.Element => (
+  const renderNavigation = (dirtyWorkingTreePaths: ReadonlySet<string>): React.JSX.Element => (
     <TerminalSessionsProvider>
       <SidebarProvider>
-        <ActivityRail
-          activeView="dashboard"
-          onSelect={() => undefined}
-          dirtyWorkingTreeCount={dirtyWorkingTreeCount}
+        <ActivityRail activeView="repositories" onSelect={() => undefined} />
+        <AppSidebar
+          activeView="repositories"
+          onSelectView={() => undefined}
+          repositories={repositories}
+          activeRepositoryId={null}
+          activeWorktreePath={null}
+          worktreesByRepositoryId={worktreesByRepositoryId}
+          dirtyWorkingTreePaths={dirtyWorkingTreePaths}
+          deletingWorktreePaths={new Set()}
+          onAddRepository={() => undefined}
+          onSelectRepository={() => undefined}
+          onRemoveRepository={() => undefined}
+          onReorderRepositories={() => undefined}
+          onCreateWorktree={() => undefined}
+          onSelectWorktree={() => undefined}
+          onDeleteWorktree={() => undefined}
         />
       </SidebarProvider>
     </TerminalSessionsProvider>
   )
 
-  const fixture = mount(renderRail(2))
+  window.localStorage.removeItem('swe-factory-collapsed-repository-ids')
+  const dirtyWorkingTreePaths = new Set([
+    normalizeWorkingTreePath('c:/repo-a'),
+    normalizeWorkingTreePath('C:\\repo-a.worktrees\\feature')
+  ])
+  const fixture = mount(renderNavigation(dirtyWorkingTreePaths))
   try {
-    await until(() =>
-      Boolean(
-        fixture.container.querySelector(
-          'button[aria-label="Repos, 2 working trees have uncommitted changes"]'
-        )
-      )
+    await until(
+      () => fixture.container.querySelectorAll('[data-status-indicator="dirty"]').length === 3
     )
-    const reposButton = fixture.container.querySelector<HTMLButtonElement>(
-      'button[aria-label^="Repos,"]'
+    const reposRailButton = fixture.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Repos"]'
     )
-    assert(reposButton, 'Repos button did not expose dirty state accessibly')
+    assert(reposRailButton, 'Repos activity-rail button was not rendered')
     assert(
-      reposButton.querySelector('[data-status-indicator]'),
-      'Repos button did not render the dirty-state dot'
+      !reposRailButton.querySelector('[data-status-indicator]'),
+      'Repos activity-rail button still rendered a dirty-state indicator'
     )
 
-    fixture.root.render(renderRail(0))
-    await until(() => Boolean(fixture.container.querySelector('button[aria-label="Repos"]')))
+    const repositoryButtons = Array.from(
+      fixture.container.querySelectorAll<HTMLButtonElement>('button[data-sidebar="menu-button"]')
+    )
+    const repositoryAButton = repositoryButtons.find((button) =>
+      button.textContent?.includes('Repository A')
+    )
+    const repositoryBButton = repositoryButtons.find((button) =>
+      button.textContent?.includes('Repository B')
+    )
+    assert(repositoryAButton, 'Dirty repository row was not rendered')
+    assert(repositoryBButton, 'Clean repository row was not rendered')
     assert(
-      !fixture.container
-        .querySelector<HTMLButtonElement>('button[aria-label="Repos"]')
-        ?.querySelector('[data-status-indicator]'),
-      'Repos dirty-state dot remained after the count cleared'
+      repositoryAButton.querySelector('[data-status-indicator="dirty"]'),
+      'Dirty repository row did not render an indicator'
+    )
+    assert(
+      !repositoryBButton.querySelector('[data-status-indicator="dirty"]'),
+      'Clean repository row rendered a dirty indicator'
+    )
+
+    const worktreeButtons = Array.from(
+      fixture.container.querySelectorAll<HTMLButtonElement>(
+        'button[data-sidebar="menu-sub-button"]'
+      )
+    )
+    const dirtyWorktreeButton = worktreeButtons.find((button) =>
+      button.textContent?.includes('feature')
+    )
+    const mainWorktreeButton = worktreeButtons.find((button) =>
+      button.textContent?.includes('repo-a')
+    )
+    assert(dirtyWorktreeButton, 'Dirty worktree row was not rendered')
+    assert(mainWorktreeButton, 'Main worktree row was not rendered')
+    assert(
+      dirtyWorktreeButton.querySelector('[data-status-indicator="dirty"]'),
+      'Dirty worktree row did not render an indicator'
+    )
+    assert(
+      mainWorktreeButton.querySelector('[data-status-indicator="dirty"]'),
+      'Normalized main worktree path did not share the repository dirty state'
+    )
+
+    fixture.root.render(renderNavigation(new Set()))
+    await until(
+      () => fixture.container.querySelectorAll('[data-status-indicator="dirty"]').length === 0
     )
   } finally {
     fixture.dispose()
+    window.localStorage.removeItem('swe-factory-collapsed-repository-ids')
   }
 }
 
@@ -2281,7 +2340,7 @@ window.uiRegressions = (async () => {
     ['diff viewer layouts', diffViewerLayouts],
     ['review workspace modes', reviewWorkspaceModes],
     ['repository accordion persistence', repositoryAccordionPersistence],
-    ['repository dirty rail indicator', repositoryDirtyRailIndicator]
+    ['repository dirty sidebar indicators', repositoryDirtySidebarIndicators]
   ] as const) {
     try {
       const metrics = await run()

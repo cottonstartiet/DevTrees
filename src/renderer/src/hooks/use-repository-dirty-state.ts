@@ -6,7 +6,7 @@ import { getWorktreeStatus } from '@/lib/worktrees'
 
 const POLL_INTERVAL_MS = 30_000
 
-function pathKey(path: string): string {
+export function normalizeWorkingTreePath(path: string): string {
   return path.replaceAll('/', '\\').toLowerCase()
 }
 
@@ -16,9 +16,9 @@ export function collectRepositoryWorkingTreePaths(
 ): string[] {
   const paths = new Map<string, string>()
   for (const repository of repositories) {
-    paths.set(pathKey(repository.path), repository.path)
+    paths.set(normalizeWorkingTreePath(repository.path), repository.path)
     for (const worktree of worktreesByRepositoryId[repository.id] ?? []) {
-      paths.set(pathKey(worktree.path), worktree.path)
+      paths.set(normalizeWorkingTreePath(worktree.path), worktree.path)
     }
   }
   return [...paths.values()]
@@ -27,12 +27,15 @@ export function collectRepositoryWorkingTreePaths(
 export function useRepositoryDirtyState(
   repositories: Repository[],
   worktreesByRepositoryId: Record<string, Worktree[]>
-): number {
+): ReadonlySet<string> {
   const paths = React.useMemo(
     () => collectRepositoryWorkingTreePaths(repositories, worktreesByRepositoryId),
     [repositories, worktreesByRepositoryId]
   )
-  const pathsKey = React.useMemo(() => paths.map(pathKey).sort().join('|'), [paths])
+  const pathsKey = React.useMemo(
+    () => paths.map(normalizeWorkingTreePath).sort().join('|'),
+    [paths]
+  )
   const pathsRef = React.useRef(paths)
   React.useEffect(() => {
     pathsRef.current = paths
@@ -68,7 +71,7 @@ export function useRepositoryDirtyState(
         if (!mountedRef.current) return
 
         const currentPaths = pathsRef.current
-        const currentKeys = new Set(currentPaths.map(pathKey))
+        const currentKeys = new Set(currentPaths.map(normalizeWorkingTreePath))
         setDirtyByPath((previous) => {
           const next = new Map<string, boolean>()
           for (const [key, dirty] of previous) {
@@ -76,7 +79,7 @@ export function useRepositoryDirtyState(
           }
           for (const settled of results) {
             if (settled.status !== 'fulfilled' || !settled.value.result.ok) continue
-            const key = pathKey(settled.value.path)
+            const key = normalizeWorkingTreePath(settled.value.path)
             if (currentKeys.has(key)) next.set(key, settled.value.result.hasChanges)
           }
           return next
@@ -126,5 +129,8 @@ export function useRepositoryDirtyState(
     }
   }, [pathsKey, refresh])
 
-  return React.useMemo(() => [...dirtyByPath.values()].filter(Boolean).length, [dirtyByPath])
+  return React.useMemo(
+    () => new Set([...dirtyByPath].filter(([, dirty]) => dirty).map(([path]) => path)),
+    [dirtyByPath]
+  )
 }

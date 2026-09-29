@@ -131,12 +131,10 @@ function KeepAwakeButton({
 
 export function ActivityRail({
   activeView,
-  onSelect,
-  dirtyWorkingTreeCount
+  onSelect
 }: {
   activeView: AppView
   onSelect: (view: AppView) => void
-  dirtyWorkingTreeCount: number
 }): React.JSX.Element {
   const { sessions, embeddedTerminals, nativeById } = useTerminalSessions()
   const [keepAwakeEnabled, setKeepAwakeEnabled] = React.useState(false)
@@ -158,13 +156,6 @@ export function ActivityRail({
           sessionsNeedingAction === 1 ? 'session needs' : 'sessions need'
         } your action`
       : undefined
-  const repositoriesIndicatorLabel =
-    dirtyWorkingTreeCount > 0
-      ? `${dirtyWorkingTreeCount} working ${
-          dirtyWorkingTreeCount === 1 ? 'tree has' : 'trees have'
-        } uncommitted changes`
-      : undefined
-
   React.useEffect(() => {
     let cancelled = false
 
@@ -201,13 +192,7 @@ export function ActivityRail({
             {...item}
             activeView={activeView}
             onSelect={onSelect}
-            indicatorLabel={
-              item.view === 'dashboard'
-                ? dashboardIndicatorLabel
-                : item.view === 'repositories'
-                  ? repositoriesIndicatorLabel
-                  : undefined
-            }
+            indicatorLabel={item.view === 'dashboard' ? dashboardIndicatorLabel : undefined}
           />
         ))}
       </div>
