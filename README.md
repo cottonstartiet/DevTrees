@@ -1,274 +1,287 @@
-# SWE Factory
+<div align="center">
+  <img src="src/renderer/src/assets/icon.png" alt="SWE Factory app icon" width="112" />
 
-A desktop application built with **Tauri 2**, **Rust**, **TypeScript**, **Vite**, **React** and **shadcn/ui** (new-york). It manages git worktrees across workspaces, surfaces Azure DevOps pull-request details, reads GitHub Copilot CLI history, and launches external tooling (VS Code, Windows Terminal, the Copilot CLI). It ships with auto-update against GitHub Releases.
+  <h1>SWE Factory</h1>
 
-SWE Factory runs in its own desktop window. The React renderer communicates directly
-with Rust through Tauri commands and events; there is no browser-hosted app or
-local HTTP/WebSocket API server.
+  <p><strong>The developer cockpit for parallel, AI-assisted work.</strong></p>
 
-## Stack
+  <p>
+    Manage repositories and git worktrees, run task-focused Copilot sessions, review
+    pull requests, and jump back into your real tools without losing context.
+  </p>
 
-- Tauri 2 (Rust backend in `src-tauri/`)
-- React 19, TypeScript 5.9, Vite 7 (renderer in `src/renderer/`)
-- Tailwind v4 (`@tailwindcss/vite`) + `tw-animate-css`
-- shadcn/ui (style: new-york, baseColor: neutral, icons: lucide)
-- SQLite via `rusqlite` (bundled); auto-update via `tauri-plugin-updater`
+  <p>
+    <a href="https://github.com/cottonstartiet/swe-factory/releases/latest"><strong>Download the latest Windows release</strong></a>
+    ·
+    <a href="#build-from-source">Build from source</a>
+  </p>
 
-## Prerequisites
+  <p>
+    <img src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square" alt="Platform: Windows" />
+    <img src="https://img.shields.io/badge/desktop-Tauri_2-24C8DB?style=flat-square" alt="Desktop: Tauri 2" />
+    <img src="https://img.shields.io/badge/frontend-React_19-149ECA?style=flat-square" alt="Frontend: React 19" />
+    <img src="https://img.shields.io/badge/backend-Rust-000000?style=flat-square" alt="Backend: Rust" />
+  </p>
 
-- [Rust](https://rustup.rs/) 1.94 or newer and the MSVC build tools on Windows
-- Node.js 22 + Yarn (pinned via Corepack from the `packageManager` field)
-- WebView2 runtime (preinstalled on current Windows)
+</div>
 
-## Scripts
+<!--
+Product screenshot slot.
+Capture the Dashboard with repositories, active sessions, PRs, and analytics visible.
+Save it as docs/images/swe-factory-dashboard.png, then replace this comment with:
 
-```bash
-yarn install
-yarn dev          # tauri dev (Rust backend + Vite renderer with HMR)
-yarn dev:web      # internal renderer dev server (used by tauri dev)
-yarn typecheck    # tsc --noEmit (renderer)
-yarn lint         # eslint
-yarn build:web    # vite build (renderer only -> dist-web)
-yarn build:remote # vite build (LAN browser UI -> dist-remote)
-yarn build        # tauri build (signed NSIS installer + updater artifacts)
+![SWE Factory dashboard showing repositories, active Copilot sessions, pull requests, and local analytics](docs/images/swe-factory-dashboard.png)
+-->
+
+SWE Factory is a Windows desktop control center for developers working across multiple
+branches, worktrees, pull requests, and AI sessions at once. It keeps the state that
+matters in one fast, keyboard-friendly workspace, then launches VS Code, Windows
+Terminal, GitHub Copilot CLI, or the relevant pull request when it is time to work.
+
+It is a native desktop application built with Tauri and an embedded React/WebView2
+renderer. The renderer communicates directly with the Rust backend through Tauri
+commands and events—there is no browser-hosted app or local HTTP/WebSocket API server.
+
+## Why SWE Factory?
+
+Parallel development creates a coordination problem: every task has a repository,
+branch, worktree, pull request, terminal, and AI conversation attached to it. Switching
+between them usually means reconstructing that context by hand.
+
+SWE Factory turns those moving parts into one workflow:
+
+1. Add the repositories you actively work in.
+2. Create or select a worktree for each stream of work.
+3. Organize tasks on the board and launch them manually or through Factory mode.
+4. Work with Copilot in native chat, an embedded terminal, or Windows Terminal.
+5. Inspect repository state and review GitHub or Azure DevOps pull requests in app.
+6. Resume prior sessions and understand local Copilot usage without leaving the desktop.
+
+The goal is simple: move between parallel tasks in seconds while always seeing the real
+git, pull-request, and session state.
+
+## Features
+
+### Repository and worktree control
+
+- Manage multiple local repositories from one collapsible sidebar.
+- Discover, create, open, and remove git worktrees.
+- See branch, dirty-working-tree, commit, and pull-request context.
+- Launch a worktree directly in VS Code, Windows Terminal, or Copilot.
+- Work with both GitHub and Azure DevOps remotes.
+
+### Task factory
+
+- Track work on a drag-and-drop task board.
+- Target the main working copy, an existing worktree, or a worktree created when the
+  task starts.
+- Link tasks to their active Copilot sessions and execution state.
+- Run tasks deliberately in manual mode or let Factory mode advance queued work.
+- Surface running, queued, completed, and failed work without hiding errors.
+
+### Copilot as a first-class workspace
+
+- Use **In-app chat** through the GitHub Copilot CLI ACP integration.
+- Run Copilot or plain PowerShell in an **embedded terminal** backed by ConPTY.
+- Launch **External Copilot terminal** sessions in Windows Terminal.
+- Send immediately or queue follow-up instructions while a turn is running.
+- Review tool calls, diffs, plans, rich output, permissions, and elicitation in the
+  native session timeline when the connected agent provides them.
+- Resume saved conversations and keep task/session context connected.
+
+> [!NOTE]
+> Native chat uses ACP v1 and is currently a public-preview integration. Available
+> commands and capabilities follow the installed Copilot CLI; SWE Factory does not
+> invent unsupported terminal operations or silently switch session modes.
+
+### Pull-request workflow
+
+- Browse pull requests assigned to you and recent review candidates.
+- Review GitHub and Azure DevOps diffs, files, threads, comments, and votes in app.
+- Open the pull request in its provider when needed.
+- Start a Copilot code-review session or address review comments from the matching
+  source worktree.
+- Keep authored pull requests and pending review attention visible on the Dashboard.
+
+<!--
+Pull-request screenshot slot.
+Capture the in-app review workspace with the file tree, diff, and discussion visible.
+Save it as docs/images/swe-factory-pr-review.png, then replace this comment with:
+
+![SWE Factory pull-request review workspace with file tree, diff, and review threads](docs/images/swe-factory-pr-review.png)
+-->
+
+### Local history and analytics
+
+- Search and resume GitHub Copilot CLI history by repository, host, and time range.
+- Explore 7-, 30-, and 90-day activity with overview, flow, and practices views.
+- Inspect token mix, model usage, cost records, latency, cadence, and repository trends
+  when those fields exist in local history.
+- Expand prompt examples only when needed; excerpts are not shown by default.
+- Calculate reports locally without uploading prompts or calling an LLM.
+
+### Desktop-native by design
+
+- Stay in a focused desktop window with compact Chalk and Enterprise themes.
+- Keep managed sessions active while navigating between product areas.
+- Store repositories, tasks, queues, and bounded transcripts in local SQLite.
+- Receive signed updates through GitHub Releases after explicitly accepting the update.
+- Use the real developer tools already installed on your machine.
+
+## Install
+
+SWE Factory currently ships as a signed **Windows x64 NSIS installer**.
+
+1. Open the [latest GitHub Release](https://github.com/cottonstartiet/swe-factory/releases/latest).
+2. Download the Windows x64 `setup.exe` asset.
+3. Run the installer and launch **SWE Factory**.
+
+WebView2 is required and is preinstalled on current Windows versions.
+
+### Tool prerequisites
+
+Install only the tools required for the workflows you use:
+
+| Workflow                                 | Required tools                                                                                                                                 |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository and worktree management       | [Git](https://git-scm.com/download/win)                                                                                                        |
+| GitHub pull requests                     | [GitHub CLI](https://cli.github.com/) authenticated with `gh auth login`                                                                       |
+| Azure DevOps pull requests               | [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli-windows) with the Azure DevOps extension and an authenticated organization |
+| Copilot sessions, history, and analytics | [GitHub Copilot CLI](https://docs.github.com/copilot/how-tos/set-up/install-copilot-cli) installed and authenticated                           |
+| Source builds                            | Node.js 22, Yarn 1.22.22 through Corepack, Rust 1.94+, and MSVC build tools                                                                    |
+
+Missing or incompatible tools produce an explicit error; SWE Factory does not
+automatically install CLIs, change authentication, or fall back to a different Copilot
+session mode.
+
+### First run
+
+1. Add a local repository from the sidebar.
+2. Select its main working copy or create a worktree.
+3. Open **Settings → Copilot sessions** and choose In-app chat, Embedded terminal, or
+   External Copilot terminal.
+4. Add a task, open a pull request, or launch Copilot directly from the repository.
+
+New installations default to native ACP chat. Changing the setting affects new and
+resumed sessions; it never moves a runtime that is already active.
+
+## How it works
+
+```text
+React 19 + TypeScript renderer (WebView2)
+                  │
+          Tauri commands/events
+                  │
+Rust backend ─ SQLite ─ Git / gh / az / Copilot CLI / Windows tools
 ```
 
-Validate the Rust backend with `cargo build` / `cargo clippy` from `src-tauri/`.
-Session regression checks use `cargo test --manifest-path src-tauri/Cargo.toml --lib`
-and `node --test scripts/auto-reviews.test.mjs scripts/browser-extension-deep-link.test.mjs scripts/code-review-prompt.test.mjs scripts/dashboard-prs.test.mjs scripts/session-launch.test.mjs scripts/session-interactions.test.mjs scripts/task-launch.test.mjs`
-(session routing/status contracts and native interaction state; no browser server).
+- **Renderer:** React, TypeScript, Vite, Tailwind CSS, and shadcn/ui in
+  `src/renderer/`.
+- **Backend:** Tauri 2 and Rust commands in `src-tauri/`.
+- **Shared contracts:** TypeScript request/response types in `src/shared/`.
+- **Persistence:** Bundled SQLite through `rusqlite`.
+- **Copilot:** ACP over stdio for native chat, ConPTY for embedded terminals, or an
+  external Windows Terminal process.
+- **Updates:** Signed Tauri updater artifacts published by GitHub Actions.
 
-Responsiveness regressions use `node --test scripts/task-state.test.mjs scripts/ui-regressions.test.mjs`.
-The UI check builds the actual renderer components with Vite and runs them in an isolated,
-headless Edge profile, without starting the desktop backend or calling Git/Copilot.
-Set `SWE_FACTORY_TEST_BROWSER` to a Chromium-compatible browser executable if Edge is not
-installed at its default Windows location. It covers popup cleanup, editable branch naming,
-overlapping task mutations, repository switching, transcript deltas, and lazy tool-output rendering.
-Radix's dismissable-layer and focus-scope packages are direct dependencies and Vite
-singletons: do not remove their `resolve.dedupe` entries. Independent copies can leave
-the whole document with `pointer-events: none` after a popup closes.
+Repository operations are isolated by path, and slow CLI work runs outside the
+renderer. Timeouts are reported as errors rather than presented as successful
+rollbacks, so remote or repository state should be checked before retrying a write.
 
-The `*:web` scripts and `dist-web` directory build the embedded desktop renderer,
-not a standalone web application. Use `yarn dev` to run the complete app.
+## Data and privacy
 
-Git, GitHub CLI and Azure CLI invocations have a 120-second deadline, with owned
-child-process-tree cleanup on timeout. A timeout is an error, not a rollback:
-inspect repository/remote state before retrying a write. Repository requests are
-isolated by path; a slow repository does not prevent another from refreshing.
-Blocking repository discovery, history reads and external-session observation run
-on blocking workers, outside the shared session-watch lock during file I/O.
+SWE Factory keeps its own application data in:
 
-## Tasks and Copilot sessions
-
-Tasks can target the main working copy, an existing worktree, or a planned worktree
-created when work starts. **In-app chat** runs the installed Copilot CLI through
-ACP v1 over stdio, with one owned process per conversation. **Embedded terminal**
-runs Copilot in an app-owned PowerShell ConPTY rendered with xterm.js, while the
-Sessions plus button can start a plain PowerShell terminal in a configured repository
-or worktree. React communicates only through Tauri commands/events; there is no local
-agent HTTP server. Choose In-app chat, Embedded terminal, or **External Copilot
-terminal** under **Settings > Copilot sessions**.
-New installations default to ACP. An existing SDK preference migrates to ACP;
-an explicit external preference is preserved. Changing this setting never moves
-a running conversation.
-
-Type `/` at the beginning of the composer to list and filter the commands and
-skills advertised by the connected agent, including their argument hints. The
-list is replaced when Copilot updates it.
-Commands are sent as one text block without attachments. Unadvertised commands
-are blocked rather than accidentally sent to the model. The deliberate literal
-message option adds an explanatory text prefix so it cannot execute as a slash
-command. Settings provides an explicit external **Sign in** action. In-app
-sessions use the defaults already configured in Copilot CLI; SWE Factory does not
-override reasoning, tools, modes or MCP servers.
-
-Permissions use the exact option IDs, labels and scopes provided by Copilot.
-No approval is preselected or invented. Native requests are answered in the
-originating operation, never converted into follow-up messages. Forms preserve
-text, numbers, booleans and single/multiple choices. Unsupported schemas (including
-unsupported format constraints), nested fields and sensitive credential fields
-show an explanation instead of an empty or misleading form. URL elicitation
-requires explicit consent to open the browser; opening it and receiving an
-external completion notification are distinct states.
-
-The **Dashboard** shares pending requests, submissions and drafts with the Session
-view. Simple requests can be answered there; larger forms open the exact Session
-request. All pending requests remain visible, and competing responses are accepted
-only once. Drafts survive page navigation and recoverable errors within the app;
-they are not saved to disk.
-
-Send instructions immediately when idle, or queue follow-ups during a turn.
-Text files and supported images are stored with queued messages, not reread from
-their original paths. The queue supports editing unsent text, reordering, removal,
-pause/resume and clearing non-running items. Attachment bytes stay in the backend;
-streaming snapshots carry queue summaries rather than repeatedly transferring files.
-Transcript events carry only changed entries and the retained sequence IDs. Missing
-events trigger a full snapshot refresh, not a resend of prompts or approvals.
-Unchanged transcript rows retain identity, and collapsed tool output is rendered
-only when expanded.
-
-**Stop turn** cancels current work and pending requests and pauses the queue.
-Cancellation is not considered complete just because a notification was sent.
-**End session** closes the managed runtime; **Resume** loads the same saved
-conversation. Only a normal completed turn automatically drains queued work.
-Errors, cancellation, refusal and limit stops pause it.
-
-Queued items survive app restarts, always paused. Resuming a conversation does
-not resume its queue. A prompt interrupted after dispatch is marked
-**delivery-unknown**: review history and remove it explicitly before resuming.
-SWE Factory does not automatically retry potentially delivered prompts or approvals.
-Removing a session row preserves its queue and Copilot's saved conversation.
-Use the queue's explicit clear/remove controls to discard retained content.
-
-Limits are 100 retained queue items, 64 KiB of message text, 8 MiB per selected
-attachment, 32 files/16 MiB per selection batch, 16 MiB per encoded prompt and
-32 MiB per queue. Text-file context must be valid UTF-8. Completed items count
-until removed. Live transcripts retain at most 500 entries and approximately
-8 MiB, with a 1 MiB streaming-text limit; omissions are indicated. The bounded
-transcript is checkpointed after turns and on shutdown. Copilot's own saved
-history/replay remains the continuation source and contains older agent output.
-Rich tool updates, diffs, resources, images, plans, agent-provided reasoning and
-usage are rendered when emitted; SWE Factory does not fabricate absent metrics.
-
-To change a conversation's mode, **End session** in native chat (or end Copilot in
-its external terminal), change Settings, and resume the conversation. Pending
-questions and in-flight tool calls do not transfer. Resume uses the same saved
-conversation ID without replaying the initial prompt. Active owners are rejected
-rather than starting a second controller.
-
-External mode opens the installed Copilot CLI in Windows Terminal. SWE Factory shows
-live status and attention messages only, not a terminal viewport or transcript.
-Respond in the external terminal. Status observation can lag; unavailable status
-is shown explicitly. External rows disappear when Copilot ends, and external
-watches are not persisted or restored after an app restart. A renderer reconnect
-within the same app run restores current live status.
-
-Switching pages keeps native and external sessions running. Closing SWE Factory ends
-its managed ACP runtimes but leaves external terminals running. Native conversations
-can be resumed after reopening. Global **History** and **Analytics** continue to
-read CLI history independently, including external sessions; removing a live status
-row never deletes a conversation or its task link.
-
-No auto-approval flags are added; existing user-controlled CLI permissions remain
-in effect. External launch is Windows-only. Missing tools or launch failures
-produce an error rather than silently changing the selected mode.
-
-Install and authenticate the Copilot CLI before starting a session. GitHub
-operations use `gh`; Azure DevOps operations use Azure CLI with its DevOps extension.
-The evaluated native baseline is installed CLI **1.0.84-1** and ACP **v1**, using
-the pinned Rust `agent-client-protocol` **2.1.0** library (the crate version does
-not mean ACP wire v2). ACP is a public preview. Initialization negotiates compatibility; a
-missing or incompatible runtime produces an error, not an automatic upgrade.
-Initialization is bounded to 45 seconds, and creating/loading a conversation to
-90 seconds. A setup timeout stops the owned runtime and releases its launch
-reservation; it never automatically retries the initial instruction.
-Native mode resolves `copilot.exe` (`copilot` elsewhere) from PATH, or an explicit
-`COPILOT_CLI_PATH`. End users do not install Rust: the client is compiled
-into SWE Factory. No Copilot executable is bundled or automatically downloaded.
-
-Coverage follows the installed server's advertised commands and capabilities,
-not every interactive-terminal feature. The supported baseline exposes new/load,
-paginated list, close, prompts/cancel, permissions and elicitation.
-Unadvertised fork, delete, logout and additional-root operations are not exposed.
-Terminal-only `/undo`, `/tasks`, `/settings` and similar commands are not invented
-as ACP operations. App History, diffs and Settings remain independent UI actions.
-SWE Factory does not advertise client filesystem or terminal execution callbacks:
-the local agent owns its tools. External terminals are status-only, not remotely
-controllable through the ACP client.
-
-Developer checks use the existing Node session tests, Rust tests and renderer
-typecheck. The opt-in `acp_live_round_trip` Rust test requires an authenticated
-installed CLI and exercises informational `/usage` without a model prompt.
-
-## Local Copilot analytics
-
-**Analytics** analyzes **Copilot CLI** history, with repository and 7/30/90-day filters.
-It retains the colourful usage graph, token-mix donut and cost-by-model bars, alongside:
-
-- **Overview:** activity trends, preceding-period comparisons, model/token/credit
-  records, latency percentiles, file observations and explicit source coverage.
-- **Flow:** local-hour and calendar heatmaps, weekend/night activity, streaks,
-  breaks, prompt cadence and long/single-turn session observations.
-- **Practices:** explainable prompt-structure dimensions, session intent,
-  spec-like task starts, evidence-based suggestions and recurring prompt workflows.
-  Expand a pattern to inspect examples and copy a draft; nothing is installed automatically.
-
-Rust reads `~/.copilot/session-store.db` read-only. Repository paths map to recorded
-repository labels only when an unambiguous working-directory mapping exists.
-VS Code chat history is not scanned; its analytics integration is deferred.
-
-Reports are calculated locally through Tauri, without uploading prompts, calling
-an LLM, or writing analytics to disk. Prompt excerpts are hidden until expanded.
-English-keyword coaching uses up to the latest 5,000 current-period turns in the
-repository selection, each limited to 8,000 characters. Activity counts still cover
-the full selection. Missing optional fields produce visible warnings; oversized
-reports ask for a smaller selection. Refresh reads saved history again.
-
-Today is partial and comparisons use the preceding full local-calendar period.
-Model calls and user turns remain separate metrics. Recorded credits are not an
-invoice or complete account-wide billing history. Cadence is not hours worked, concentration,
-burnout or productivity; prompt structure is not a judgment of engineering skill.
-The separate **Copilot CLI commands** area explicitly launches CLI sessions and
-may use AI credits; its repository target does not change the report filter.
-
-## App data
-
-The desktop app uses a version-4 SQLite schema: repositories, tasks, terminal
-sessions, durable ACP queues and bounded ACP transcripts. Earlier records are
-migrated in place without losing history or task associations. Queue payloads
-can contain submitted file contents; they stay in the app data directory, not
-the repository, and are not encrypted by SWE Factory. Permission/form answers are
-not persisted in the queue. There are no
-legacy JSON imports.
-On Windows, its database is `%APPDATA%\com.ritekode.swefactory\swe-factory.db`.
-The previous prototype's `%APPDATA%\swe-factory` data is left untouched and is not loaded,
-so the first launch starts with no repositories, tasks, or tracked sessions.
-Anything added in this version is saved normally across subsequent launches.
-
-Repository files, worktrees, external Copilot history, and CLI authentication are
-independent of this app database and are not reset.
-
-## Auto-update
-
-Updates use Tauri's updater plugin against GitHub Releases. The app checks
-`releases/latest/download/latest.json` on launch; if a newer signed release
-exists it offers **Restart & update**. Download and installation start only when
-the user accepts.
-
-Releasing is automated by `.github/workflows/swe-factory-build.yml`: on a push to
-`main` that bumps `package.json`'s version above every existing `v*` tag, it
-builds and **signs** the installer, generates `latest.json`, and publishes the
-installer + `.sig` + `latest.json` to a GitHub Release via the `gh` CLI.
-
-Signing requires a minisign keypair (`yarn tauri signer generate`). The public
-key is embedded in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`); the
-private key and its password must be set as repository secrets:
-
-- `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
-
-## Layout
-
+```text
+%APPDATA%\com.ritekode.swefactory\swe-factory.db
 ```
+
+That database stores configured repositories, tasks, terminal-session metadata,
+durable ACP queues, and bounded ACP transcripts. Queued file attachments can include
+copied file contents and remain in the app data directory; SWE Factory does not encrypt
+that database.
+
+Repositories, worktrees, CLI authentication, and Copilot's own saved history remain
+independent of the app database. Analytics reads `~/.copilot/session-store.db`
+read-only, computes reports locally, and does not write analytics reports to disk or
+send prompts to an LLM.
+
+## Build from source
+
+### Prerequisites
+
+- Windows with WebView2 and the MSVC build tools
+- [Rust](https://rustup.rs/) 1.94 or newer
+- Node.js 22
+- Corepack, using the repository-pinned Yarn 1.22.22
+
+### Run the desktop app
+
+```powershell
+corepack enable
+yarn install --frozen-lockfile
+yarn dev
+```
+
+`yarn dev` starts the complete Tauri application with renderer hot reload.
+`yarn dev:web` serves only the internal renderer used by Tauri; it is not a standalone
+browser product.
+
+### Useful commands
+
+| Command                                                 | Purpose                                                                         |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `yarn dev`                                              | Run the complete desktop app in development                                     |
+| `yarn typecheck`                                        | Type-check the renderer                                                         |
+| `yarn lint`                                             | Run ESLint                                                                      |
+| `yarn build:web`                                        | Build the embedded desktop renderer                                             |
+| `yarn build:remote`                                     | Build the LAN companion renderer bundled with the desktop app                   |
+| `yarn build`                                            | Build the signed NSIS/updater artifacts when signing credentials are configured |
+| `cargo test --manifest-path src-tauri/Cargo.toml --lib` | Run Rust library tests                                                          |
+| `cargo clippy --manifest-path src-tauri/Cargo.toml`     | Lint the Rust backend                                                           |
+
+Focused regression contracts live in `scripts/*.test.mjs`. The release workflow runs
+the renderer typecheck, selected Node contract tests, and Rust library tests before
+publishing.
+
+## Project structure
+
+```text
 src/
 ├─ renderer/
 │  ├─ index.html
 │  └─ src/
-│     ├─ main.tsx, App.tsx
-│     ├─ lib/api.ts            # window.api shim over Tauri `invoke`
-│     ├─ lib/*.ts              # repo/worktrees/workspaces/ado/system facades
-│     ├─ hooks/                # use-auto-update, use-repo-status, ...
-│     ├─ components/           # app-sidebar + shadcn ui primitives
-│     └─ pages/                # detail-view, history, settings
-└─ shared/                     # TypeScript request/response types
+│     ├─ components/    # app shell, sessions, reviews, analytics, UI primitives
+│     ├─ contexts/      # task, dashboard, repository, and session state
+│     ├─ hooks/         # backend-backed feature hooks
+│     ├─ lib/           # Tauri API facade and workflow helpers
+│     └─ pages/         # Dashboard, Tasks, Reviews, Sessions, History, Analytics
+├─ remote/              # companion renderer bundled as a Tauri resource
+└─ shared/              # renderer/backend request and response contracts
 
 src-tauri/
-├─ src/
-│  ├─ lib.rs                   # builder, plugins, command registration
-│  ├─ db.rs                    # rusqlite (swe-factory.db, initial schema)
-│  ├─ workspaces.rs worktrees.rs repo.rs ado.rs az.rs
-│  ├─ system.rs                # external launchers + app info
-│  └─ copilot_history.rs       # read-only Copilot CLI store reader
-├─ capabilities/default.json   # permission set for the main window
-└─ tauri.conf.json             # bundle + updater config
+├─ src/                 # Rust commands, persistence, Git/PR/Copilot integration
+├─ capabilities/        # Tauri window permissions
+└─ tauri.conf.json      # desktop bundle, deep-link, and updater configuration
 ```
+
+## Releases and updates
+
+Pushing a version to `main` that is newer than every existing `v*` tag triggers the
+Windows release workflow. It validates the application, builds and signs the installer,
+generates the Tauri updater manifest, and publishes the assets as the latest GitHub
+Release.
+
+The desktop app checks that release channel on launch. Download and installation begin
+only after the user accepts **Restart & update**.
+
+## Current scope
+
+- Windows desktop and Windows x64 installers
+- GitHub and Azure DevOps pull-request integrations
+- GitHub Copilot CLI history and ACP v1 native sessions
+- Local, single-user application state
+
+SWE Factory is intentionally a focused developer utility—not an IDE, hosted project
+management platform, or replacement for Git, your code editor, or your pull-request
+provider.
