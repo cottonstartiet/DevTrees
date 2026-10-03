@@ -7,7 +7,7 @@ import { TerminalSessionStatusBadge } from '@/components/sessions/terminal-sessi
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type { Task } from '@shared/task'
-import type { TerminalSession } from '@shared/terminal-session'
+import { isTerminalSessionFinished, type TerminalSession } from '@shared/terminal-session'
 
 function worktreeLabel(path: string): string {
   const idx = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
@@ -63,6 +63,8 @@ export function TaskCard({
             ? 'Waiting'
             : 'Queued'
           : null
+  const sessionFinished =
+    task.status === 'in_progress' && session ? isTerminalSessionFinished(session.status) : false
 
   return (
     <div
@@ -83,6 +85,10 @@ export function TaskCard({
       className={cn(
         'bg-card flex cursor-pointer flex-col gap-2 rounded-md border p-3 text-left shadow-xs transition-colors',
         'hover:bg-accent/50',
+        sessionFinished &&
+          (session?.status === 'error'
+            ? 'border-destructive/40 bg-destructive/5 hover:bg-destructive/10'
+            : 'border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/10'),
         isDragging && 'opacity-50'
       )}
     >
